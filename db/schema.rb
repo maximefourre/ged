@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_09_143715) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_09_150355) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -21,4 +21,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_09_143715) do
     t.string "username", null: false
     t.index ["username"], name: "index_admins_on_username", unique: true
   end
+
+  create_table "departments", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "name", null: false
+    t.bigint "parent_id"
+    t.datetime "updated_at", null: false
+    t.index ["name"], name: "index_departments_on_name_at_root", unique: true, where: "(parent_id IS NULL)"
+    t.index ["parent_id", "name"], name: "index_departments_on_parent_id_and_name", unique: true
+    t.index ["parent_id"], name: "index_departments_on_parent_id"
+  end
+
+  add_foreign_key "departments", "departments", column: "parent_id"
 end
