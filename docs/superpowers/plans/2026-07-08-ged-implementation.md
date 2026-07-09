@@ -465,7 +465,7 @@ git add -A && git commit -m "feat: Department model with hierarchy and subtree h
 **Interfaces:**
 - Produces: `Tag` (`name`, normalized lowercase, unique).
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `test/models/tag_test.rb`:
 
@@ -489,7 +489,7 @@ end
 Run: `bin/rails test test/models/tag_test.rb`
 Expected: FAIL (table missing)
 
-- [ ] **Step 2: Migration + model**
+- [x] **Step 2: Migration + model**
 
 ```bash
 bin/rails generate migration CreateTags
@@ -519,7 +519,7 @@ end
 
 Run: `bin/rails db:migrate`
 
-- [ ] **Step 3: Run tests, commit**
+- [x] **Step 3: Run tests, commit**
 
 Run: `bin/rails test test/models/tag_test.rb`
 Expected: PASS
