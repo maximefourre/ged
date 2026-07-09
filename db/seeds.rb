@@ -9,5 +9,10 @@
 #   end
 
 Admin.find_or_create_by!(username: ENV.fetch("GED_ADMIN_USERNAME", "admin")) do |admin|
-  admin.password = ENV.fetch("GED_ADMIN_PASSWORD", "changeme")
+  admin.password =
+    if Rails.env.development?
+      ENV.fetch("GED_ADMIN_PASSWORD", "changeme")
+    else
+      ENV.fetch("GED_ADMIN_PASSWORD") # raises KeyError if unset outside development
+    end
 end
