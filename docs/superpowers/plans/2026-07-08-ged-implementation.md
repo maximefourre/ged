@@ -683,7 +683,7 @@ git add -A && git commit -m "feat: Document model with Active Storage, uuid pk, 
 **Interfaces:**
 - Produces: `AppClient` (`client_identifier` unique, `description`), `AppClient#can_access?(department) → Boolean` (true if any granted department is in `department.self_and_ancestors`), `AppClient#accessible_department_ids → Array<Integer>` (all granted subtrees, for index filtering), `AppClient#departments` (granted departments association). Tasks 8–11 rely on these exact names.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `test/models/app_client_test.rb`:
 
@@ -719,7 +719,7 @@ end
 Run: `bin/rails test test/models/app_client_test.rb`
 Expected: FAIL (table missing)
 
-- [ ] **Step 2: Migration + models**
+- [x] **Step 2: Migration + models**
 
 ```bash
 bin/rails generate migration CreateAppClients
@@ -777,7 +777,7 @@ end
 
 Run: `bin/rails db:migrate`
 
-- [ ] **Step 3: Run tests, commit**
+- [x] **Step 3: Run tests, commit**
 
 Run: `bin/rails test`
 Expected: PASS

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_09_181043) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_09_181559) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
@@ -49,6 +49,24 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_09_181043) do
     t.datetime "updated_at", null: false
     t.string "username", null: false
     t.index ["username"], name: "index_admins_on_username", unique: true
+  end
+
+  create_table "app_clients", force: :cascade do |t|
+    t.string "client_identifier", null: false
+    t.datetime "created_at", null: false
+    t.string "description"
+    t.datetime "updated_at", null: false
+    t.index ["client_identifier"], name: "index_app_clients_on_client_identifier", unique: true
+  end
+
+  create_table "client_department_accesses", force: :cascade do |t|
+    t.bigint "app_client_id", null: false
+    t.datetime "created_at", null: false
+    t.bigint "department_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["app_client_id", "department_id"], name: "index_client_department_accesses_uniqueness", unique: true
+    t.index ["app_client_id"], name: "index_client_department_accesses_on_app_client_id"
+    t.index ["department_id"], name: "index_client_department_accesses_on_department_id"
   end
 
   create_table "departments", force: :cascade do |t|
@@ -91,6 +109,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_09_181043) do
 
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
+  add_foreign_key "client_department_accesses", "app_clients"
+  add_foreign_key "client_department_accesses", "departments"
   add_foreign_key "departments", "departments", column: "parent_id"
   add_foreign_key "document_tags", "documents"
   add_foreign_key "document_tags", "tags"
