@@ -1,0 +1,16 @@
+<h1>Application clients</h1>
+<%= link_to "Register client", new_admin_app_client_path %>
+<table>
+  <tr><th>client_id</th><th>Description</th><th>Departments</th><th></th></tr>
+  <% @app_clients.each do |client| %>
+    <tr>
+      <td><%= client.client_identifier %></td>
+      <td><%= client.description %></td>
+      <td><%= client.departments.map(&:name).join(", ") %></td>
+      <td>
+        <%= link_to "Edit", edit_admin_app_client_path(client) %>
+        <%= button_to "Delete", admin_app_client_path(client), method: :delete %>
+      </td>
+    </tr>
+  <% end %>
+</table>

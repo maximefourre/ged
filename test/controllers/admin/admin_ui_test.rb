@@ -1,0 +1,65 @@
+require "test_helper"
+
+class Admin::AdminUiTest < ActionDispatch::IntegrationTest
+  include Devise::Test::IntegrationHelpers
+
+  setup do
+    @admin = Admin.create!(username: "alice", password: "secret123")
+    sign_in @admin
+    @finance = Department.create!(name: "Finance")
+  end
+
+  test "creates a top-level department" do
+    post "/admin/departments", params: { department: { name: "HR" } }
+    assert_redirected_to "/admin/departments"
+    assert Department.exists?(name: "HR", parent_id: nil)
+  end
+
+  test "creates a subfolder" do
+    post "/admin/departments", params: { department: { name: "Invoices", parent_id: @finance.id } }
+    assert Department.exists?(name: "Invoices", parent_id: @finance.id)
+  end
+
+  test "creates and deletes a tag" do
+    post "/admin/tags", params: { tag: { name: "Invoice" } }
+    tag = Tag.find_by(name: "invoice")
+    assert tag
+    delete "/admin/tags/#{tag.id}"
+    assert_not Tag.exists?(tag.id)
+  end
+
+  test "registers an app client with department access" do
+    post "/admin/app_clients", params: {
+      app_client: { client_identifier: "erp-app", description: "ERP",
+                    department_ids: [ @finance.id ] }
+    }
+    client = AppClient.find_by(client_identifier: "erp-app")
+    assert_equal [ @finance.id ], client.department_ids
+  end
+
+  test "uploads and deletes a document" do
+    post "/admin/documents", params: {
+      document: { department_id: @finance.id,
+                  file: fixture_file_upload("report.pdf", "application/pdf") }
+    }
+    doc = Document.find_by(filename: "report.pdf")
+    assert doc
+    assert_equal "admin:alice", doc.uploaded_by
+
+    get "/admin/documents"
+    assert_response :success
+    assert_includes response.body, "report.pdf"
+
+    delete "/admin/documents/#{doc.id}"
+    assert_not Document.exists?(doc.id)
+  end
+
+  test "downloads a document" do
+    doc = Document.new(department: @finance, filename: "report.pdf", uploaded_by: "seed")
+    doc.file.attach(io: StringIO.new("PDF!"), filename: "report.pdf",
+                    content_type: "application/pdf")
+    doc.save!
+    get "/admin/documents/#{doc.id}/download"
+    assert_equal "PDF!", response.body
+  end
+end

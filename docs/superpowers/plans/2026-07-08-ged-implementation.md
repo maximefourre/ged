@@ -2008,7 +2008,7 @@ git add -A && git commit -m "feat: async document upload with callback delivery 
 - Consumes: all models from Tasks 3–6, `Admin::BaseController` from Task 2.
 - Produces: session-authenticated CRUD screens. Admin uploads set `uploaded_by: "admin:<username>"`. Admins are not subject to department restrictions (they manage everything).
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `test/controllers/admin/admin_ui_test.rb`:
 
@@ -2083,7 +2083,7 @@ end
 Run: `bin/rails test test/controllers/admin/admin_ui_test.rb`
 Expected: FAIL (no routes)
 
-- [ ] **Step 2: Routes + controllers**
+- [x] **Step 2: Routes + controllers**
 
 In `config/routes.rb`, replace the `namespace :admin` block:
 
@@ -2270,7 +2270,7 @@ class Admin::DocumentsController < Admin::BaseController
 end
 ```
 
-- [ ] **Step 3: Views**
+- [x] **Step 3: Views**
 
 `app/views/admin/departments/index.html.erb`:
 
@@ -2413,7 +2413,7 @@ end
 <% end %>
 ```
 
-- [ ] **Step 4: Run tests, commit**
+- [x] **Step 4: Run tests, commit**
 
 Run: `bin/rails test`
 Expected: PASS
@@ -2421,6 +2421,11 @@ Expected: PASS
 ```bash
 git add -A && git commit -m "feat: admin UI for departments, tags, clients, documents"
 ```
+
+> **Executor note (Task 12):** the Task 2 test "authenticated admin reaches
+> admin area" asserted 200 on `GET /admin`; the dashboard now redirects to
+> `/admin/documents`, so the test follows the redirect. Dropped the unused
+> dashboard view (action redirects).
 
 ---
 

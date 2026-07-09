@@ -4,6 +4,12 @@ Rails.application.routes.draw do
 
   namespace :admin do
     root to: "dashboard#index"
+    resources :departments, only: [ :index, :new, :create, :destroy ]
+    resources :tags, only: [ :index, :create, :destroy ]
+    resources :app_clients, except: [ :show ]
+    resources :documents, only: [ :index, :new, :create, :destroy ] do
+      member { get :download }
+    end
   end
   root to: redirect("/admin")
 

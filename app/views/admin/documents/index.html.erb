@@ -1,0 +1,27 @@
+<h1>Documents</h1>
+<%= link_to "Upload document", new_admin_document_path %>
+<%= form_with url: admin_documents_path, method: :get do |f| %>
+  <%= f.text_field :filename, value: params[:filename], placeholder: "filename contains…" %>
+  <%= f.select :department_id,
+        options_from_collection_for_select(Department.order(:name), :id, :name,
+                                           params[:department_id]),
+        include_blank: "all departments" %>
+  <%= f.submit "Filter" %>
+<% end %>
+<table>
+  <tr><th>Filename</th><th>Department</th><th>Tags</th><th>Uploaded by</th><th>Date</th><th></th></tr>
+  <% @documents.each do |doc| %>
+    <tr>
+      <td><%= doc.filename %></td>
+      <td><%= doc.department.name %></td>
+      <td><%= doc.tags.map(&:name).join(", ") %></td>
+      <td><%= doc.uploaded_by %></td>
+      <td><%= doc.created_at.strftime("%Y-%m-%d %H:%M") %></td>
+      <td>
+        <%= link_to "Download", download_admin_document_path(doc) %>
+        <%= button_to "Delete", admin_document_path(doc), method: :delete,
+            data: { turbo_confirm: "Delete #{doc.filename}?" } %>
+      </td>
+    </tr>
+  <% end %>
+</table>

@@ -1,0 +1,11 @@
+<%= form_with model: [ :admin, @app_client ] do |f| %>
+  <div><%= f.label :client_identifier %> <%= f.text_field :client_identifier %></div>
+  <div><%= f.label :description %> <%= f.text_field :description %></div>
+  <fieldset>
+    <legend>Department access</legend>
+    <%= f.collection_check_boxes :department_ids, Department.order(:name), :id, :name do |b| %>
+      <div><%= b.checkbox %> <%= b.label %></div>
+    <% end %>
+  </fieldset>
+  <%= f.submit %>
+<% end %>

@@ -12,6 +12,8 @@ class Admin::AuthenticationTest < ActionDispatch::IntegrationTest
     admin = Admin.create!(username: "alice", password: "secret123")
     sign_in admin
     get "/admin"
+    assert_redirected_to admin_documents_path
+    follow_redirect!
     assert_response :success
   end
 end

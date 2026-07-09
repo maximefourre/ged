@@ -1,0 +1,8 @@
+<h1>New department</h1>
+<%= form_with model: [ :admin, @department ] do |f| %>
+  <div><%= f.label :name %> <%= f.text_field :name %></div>
+  <div><%= f.label :parent_id, "Parent (blank = top-level)" %>
+    <%= f.collection_select :parent_id, Department.order(:name), :id, :name,
+                            include_blank: true %></div>
+  <%= f.submit "Create" %>
+<% end %>
