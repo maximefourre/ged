@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_09_182353) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_09_182719) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
@@ -107,6 +107,20 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_09_182353) do
     t.index ["name"], name: "index_tags_on_name", unique: true
   end
 
+  create_table "upload_requests", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.string "callback_url", null: false
+    t.string "content_type"
+    t.datetime "created_at", null: false
+    t.bigint "department_id", null: false
+    t.uuid "document_id"
+    t.string "error_message"
+    t.string "filename", null: false
+    t.string "status", default: "pending", null: false
+    t.datetime "updated_at", null: false
+    t.string "uploaded_by", null: false
+    t.index ["department_id"], name: "index_upload_requests_on_department_id"
+  end
+
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "client_department_accesses", "app_clients"
@@ -115,4 +129,5 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_09_182353) do
   add_foreign_key "document_tags", "documents"
   add_foreign_key "document_tags", "tags"
   add_foreign_key "documents", "departments"
+  add_foreign_key "upload_requests", "departments"
 end

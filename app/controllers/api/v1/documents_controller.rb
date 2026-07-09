@@ -21,6 +21,10 @@ module Api
         authorize_department!(department)
         file = params.require(:file)
 
+        if params[:callback_url].present?
+          return create_async(department, file)
+        end
+
         document = Document.new(
           department: department,
           filename: file.original_filename,
@@ -53,6 +57,20 @@ module Api
       end
 
       private
+
+      def create_async(department, file)
+        upload_request = UploadRequest.create!(
+          department: department,
+          callback_url: params[:callback_url],
+          filename: file.original_filename,
+          content_type: file.content_type,
+          uploaded_by: current_app_client.client_identifier
+        )
+        StagingStore.write(upload_request.id, file.tempfile)
+        StoreDocumentJob.perform_later(upload_request.id)
+        render json: { request_id: upload_request.id, status: "pending" },
+               status: :accepted
+      end
 
       def find_authorized_document
         document = Document.find(params[:id])

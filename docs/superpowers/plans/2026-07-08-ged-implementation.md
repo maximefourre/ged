@@ -1655,7 +1655,7 @@ git add -A && git commit -m "feat: departments and tags API with tag assignment"
   - `StoreDocumentJob.perform_later(upload_request_id)`; `DeliverCallbackJob.perform_later(upload_request_id)` (POSTs `{ request_id, status, document_id }`, retries 5x with polynomial backoff, logs on final failure).
   - `POST /api/v1/documents` with `callback_url` → 202 `{ request_id, status: "pending" }`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `test/controllers/api/v1/async_upload_test.rb`:
 
@@ -1792,7 +1792,7 @@ end
 Run: `bin/rails test test/jobs test/controllers/api/v1/async_upload_test.rb`
 Expected: FAIL (constants missing)
 
-- [ ] **Step 2: Migration + model + staging store**
+- [x] **Step 2: Migration + model + staging store**
 
 ```bash
 bin/rails generate migration CreateUploadRequests
@@ -1864,7 +1864,7 @@ Add to `.gitignore`:
 
 Run: `bin/rails db:migrate`
 
-- [ ] **Step 3: Jobs**
+- [x] **Step 3: Jobs**
 
 `app/jobs/store_document_job.rb`:
 
@@ -1936,7 +1936,7 @@ class DeliverCallbackJob < ApplicationJob
 end
 ```
 
-- [ ] **Step 4: Async branch in the documents controller**
+- [x] **Step 4: Async branch in the documents controller**
 
 In `app/controllers/api/v1/documents_controller.rb`, replace `create` with:
 
@@ -1982,7 +1982,7 @@ And add to the private section:
       end
 ```
 
-- [ ] **Step 5: Run tests, commit**
+- [x] **Step 5: Run tests, commit**
 
 Run: `bin/rails test`
 Expected: PASS
@@ -1990,6 +1990,11 @@ Expected: PASS
 ```bash
 git add -A && git commit -m "feat: async document upload with callback delivery and retries"
 ```
+
+> **Executor note (Task 11):** the planned tests used
+> `assert_requested(stub) { block }`, which WebMock rejects ("doesn't accept
+> blocks"); switched to `assert_requested(:post, url) { block }`. The
+> `.gitignore` already ignores `/storage/*`, so no staging entry was needed.
 
 ---
 
