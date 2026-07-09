@@ -48,10 +48,14 @@ The company's real OAuth2/OIDC identity provider is not yet accessible. Until it
 is, a small standalone Ruby app fills that role so the full auth flow can be built
 and tested end-to-end:
 
-- Separate Rails API (or Sinatra) app, using Doorkeeper + doorkeeper-openid_connect
-- Supports the client_credentials grant and exposes a JWKS endpoint, mirroring
-  what the real company IdP is expected to provide
-- Uses SQLite for its own client/token storage (no Postgres dependency)
+- Small standalone Sinatra app using the `jwt` gem to issue RS256-signed tokens
+  (Doorkeeper was considered but rejected: it cannot issue JWT access tokens for
+  client_credentials without additional gems and a full Rails app — overkill for
+  a throwaway dev stopgap)
+- Supports the client_credentials grant and exposes a JWKS endpoint plus OIDC
+  discovery, mirroring what the real company IdP is expected to provide
+- Uses SQLite for its own client storage (no Postgres dependency); client
+  secrets stored as SHA-256 digests (dev-only, not a production credential store)
 - Runs as its own `oauth-provider` service in the same Docker Compose stack
 
 **Registering a test application client requires two steps** during this stopgap

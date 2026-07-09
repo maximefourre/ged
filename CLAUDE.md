@@ -23,6 +23,9 @@ is the source of truth.
 
 - `docs/superpowers/specs/` — design specs (source of truth for architecture
   decisions)
+- `docs/superpowers/plans/` — implementation plans (checkbox progress tracking,
+  designed for resuming and/or delegation to subagents)
+- `oauth-provider/` — temporary standalone OAuth2 dev provider (own Gemfile)
 
 ## Key architectural decisions
 
@@ -36,9 +39,9 @@ is the source of truth.
   explicitly mapped to department access — never auto-provisioned from JWT
   claims, since the real IdP's claim structure isn't known yet.
 - **Local OAuth2 provider is temporary:** the company's real IdP isn't
-  accessible yet, so a separate small Ruby app (Doorkeeper +
-  doorkeeper-openid_connect, SQLite storage) issues dev/test JWTs and exposes a
-  JWKS endpoint in the `oauth-provider` Docker Compose service. Cutting over to
+  accessible yet, so a separate small Sinatra app (`jwt` gem, SQLite storage,
+  in `oauth-provider/`) issues dev/test RS256 JWTs and exposes a JWKS endpoint
+  in the `oauth-provider` Docker Compose service. Cutting over to
   the real IdP later is a config change (JWKS URL/issuer) on the `web` service,
   not a code change. During this stopgap, registering a test client requires two
   steps: register it in `oauth-provider` to get credentials, then register the
