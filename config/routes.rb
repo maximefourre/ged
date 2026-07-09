@@ -12,7 +12,10 @@ Rails.application.routes.draw do
       get "ping", to: "pings#show"
       resources :documents, only: [ :index, :create, :show, :destroy ] do
         member { get :download }
+        resources :tags, only: [ :create ], controller: "document_tags"
       end
+      resources :departments, only: [ :index, :create ]
+      resources :tags, only: [ :index, :create ]
     end
   end
 end

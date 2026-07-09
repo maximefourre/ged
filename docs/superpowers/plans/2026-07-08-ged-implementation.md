@@ -1418,7 +1418,7 @@ git add -A && git commit -m "feat: documents API with sync upload and department
 - Consumes: Task 8 base controller, Task 9 document JSON shape.
 - Produces: `GET/POST /api/v1/departments` (list = accessible only; create = subfolder under an accessible parent), `GET/POST /api/v1/tags`, `POST /api/v1/documents/:document_id/tags` (assign existing tag by `name`). Department JSON: `{ id, name, parent_id }`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `test/controllers/api/v1/departments_test.rb`:
 
@@ -1547,7 +1547,7 @@ end
 Run: `bin/rails test test/controllers/api`
 Expected: FAIL (no routes)
 
-- [ ] **Step 2: Implement controllers + routes**
+- [x] **Step 2: Implement controllers + routes**
 
 `app/controllers/api/v1/departments_controller.rb`:
 
@@ -1630,7 +1630,7 @@ Update the `namespace :v1` block in `config/routes.rb`:
     end
 ```
 
-- [ ] **Step 3: Run tests, commit**
+- [x] **Step 3: Run tests, commit**
 
 Run: `bin/rails test`
 Expected: PASS
