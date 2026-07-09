@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>GED Admin</title>
+    <%= csrf_meta_tags %>
+    <%= stylesheet_link_tag "application" %>
+  </head>
+  <body>
+    <nav>
+      <%= link_to "Documents", "/admin/documents" %> |
+      <%= link_to "Departments", "/admin/departments" %> |
+      <%= link_to "Tags", "/admin/tags" %> |
+      <%= link_to "Clients", "/admin/app_clients" %> |
+      <% if admin_signed_in? %>
+        <%= button_to "Log out", destroy_admin_session_path, method: :delete %>
+      <% end %>
+    </nav>
+    <% flash.each do |kind, msg| %><p class="flash-<%= kind %>"><%= msg %></p><% end %>
+    <%= yield %>
+  </body>
+</html>
