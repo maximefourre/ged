@@ -800,7 +800,7 @@ git add -A && git commit -m "feat: AppClient with per-department access mapping"
   - `Auth::TokenValidator.call(token) → Auth::TokenValidator::Result` with `#client_identifier`; raises `Auth::TokenValidator::InvalidToken` on any validation failure.
   - Test helper module `JwtTestHelpers`: `issue_token(client_id:, iss:, exp:)`, `stub_jwks!`, `bearer_header(client_id)` — used by all API tests in Tasks 8–11.
 
-- [ ] **Step 1: Write the test helper and failing tests**
+- [x] **Step 1: Write the test helper and failing tests**
 
 `test/support/jwt_test_helpers.rb`:
 
@@ -893,7 +893,7 @@ end
 Run: `bin/rails test test/services`
 Expected: FAIL (constants missing)
 
-- [ ] **Step 2: Implement the services**
+- [x] **Step 2: Implement the services**
 
 `app/services/auth/jwks_cache.rb`:
 
@@ -989,12 +989,12 @@ module Auth
 end
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `bin/rails test test/services`
 Expected: PASS (6 tests)
 
-- [ ] **Step 4: Run the full suite, commit**
+- [x] **Step 4: Run the full suite, commit**
 
 Run: `bin/rails test && bin/rubocop`
 Expected: PASS, no offenses

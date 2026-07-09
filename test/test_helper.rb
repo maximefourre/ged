@@ -7,6 +7,8 @@ require "webmock/minitest"
 ENV["GED_OIDC_ISSUER"] ||= "https://idp.test"
 ENV["GED_OIDC_JWKS_URL"] ||= "https://idp.test/.well-known/jwks.json"
 
+Dir[Rails.root.join("test/support/**/*.rb")].sort.each { |f| require f }
+
 module ActiveSupport
   class TestCase
     # Run tests in parallel with specified workers
@@ -15,6 +17,8 @@ module ActiveSupport
     # Setup all fixtures in test/fixtures/*.yml for all tests in alphabetical order.
     fixtures :all
 
-    # Add more helper methods to be used by all tests here...
+    include JwtTestHelpers
+
+    setup { Auth::JwksCache.reset! }
   end
 end
