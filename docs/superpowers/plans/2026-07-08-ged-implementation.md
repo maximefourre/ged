@@ -539,7 +539,7 @@ git add -A && git commit -m "feat: Tag model with normalized unique names"
 **Interfaces:**
 - Produces: `Document` (UUID id, `filename`, `content_type`, `byte_size`, `department`, `uploaded_by`, `has_one_attached :file`, `has_many :tags`). `Tag#documents`. Later tasks rely on `Document#file` and these column names.
 
-- [ ] **Step 1: Install Active Storage, write failing tests**
+- [x] **Step 1: Install Active Storage, write failing tests**
 
 ```bash
 bin/rails active_storage:install
@@ -590,7 +590,7 @@ end
 Run: `bin/rails test test/models/document_test.rb`
 Expected: FAIL (table missing)
 
-- [ ] **Step 2: Migrations + models**
+- [x] **Step 2: Migrations + models**
 
 ```bash
 bin/rails generate migration EnablePgcrypto
@@ -664,7 +664,7 @@ Add to `app/models/department.rb` (inside the class, with the other associations
 
 Run: `bin/rails db:migrate`
 
-- [ ] **Step 3: Run tests, commit**
+- [x] **Step 3: Run tests, commit**
 
 Run: `bin/rails test`
 Expected: PASS (all)

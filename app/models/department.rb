@@ -2,6 +2,7 @@ class Department < ApplicationRecord
   belongs_to :parent, class_name: "Department", optional: true
   has_many :children, class_name: "Department", foreign_key: :parent_id,
            dependent: :restrict_with_error
+  has_many :documents, dependent: :restrict_with_error
 
   validates :name, presence: true, uniqueness: { scope: :parent_id }
   validate :parent_is_not_self_or_descendant
