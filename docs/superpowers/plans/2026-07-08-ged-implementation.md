@@ -1015,7 +1015,7 @@ git add -A && git commit -m "feat: JWKS cache and JWT token validator (fail-clos
 - Consumes: `Auth::TokenValidator.call`, `AppClient.can_access?`.
 - Produces: `Api::V1::BaseController` with `current_app_client → AppClient` and `authorize_department!(department)` (raises internal `NotAuthorizedError` → 403). Standard rescues: `ActiveRecord::RecordNotFound` → 404 `{error}`, `ActionController::ParameterMissing` → 400, `ActiveRecord::RecordInvalid` → 422. All Task 9–11 controllers inherit from this.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `test/controllers/api/v1/authentication_test.rb`:
 
@@ -1060,7 +1060,7 @@ end
 Run: `bin/rails test test/controllers/api`
 Expected: FAIL (no route)
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 `app/controllers/api/v1/base_controller.rb`:
 
@@ -1141,7 +1141,7 @@ In `config/routes.rb`, add inside `Rails.application.routes.draw`:
   end
 ```
 
-- [ ] **Step 3: Run tests, commit**
+- [x] **Step 3: Run tests, commit**
 
 Run: `bin/rails test`
 Expected: PASS

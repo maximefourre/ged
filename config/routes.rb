@@ -6,4 +6,10 @@ Rails.application.routes.draw do
     root to: "dashboard#index"
   end
   root to: redirect("/admin")
+
+  namespace :api do
+    namespace :v1 do
+      get "ping", to: "pings#show"
+    end
+  end
 end
