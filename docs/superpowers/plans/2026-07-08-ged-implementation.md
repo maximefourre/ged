@@ -2443,7 +2443,7 @@ A self-contained app in `oauth-provider/` with its own Gemfile. It issues RS256 
   - `GET /.well-known/openid-configuration` → `{ issuer, token_endpoint, jwks_uri }`
   - CLI: `bin/register-client <client_id>` prints a generated secret once.
 
-- [ ] **Step 1: Project skeleton and failing tests**
+- [x] **Step 1: Project skeleton and failing tests**
 
 `oauth-provider/Gemfile`:
 
@@ -2572,7 +2572,7 @@ cd oauth-provider && bundle install && bundle exec rake
 
 Expected: FAIL (app.rb missing)
 
-- [ ] **Step 2: Implement key store, client store, app**
+- [x] **Step 2: Implement key store, client store, app**
 
 `oauth-provider/lib/key_store.rb`:
 
@@ -2769,12 +2769,12 @@ Cutover to the real IdP = change `GED_OIDC_ISSUER` / `GED_OIDC_JWKS_URL` on the
 GED web service, then delete this app.
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `cd oauth-provider && bundle exec rake`
 Expected: PASS (6 tests)
 
-- [ ] **Step 4: End-to-end smoke test against the GED app (manual)**
+- [x] **Step 4: End-to-end smoke test against the GED app (manual)** — verified 2026-07-09: 401 (no token) → 403 (unregistered client) → 200 (registered), real JWKS over HTTP
 
 ```bash
 # terminal A
@@ -2796,11 +2796,15 @@ curl -s http://localhost:3000/api/v1/ping -H "Authorization: Bearer $TOKEN"
 
 Expected: the 401→403→200 progression proves JWKS validation and provisioning work end-to-end.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat: standalone Sinatra OAuth2 dev provider (client_credentials + JWKS)"
 ```
+
+> **Executor note (Task 13):** Sinatra 4's host-authorization protection
+> 403s rack-test's default `example.org` host in the development env;
+> the test bootstrap sets `APP_ENV=test`.
 
 ---
 

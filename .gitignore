@@ -36,3 +36,4 @@
 # Orchestration scratch files (never commit).
 .superpowers/
 
+tmp_test_data/

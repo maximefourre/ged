@@ -1,0 +1,11 @@
+#!/usr/bin/env ruby
+require_relative "../lib/key_store"
+require_relative "../lib/client_store"
+
+client_id = ARGV[0]
+abort "usage: bin/register-client <client_id>" if client_id.to_s.empty?
+
+secret = OauthProvider::ClientStore.register(client_id)
+puts "client_id:     #{client_id}"
+puts "client_secret: #{secret}"
+puts "(store this secret now — it is not retrievable later)"

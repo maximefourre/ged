@@ -1,0 +1,13 @@
+source "https://rubygems.org"
+
+gem "sinatra", "~> 4.1"
+gem "puma"
+gem "rackup"
+gem "jwt"
+gem "sqlite3"
+
+group :test do
+  gem "minitest"
+  gem "rack-test"
+  gem "rake"
+end
