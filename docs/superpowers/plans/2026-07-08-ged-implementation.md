@@ -33,7 +33,7 @@ The machine has only system Ruby 2.6, no Rails, no Postgres, no Docker. This tas
 **Interfaces:**
 - Produces: bootable Rails app; `bin/rails test` green; Postgres running as a brew service.
 
-- [ ] **Step 1: Install mise + Ruby 3.4 + PostgreSQL 17**
+- [x] **Step 1: Install mise + Ruby 3.4 + PostgreSQL 17**
 
 ```bash
 brew install mise postgresql@17
@@ -46,7 +46,7 @@ ruby -v                  # expect: ruby 3.4.x
 
 Note for the executor: every later `ruby`/`rails`/`bundle`/`bin/*` command in this plan assumes mise's Ruby is active (`mise x -- <cmd>` works if activation is unavailable in your shell).
 
-- [ ] **Step 2: Install Rails and generate the app in place**
+- [x] **Step 2: Install Rails and generate the app in place**
 
 ```bash
 gem install rails -v "~> 8.0"
@@ -57,7 +57,7 @@ rails new . --name=ged --database=postgresql \
 
 `--force` overwrites generated-file conflicts only; verify `CLAUDE.md` and `docs/` are untouched afterwards (`git status`).
 
-- [ ] **Step 3: Create databases and write the health-check test**
+- [x] **Step 3: Create databases and write the health-check test**
 
 ```bash
 bin/rails db:create db:migrate
@@ -76,12 +76,12 @@ class HealthCheckTest < ActionDispatch::IntegrationTest
 end
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bin/rails test test/integration/health_check_test.rb`
 Expected: 1 runs, 1 assertions, 0 failures
 
-- [ ] **Step 5: Add shared gems now (used from Task 2 on)**
+- [x] **Step 5: Add shared gems now (used from Task 2 on)**
 
 In `Gemfile` add:
 
@@ -107,7 +107,7 @@ ENV["GED_OIDC_ISSUER"] ||= "https://idp.test"
 ENV["GED_OIDC_JWKS_URL"] ||= "https://idp.test/.well-known/jwks.json"
 ```
 
-- [ ] **Step 6: Verify full suite passes, then commit**
+- [x] **Step 6: Verify full suite passes, then commit**
 
 Run: `bin/rails test && bin/rubocop`
 Expected: 0 failures, no offenses
@@ -129,7 +129,7 @@ git commit -m "chore: scaffold Rails 8 app with postgres, devise/jwt/webmock gem
 **Interfaces:**
 - Produces: `Admin` model (`username`, Devise `:database_authenticatable`); `Admin::BaseController` with `before_action :authenticate_admin!` for all later admin controllers; seeded admin from `GED_ADMIN_USERNAME`/`GED_ADMIN_PASSWORD`.
 
-- [ ] **Step 1: Install Devise and generate the Admin model**
+- [x] **Step 1: Install Devise and generate the Admin model**
 
 ```bash
 bin/rails generate devise:install
@@ -171,7 +171,7 @@ config.strip_whitespace_keys = [:username]
 
 Run: `bin/rails db:migrate`
 
-- [ ] **Step 2: Write failing tests**
+- [x] **Step 2: Write failing tests**
 
 `test/models/admin_test.rb`:
 
@@ -224,7 +224,7 @@ rm -f test/fixtures/admins.yml
 Run: `bin/rails test`
 Expected: FAIL (no `/admin` route, controller missing)
 
-- [ ] **Step 3: Implement routes, base controller, layout, placeholder dashboard**
+- [x] **Step 3: Implement routes, base controller, layout, placeholder dashboard**
 
 `config/routes.rb`:
 
@@ -315,12 +315,12 @@ Admin.find_or_create_by!(username: ENV.fetch("GED_ADMIN_USERNAME", "admin")) do 
 end
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `bin/rails test`
 Expected: PASS (all)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat: admin authentication with Devise (username/password)"
