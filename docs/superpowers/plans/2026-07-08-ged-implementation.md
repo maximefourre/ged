@@ -1162,7 +1162,7 @@ git add -A && git commit -m "feat: API bearer-token authentication plumbing"
 - Consumes: `authorize_department!`, `current_app_client.accessible_department_ids`, `Department#subtree_ids`.
 - Produces: REST endpoints under `/api/v1/documents`. Document JSON shape (used again in Tasks 10–12): `{ id, filename, content_type, byte_size, department_id, uploaded_by, tags: [names], created_at }`. Task 11 extends `create` with the async branch — keep `create` structured as shown (guard clause at top) so the async branch slots in.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `test/controllers/api/v1/documents_test.rb`:
 
@@ -1294,7 +1294,7 @@ printf 'PDF!' > test/fixtures/files/report.pdf
 Run: `bin/rails test test/controllers/api/v1/documents_test.rb`
 Expected: FAIL (no routes)
 
-- [ ] **Step 2: Implement controller + routes**
+- [x] **Step 2: Implement controller + routes**
 
 `app/controllers/api/v1/documents_controller.rb`:
 
@@ -1391,7 +1391,7 @@ In `config/routes.rb`, replace the `namespace :api` block:
   end
 ```
 
-- [ ] **Step 3: Run tests, commit**
+- [x] **Step 3: Run tests, commit**
 
 Run: `bin/rails test`
 Expected: PASS
@@ -1399,6 +1399,12 @@ Expected: PASS
 ```bash
 git add -A && git commit -m "feat: documents API with sync upload and department authorization"
 ```
+
+> **Executor note (Task 9):** the Active Storage install migration created
+> `active_storage_attachments.record_id` as bigint, which silently
+> integer-cast Document uuid ids (flaky `attached?` failures). Added
+> corrective migration `ChangeActiveStorageRecordIdToUuid` (wipes AS rows,
+> converts record_id to uuid).
 
 ---
 

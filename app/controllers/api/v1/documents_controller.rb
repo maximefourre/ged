@@ -1,0 +1,77 @@
+module Api
+  module V1
+    class DocumentsController < BaseController
+      def index
+        scope = Document.where(department_id: current_app_client.accessible_department_ids)
+        if params[:department_id].present?
+          department = Department.find(params[:department_id])
+          authorize_department!(department)
+          scope = scope.where(department_id: department.subtree_ids)
+        end
+        if params[:filename].present?
+          scope = scope.where("filename ILIKE ?",
+                              "%#{Document.sanitize_sql_like(params[:filename])}%")
+        end
+        scope = scope.joins(:tags).where(tags: { name: params[:tag] }) if params[:tag].present?
+        render json: scope.includes(:tags).order(created_at: :desc).map { |d| document_json(d) }
+      end
+
+      def create
+        department = Department.find(params.require(:department_id))
+        authorize_department!(department)
+        file = params.require(:file)
+
+        document = Document.new(
+          department: department,
+          filename: file.original_filename,
+          content_type: file.content_type,
+          byte_size: file.size,
+          uploaded_by: current_app_client.client_identifier
+        )
+        document.file.attach(io: file.tempfile, filename: file.original_filename,
+                             content_type: file.content_type)
+        document.save!
+        render json: document_json(document), status: :created
+      end
+
+      def show
+        document = find_authorized_document
+        render json: document_json(document)
+      end
+
+      def download
+        document = find_authorized_document
+        send_data document.file.download,
+                  filename: document.filename,
+                  content_type: document.content_type || "application/octet-stream"
+      end
+
+      def destroy
+        document = find_authorized_document
+        document.destroy!
+        head :no_content
+      end
+
+      private
+
+      def find_authorized_document
+        document = Document.find(params[:id])
+        authorize_department!(document.department)
+        document
+      end
+
+      def document_json(document)
+        {
+          id: document.id,
+          filename: document.filename,
+          content_type: document.content_type,
+          byte_size: document.byte_size,
+          department_id: document.department_id,
+          uploaded_by: document.uploaded_by,
+          tags: document.tags.map(&:name),
+          created_at: document.created_at
+        }
+      end
+    end
+  end
+end
