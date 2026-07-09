@@ -34,7 +34,7 @@ class AppTest < Minitest::Test
 
     jwks = JWT::JWK::Set.new(OauthProvider::KeyStore.jwks)
     payload, header = JWT.decode(body["access_token"], nil, true,
-                                 algorithms: ["RS256"], jwks: jwks)
+                                 algorithms: [ "RS256" ], jwks: jwks)
     assert_equal "erp-app", payload["sub"]
     assert_equal "http://oauth-provider.test", payload["iss"]
     assert payload["exp"] > Time.now.to_i

@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  oauth-provider:
+    build: ./oauth-provider
+    environment:
+      OAUTH_ISSUER: http://oauth-provider:9292
+    ports:
+      - "9292:9292"
+    volumes:
+      - oauth_data:/app/data
+
+  web:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      oauth-provider:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/ged_production
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?run with SECRET_KEY_BASE=$(bin/rails secret)}
+      RAILS_ENV: production
+      SOLID_QUEUE_IN_PUMA: "true"
+      GED_OIDC_ISSUER: http://oauth-provider:9292
+      GED_OIDC_JWKS_URL: http://oauth-provider:9292/.well-known/jwks.json
+      GED_ADMIN_USERNAME: ${GED_ADMIN_USERNAME:-admin}
+      GED_ADMIN_PASSWORD: ${GED_ADMIN_PASSWORD:?set GED_ADMIN_PASSWORD}
+    ports:
+      - "3000:3000"
+    volumes:
+      - storage:/rails/storage
+
+volumes:
+  pgdata:
+  oauth_data:
+  storage:

@@ -2820,7 +2820,7 @@ git add -A && git commit -m "feat: standalone Sinatra OAuth2 dev provider (clien
 - Consumes: everything built in Tasks 1–13.
 - Produces: `docker compose up` brings up the full stack; documented bootstrap procedure.
 
-- [ ] **Step 1: production config tweaks**
+- [x] **Step 1: production config tweaks**
 
 In `config/environments/production.rb`, set (the app runs on a LAN over plain HTTP by design — see spec Non-goals):
 
@@ -2831,7 +2831,7 @@ In `config/environments/production.rb`, set (the app runs on a LAN over plain HT
 
 Also ensure Active Storage stays on local disk in production (`config.active_storage.service = :local` — this is the generated default; verify).
 
-- [ ] **Step 2: oauth-provider Dockerfile**
+- [x] **Step 2: oauth-provider Dockerfile**
 
 `oauth-provider/Dockerfile`:
 
@@ -2853,7 +2853,7 @@ CMD ["bundle", "exec", "rackup", "--host", "0.0.0.0", "-p", "9292"]
 
 (Generate `Gemfile.lock` first if missing: `cd oauth-provider && bundle lock`.)
 
-- [ ] **Step 3: docker-compose.yml at repo root**
+- [x] **Step 3: docker-compose.yml at repo root**
 
 ```yaml
 services:
@@ -2922,7 +2922,7 @@ production:
     migrations_paths: db/queue_migrate
 ```
 
-- [ ] **Step 4: Root README**
+- [x] **Step 4: Root README**
 
 `README.md`:
 
@@ -2968,7 +2968,7 @@ tokens fetched from the host at `localhost:9292` carry `iss=http://oauth-provide
 - [ ] Restart stack (`docker compose restart`) → documents still present
 ```
 
-- [ ] **Step 5: Fill CLAUDE.md Conventions section**
+- [x] **Step 5: Fill CLAUDE.md Conventions section** (now lives in AGENTS.md, imported by CLAUDE.md)
 
 Replace the placeholder `## Conventions` section in `CLAUDE.md` with:
 
@@ -2985,7 +2985,10 @@ Replace the placeholder `## Conventions` section in `CLAUDE.md` with:
   forbidden department, 404 not found, 400 missing param, 422 validation.
 ```
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit** — Docker not installed on this machine:
+  compose files complete but runtime-unverified; manual verification steps
+  documented in README. Also added the missing `.mise.toml` (Task 1 never
+  wrote it) so `mise install` works from a fresh clone.
 
 If Docker is available:
 

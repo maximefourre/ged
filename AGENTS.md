@@ -58,4 +58,11 @@ is the source of truth.
 
 ## Conventions
 
-(To be filled in once the codebase exists — e.g. test framework, linting, CI.)
+- Tests: Minitest (Rails default), WebMock for HTTP stubs. Run `bin/rails test`
+  (main app) and `cd oauth-provider && bundle exec rake` (provider).
+- Lint: RuboCop rails-omakase — `bin/rubocop` must pass before committing.
+- Ruby via mise (`.mise.toml`); dev Postgres via Homebrew (`postgresql@17`).
+- Env vars: `GED_OIDC_ISSUER`, `GED_OIDC_JWKS_URL`, `GED_CLIENT_ID_CLAIM`
+  (default `sub`), `GED_ADMIN_USERNAME`, `GED_ADMIN_PASSWORD`.
+- API error contract: 401 invalid/missing token, 403 unregistered client or
+  forbidden department, 404 not found, 400 missing param, 422 validation.

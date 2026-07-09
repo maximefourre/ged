@@ -25,13 +25,13 @@ module OauthProvider
     def register(client_id)
       secret = SecureRandom.hex(32)
       db.execute("INSERT OR REPLACE INTO clients (client_id, secret_digest) VALUES (?, ?)",
-                 [client_id, Digest::SHA256.hexdigest(secret)])
+                 [ client_id, Digest::SHA256.hexdigest(secret) ])
       secret
     end
 
     def authenticate(client_id, client_secret)
       return false if client_id.to_s.empty? || client_secret.to_s.empty?
-      row = db.get_first_row("SELECT secret_digest FROM clients WHERE client_id = ?", [client_id])
+      row = db.get_first_row("SELECT secret_digest FROM clients WHERE client_id = ?", [ client_id ])
       return false unless row
       expected = row[0]
       actual = Digest::SHA256.hexdigest(client_secret)

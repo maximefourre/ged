@@ -33,7 +33,7 @@ module OauthProvider
     end
 
     def jwks
-      { keys: [jwk.export] } # export without private key
+      { keys: [ jwk.export ] } # export without private key
     end
   end
 end
