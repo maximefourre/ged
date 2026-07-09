@@ -336,7 +336,7 @@ git add -A && git commit -m "feat: admin authentication with Devise (username/pa
 **Interfaces:**
 - Produces: `Department` (`name`, optional `parent`), `Department#self_and_ancestors → Array<Department>` (self first, root last), `Department#subtree_ids → Array<Integer>` (self + all descendants). Later tasks (6, 9, 10) rely on these exact names.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `test/models/department_test.rb`:
 
@@ -381,7 +381,7 @@ end
 Run: `bin/rails test test/models/department_test.rb`
 Expected: FAIL (table missing)
 
-- [ ] **Step 2: Migration + model**
+- [x] **Step 2: Migration + model**
 
 ```bash
 bin/rails generate migration CreateDepartments
@@ -444,12 +444,12 @@ end
 
 Run: `bin/rails db:migrate`
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `bin/rails test test/models/department_test.rb`
 Expected: PASS (4 tests)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A && git commit -m "feat: Department model with hierarchy and subtree helpers"
