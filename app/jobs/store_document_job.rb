@@ -3,7 +3,7 @@ class StoreDocumentJob < ApplicationJob
 
   def perform(upload_request_id)
     upload_request = UploadRequest.find(upload_request_id)
-    return unless upload_request.status == "pending"
+    return unless claim(upload_request)
 
     begin
       path = StagingStore.path(upload_request.id)
@@ -25,5 +25,15 @@ class StoreDocumentJob < ApplicationJob
       StagingStore.delete(upload_request.id)
       DeliverCallbackJob.perform_later(upload_request.id)
     end
+  end
+
+  private
+
+  # Atomic pending -> processing claim: a reconcile re-enqueue racing the
+  # original job (queue backlog > STUCK_AFTER) must not store the document
+  # twice. A plain status check would let both executions through.
+  def claim(upload_request)
+    UploadRequest.where(id: upload_request.id, status: "pending")
+                 .update_all(status: "processing", updated_at: Time.current) == 1
   end
 end

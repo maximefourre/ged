@@ -9,7 +9,7 @@ class ReconcileUploadRequestsJobTest < ActiveJob::TestCase
     request = UploadRequest.create!(department: @finance, filename: "report.pdf",
                                     callback_url: "https://caller.test/cb",
                                     uploaded_by: "erp-app", status: status)
-    request.update_columns(created_at: age.ago) if age.positive?
+    request.update_columns(created_at: age.ago, updated_at: age.ago) if age.positive?
     request
   end
 
@@ -34,6 +34,32 @@ class ReconcileUploadRequestsJobTest < ActiveJob::TestCase
 
   test "leaves fresh pending requests alone" do
     create_request
+    assert_no_enqueued_jobs { ReconcileUploadRequestsJob.perform_now }
+  end
+
+  test "resets stuck processing requests with a staging file and re-enqueues" do
+    # a worker crashed mid-job (claimed but never finished): staging file
+    # still there, so the upload can be retried from scratch
+    request = create_request(status: "processing", age: 20.minutes)
+    StagingStore.write(request.id, StringIO.new("PDF!"))
+    ReconcileUploadRequestsJob.perform_now
+    assert_equal "pending", request.reload.status
+    assert_enqueued_with(job: StoreDocumentJob, args: [ request.id ])
+  ensure
+    StagingStore.delete(request.id)
+  end
+
+  test "fails stuck processing requests whose staging file is gone and enqueues the callback" do
+    request = create_request(status: "processing", age: 20.minutes)
+    ReconcileUploadRequestsJob.perform_now
+    request.reload
+    assert_equal "failed", request.status
+    assert request.error_message.present?
+    assert_enqueued_with(job: DeliverCallbackJob, args: [ request.id ])
+  end
+
+  test "leaves fresh processing requests alone" do
+    create_request(status: "processing")
     assert_no_enqueued_jobs { ReconcileUploadRequestsJob.perform_now }
   end
 

@@ -1,5 +1,5 @@
 class UploadRequest < ApplicationRecord
-  STATUSES = %w[pending completed failed].freeze
+  STATUSES = %w[pending processing completed failed].freeze
 
   belongs_to :department
 

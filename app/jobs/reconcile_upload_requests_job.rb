@@ -9,6 +9,7 @@ class ReconcileUploadRequestsJob < ApplicationJob
 
   def perform
     recover_stuck_pending_requests
+    recover_stuck_processing_requests
     purge_old_terminal_requests
     purge_old_staging_files
   end
@@ -21,11 +22,30 @@ class ReconcileUploadRequestsJob < ApplicationJob
       if File.exist?(StagingStore.path(request.id))
         StoreDocumentJob.perform_later(request.id)
       else
-        request.update!(status: "failed",
-                        error_message: "staged file lost before processing")
-        DeliverCallbackJob.perform_later(request.id)
+        fail_and_notify(request)
       end
     end
+  end
+
+  # A worker died mid-job: the claim happened but neither terminal update nor
+  # the ensure block ran. With the staging file still on disk the upload can
+  # be retried from scratch; without it there is nothing left to store.
+  def recover_stuck_processing_requests
+    UploadRequest.where(status: "processing")
+                 .where(updated_at: ..STUCK_AFTER.ago).find_each do |request|
+      if File.exist?(StagingStore.path(request.id))
+        request.update!(status: "pending")
+        StoreDocumentJob.perform_later(request.id)
+      else
+        fail_and_notify(request)
+      end
+    end
+  end
+
+  def fail_and_notify(request)
+    request.update!(status: "failed",
+                    error_message: "staged file lost before processing")
+    DeliverCallbackJob.perform_later(request.id)
   end
 
   def purge_old_terminal_requests
