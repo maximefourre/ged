@@ -42,6 +42,9 @@ class ReconcileUploadRequestsJob < ApplicationJob
   def purge_old_staging_files
     Dir.glob(StagingStore.root.join("*")).each do |path|
       File.delete(path) if File.mtime(path) < RETENTION.ago
+    rescue Errno::ENOENT
+      # deleted concurrently (e.g. StoreDocumentJob finishing) between the
+      # glob and the mtime/delete — already gone, nothing to purge
     end
   end
 end
