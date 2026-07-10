@@ -1,6 +1,8 @@
 module Api
   module V1
     class DocumentsController < BaseController
+      include DocumentStreaming
+
       def index
         scope = Document.where(department_id: current_app_client.accessible_department_ids)
         if params[:department_id].present?
@@ -47,10 +49,7 @@ module Api
       end
 
       def download
-        document = find_authorized_document
-        send_data document.file.download,
-                  filename: document.filename,
-                  content_type: document.content_type || "application/octet-stream"
+        send_document_file(find_authorized_document)
       end
 
       def destroy

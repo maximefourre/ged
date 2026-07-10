@@ -1,4 +1,6 @@
 class Admin::DocumentsController < Admin::BaseController
+  include DocumentStreaming
+
   def index
     @documents = Document.includes(:department, :tags).order(created_at: :desc)
     if params[:filename].present?
@@ -35,9 +37,7 @@ class Admin::DocumentsController < Admin::BaseController
   end
 
   def download
-    document = Document.find(params[:id])
-    send_data document.file.download, filename: document.filename,
-              content_type: document.content_type || "application/octet-stream"
+    send_document_file(Document.find(params[:id]))
   end
 
   def destroy
