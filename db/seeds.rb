@@ -1,18 +1,13 @@
-# This file should ensure the existence of records required to run the application in every environment (production,
-# development, test). The code here should be idempotent so that it can be executed at any point in every environment.
-# The data can then be loaded with the bin/rails db:seed command (or created alongside the database with db:setup).
-#
-# Example:
-#
-#   ["Action", "Comedy", "Drama", "Horror"].each do |genre_name|
-#     MovieGenre.find_or_create_by!(name: genre_name)
-#   end
+# Idempotent (bin/rails db:seed can run at any point in every environment),
+# and keeps the admin password in sync with GED_ADMIN_PASSWORD — a plain
+# find_or_create_by! would silently ignore a changed env var.
 
-Admin.find_or_create_by!(username: ENV.fetch("GED_ADMIN_USERNAME", "admin")) do |admin|
-  admin.password =
-    if Rails.env.development?
-      ENV.fetch("GED_ADMIN_PASSWORD", "changeme")
-    else
-      ENV.fetch("GED_ADMIN_PASSWORD") # raises KeyError if unset outside development
-    end
-end
+admin = Admin.find_or_initialize_by(username: ENV.fetch("GED_ADMIN_USERNAME", "admin"))
+password =
+  if Rails.env.development?
+    ENV.fetch("GED_ADMIN_PASSWORD", "changeme")
+  else
+    ENV.fetch("GED_ADMIN_PASSWORD") # raises KeyError if unset outside development
+  end
+admin.password = password unless admin.persisted? && admin.valid_password?(password)
+admin.save!
