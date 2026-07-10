@@ -41,6 +41,19 @@ class Api::V1::AsyncUploadTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "rejects callback_url values that are not http(s) URLs with 422" do
+    [ "notaurl", "file:///etc/passwd", "ftp://caller.test/cb" ].each do |bad_url|
+      assert_no_enqueued_jobs do
+        post "/api/v1/documents", headers: bearer_header("erp-app"),
+             params: { department_id: @finance.id,
+                       file: fixture_file_upload("report.pdf", "application/pdf"),
+                       callback_url: bad_url }
+      end
+      assert_response :unprocessable_entity, "expected 422 for callback_url=#{bad_url.inspect}"
+      assert_equal 0, UploadRequest.count
+    end
+  end
+
   test "async upload into a forbidden department returns 403 and enqueues nothing" do
     hr = Department.create!(name: "HR")
     assert_no_enqueued_jobs do
