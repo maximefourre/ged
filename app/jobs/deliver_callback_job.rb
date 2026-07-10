@@ -19,7 +19,8 @@ class DeliverCallbackJob < ApplicationJob
     payload = {
       request_id: upload_request.id,
       status: upload_request.status,
-      document_id: upload_request.document_id
+      document_id: upload_request.document_id,
+      error_message: upload_request.error_message
     }
     uri = URI(upload_request.callback_url)
     response = Net::HTTP.start(uri.host, uri.port,

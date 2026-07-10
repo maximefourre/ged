@@ -16,6 +16,18 @@ class DeliverCallbackJobTest < ActiveJob::TestCase
     end
   end
 
+  test "includes the error message for failed requests" do
+    @request.update!(status: "failed",
+                     error_message: "staged file lost before processing")
+    stub_request(:post, "https://caller.test/cb").to_return(status: 200)
+    DeliverCallbackJob.new.perform(@request.id)
+    assert_requested(:post, "https://caller.test/cb") do |req|
+      body = JSON.parse(req.body)
+      body["status"] == "failed" &&
+        body["error_message"] == "staged file lost before processing"
+    end
+  end
+
   test "raises DeliveryFailed on non-2xx so retry_on kicks in" do
     stub_request(:post, "https://caller.test/cb").to_return(status: 500)
     assert_raises(DeliverCallbackJob::DeliveryFailed) do
