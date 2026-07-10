@@ -2,12 +2,13 @@ class Admin::DocumentsController < Admin::BaseController
   include DocumentStreaming
 
   def index
-    @documents = Document.includes(:department, :tags).order(created_at: :desc)
+    scope = Document.includes(:department, :tags).order(created_at: :desc, id: :desc)
     if params[:filename].present?
-      @documents = @documents.where("filename ILIKE ?",
-                                    "%#{Document.sanitize_sql_like(params[:filename])}%")
+      scope = scope.where("filename ILIKE ?",
+                          "%#{Document.sanitize_sql_like(params[:filename])}%")
     end
-    @documents = @documents.where(department_id: params[:department_id]) if params[:department_id].present?
+    scope = scope.where(department_id: params[:department_id]) if params[:department_id].present?
+    @documents = paginate(scope)
   end
 
   def new
