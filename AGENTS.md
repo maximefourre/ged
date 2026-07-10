@@ -71,10 +71,11 @@ is the source of truth.
 - **Jobs in production run inside Puma** (Solid Queue via
   `SOLID_QUEUE_IN_PUMA=true` in docker-compose); dev/test use the default
   ActiveJob adapters. There is no separate worker container.
-- **Admin controllers do NOT reuse the API controllers** (despite a spec
-  sentence suggesting it) — document upload logic currently exists in
+- **Document creation is shared, controllers are not:** the admin UI does not
+  reuse the API controllers (despite a spec sentence suggesting it) — instead
   `Api::V1::DocumentsController`, `Admin::DocumentsController`, and
-  `StoreDocumentJob`; touch all three when changing it.
+  `StoreDocumentJob` all create documents through the `DocumentCreator`
+  service. Listing/download logic is still per-controller.
 
 ## Known gaps / pitfalls
 

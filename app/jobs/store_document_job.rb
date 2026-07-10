@@ -7,17 +7,15 @@ class StoreDocumentJob < ApplicationJob
 
     begin
       path = StagingStore.path(upload_request.id)
-      document = Document.new(
-        department_id: upload_request.department_id,
-        filename: upload_request.filename,
-        content_type: upload_request.content_type,
-        byte_size: File.size(path),
-        uploaded_by: upload_request.uploaded_by
-      )
-      File.open(path, "rb") do |file|
-        document.file.attach(io: file, filename: upload_request.filename,
-                             content_type: upload_request.content_type)
-        document.save!
+      document = File.open(path, "rb") do |file|
+        DocumentCreator.call(
+          department_id: upload_request.department_id,
+          io: file,
+          filename: upload_request.filename,
+          content_type: upload_request.content_type,
+          byte_size: File.size(path),
+          uploaded_by: upload_request.uploaded_by
+        )
       end
       upload_request.update!(status: "completed", document_id: document.id)
     rescue StandardError => e

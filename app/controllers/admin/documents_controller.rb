@@ -20,21 +20,18 @@ class Admin::DocumentsController < Admin::BaseController
     unless file.respond_to?(:original_filename)
       redirect_to new_admin_document_path, alert: "File must be a file upload." and return
     end
-    document = Document.new(
+    DocumentCreator.call(
       department_id: params.require(:document)[:department_id],
+      io: file.tempfile,
       filename: file.original_filename,
       content_type: file.content_type,
       byte_size: file.size,
       uploaded_by: "admin:#{current_admin.username}"
     )
-    document.file.attach(io: file.tempfile, filename: file.original_filename,
-                         content_type: file.content_type)
-    if document.save
-      redirect_to admin_documents_path, notice: "Document uploaded."
-    else
-      redirect_to new_admin_document_path,
-                  alert: document.errors.full_messages.join(", ")
-    end
+    redirect_to admin_documents_path, notice: "Document uploaded."
+  rescue ActiveRecord::RecordInvalid => e
+    redirect_to new_admin_document_path,
+                alert: e.record.errors.full_messages.join(", ")
   end
 
   def download

@@ -29,16 +29,14 @@ module Api
           return create_async(department, file)
         end
 
-        document = Document.new(
-          department: department,
+        document = DocumentCreator.call(
+          department_id: department.id,
+          io: file.tempfile,
           filename: file.original_filename,
           content_type: file.content_type,
           byte_size: file.size,
           uploaded_by: current_app_client.client_identifier
         )
-        document.file.attach(io: file.tempfile, filename: file.original_filename,
-                             content_type: file.content_type)
-        document.save!
         render json: document_json(document), status: :created
       end
 
