@@ -34,6 +34,35 @@ class Auth::TokenValidatorTest < ActiveSupport::TestCase
     end
   end
 
+  test "recovers from IdP key rotation by re-fetching JWKS on unknown kid" do
+    stub_jwks!
+    Auth::JwksCache.instance.key_set # prime with the pre-rotation key set
+    rotated_key = OpenSSL::PKey::RSA.new(2048)
+    rotated_jwk = JWT::JWK.new(rotated_key, { use: "sig", alg: "RS256" })
+    stub_request(:get, ENV.fetch("GED_OIDC_JWKS_URL"))
+      .to_return(status: 200, body: { keys: [ rotated_jwk.export ] }.to_json,
+                 headers: { "Content-Type" => "application/json" })
+    token = JWT.encode({ sub: "erp-app", iss: ENV["GED_OIDC_ISSUER"],
+                         exp: 1.hour.from_now.to_i }, rotated_key, "RS256",
+                       kid: rotated_jwk.kid)
+    result = Auth::TokenValidator.call(token)
+    assert_equal "erp-app", result.client_identifier
+  end
+
+  test "unknown kid forces at most one JWKS re-fetch per rate-limit window" do
+    stub_jwks!
+    Auth::JwksCache.instance.key_set # prime the cache (1 request)
+    other_key = OpenSSL::PKey::RSA.new(2048)
+    2.times do
+      token = JWT.encode({ sub: "erp-app", iss: ENV["GED_OIDC_ISSUER"],
+                           exp: 1.hour.from_now.to_i }, other_key, "RS256",
+                         kid: "garbage")
+      assert_raises(Auth::TokenValidator::InvalidToken) { Auth::TokenValidator.call(token) }
+    end
+    # prime + a single forced refresh; the second garbage kid must not re-fetch
+    assert_requested(:get, ENV.fetch("GED_OIDC_JWKS_URL"), times: 2)
+  end
+
   test "keeps serving stale keys when a refresh fails" do
     stub_jwks!
     Auth::JwksCache.instance.key_set  # prime the cache
