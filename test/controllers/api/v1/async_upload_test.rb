@@ -54,6 +54,36 @@ class Api::V1::AsyncUploadTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "upload request status can be polled through pending and completed" do
+    stub_request(:post, @callback_url).to_return(status: 200)
+    post "/api/v1/documents", headers: bearer_header("erp-app"),
+         params: { department_id: @finance.id,
+                   file: fixture_file_upload("report.pdf", "application/pdf"),
+                   callback_url: @callback_url }
+    request_id = JSON.parse(response.body)["request_id"]
+
+    get "/api/v1/upload_requests/#{request_id}", headers: bearer_header("erp-app")
+    assert_response :success
+    assert_equal "pending", JSON.parse(response.body)["status"]
+
+    perform_enqueued_jobs
+
+    get "/api/v1/upload_requests/#{request_id}", headers: bearer_header("erp-app")
+    body = JSON.parse(response.body)
+    assert_equal "completed", body["status"]
+    assert_equal UploadRequest.find(request_id).document_id, body["document_id"]
+    assert_nil body["error_message"]
+  end
+
+  test "polling an upload request of a forbidden department returns 403" do
+    hr = Department.create!(name: "HR")
+    upload_request = UploadRequest.create!(department: hr, filename: "report.pdf",
+                                           callback_url: @callback_url,
+                                           uploaded_by: "other-app")
+    get "/api/v1/upload_requests/#{upload_request.id}", headers: bearer_header("erp-app")
+    assert_response :forbidden
+  end
+
   test "async upload into a forbidden department returns 403 and enqueues nothing" do
     hr = Department.create!(name: "HR")
     assert_no_enqueued_jobs do

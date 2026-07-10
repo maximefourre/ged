@@ -1,0 +1,21 @@
+<h1>Upload requests</h1>
+<%= form_with url: admin_upload_requests_path, method: :get do |f| %>
+  <%= f.select :status,
+        options_for_select(UploadRequest::STATUSES, params[:status]),
+        include_blank: "all statuses" %>
+  <%= f.submit "Filter" %>
+<% end %>
+<table>
+  <tr><th>Request</th><th>Department</th><th>Filename</th><th>Status</th><th>Error</th><th>Uploaded by</th><th>Date</th></tr>
+  <% @upload_requests.each do |request| %>
+    <tr>
+      <td><%= request.id %></td>
+      <td><%= request.department.name %></td>
+      <td><%= request.filename %></td>
+      <td><%= request.status %></td>
+      <td><%= request.error_message %></td>
+      <td><%= request.uploaded_by %></td>
+      <td><%= request.created_at.strftime("%Y-%m-%d %H:%M") %></td>
+    </tr>
+  <% end %>
+</table>

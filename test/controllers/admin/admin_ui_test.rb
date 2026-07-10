@@ -81,6 +81,18 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert_equal 0, Document.count
   end
 
+  test "lists upload requests with status and error" do
+    UploadRequest.create!(department: @finance, filename: "big.pdf",
+                          callback_url: "https://caller.test/cb",
+                          uploaded_by: "erp-app", status: "failed",
+                          error_message: "staged file lost before processing")
+    get "/admin/upload_requests"
+    assert_response :success
+    assert_includes response.body, "big.pdf"
+    assert_includes response.body, "failed"
+    assert_includes response.body, "staged file lost before processing"
+  end
+
   test "downloads a document" do
     doc = Document.new(department: @finance, filename: "report.pdf", uploaded_by: "seed")
     doc.file.attach(io: StringIO.new("PDF!"), filename: "report.pdf",

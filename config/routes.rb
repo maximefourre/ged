@@ -10,6 +10,7 @@ Rails.application.routes.draw do
     resources :documents, only: [ :index, :new, :create, :destroy ] do
       member { get :download }
     end
+    resources :upload_requests, only: [ :index ]
   end
   root to: redirect("/admin")
 
@@ -22,6 +23,7 @@ Rails.application.routes.draw do
       end
       resources :departments, only: [ :index, :create ]
       resources :tags, only: [ :index, :create ]
+      resources :upload_requests, only: [ :show ]
     end
   end
 end
