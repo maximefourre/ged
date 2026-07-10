@@ -15,7 +15,10 @@ module Api
                               "%#{Document.sanitize_sql_like(params[:filename])}%")
         end
         scope = scope.joins(:tags).where(tags: { name: params[:tag] }) if params[:tag].present?
-        scope = paginate(scope.includes(:tags).order(created_at: :desc, id: :desc))
+        # preload, not includes: with the tag filter above, includes would be
+        # promoted to eager_load and the WHERE would also filter the preloaded
+        # tags collection (documents would appear to carry only the filter tag)
+        scope = paginate(scope.preload(:tags).order(created_at: :desc, id: :desc))
         render json: scope.map { |d| document_json(d) }
       end
 

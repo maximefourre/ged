@@ -73,6 +73,18 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     assert_equal 0, JSON.parse(response.body).size
   end
 
+  test "tag filter does not hide the document's other tags" do
+    doc = create_document(@invoices, "facture-2026.pdf")
+    doc.tags << Tag.create!(name: "invoice")
+    doc.tags << Tag.create!(name: "archived")
+
+    get "/api/v1/documents", headers: bearer_header("erp-app"),
+        params: { tag: "invoice" }
+    body = JSON.parse(response.body)
+    assert_equal 1, body.size
+    assert_equal %w[archived invoice], body.first["tags"].sort
+  end
+
   test "list paginates with limit and offset" do
     3.times { |i| create_document(@finance, "doc-#{i}.pdf") }
 
