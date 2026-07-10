@@ -6,12 +6,14 @@ class ReconcileUploadRequestsJob < ApplicationJob
 
   STUCK_AFTER = 10.minutes
   RETENTION = 30.days
+  ORPHAN_BLOB_AGE = 1.day
 
   def perform
     recover_stuck_pending_requests
     recover_stuck_processing_requests
     purge_old_terminal_requests
     purge_old_staging_files
+    purge_orphaned_blobs
   end
 
   private
@@ -66,5 +68,13 @@ class ReconcileUploadRequestsJob < ApplicationJob
       # deleted concurrently (e.g. StoreDocumentJob finishing) between the
       # glob and the mtime/delete — already gone, nothing to purge
     end
+  end
+
+  # DocumentCreator uploads the blob before save!, so a validation failure
+  # leaves an unattached blob and its file on disk. The age guard keeps
+  # in-flight attachments (blob created, attach not yet committed) safe.
+  def purge_orphaned_blobs
+    ActiveStorage::Blob.unattached.where(created_at: ..ORPHAN_BLOB_AGE.ago)
+                       .find_each(&:purge_later)
   end
 end

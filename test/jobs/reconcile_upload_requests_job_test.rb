@@ -71,6 +71,29 @@ class ReconcileUploadRequestsJobTest < ActiveJob::TestCase
     assert UploadRequest.exists?(recent_completed.id)
   end
 
+  test "purges unattached blobs older than a day, keeps fresh and attached ones" do
+    # DocumentCreator uploads the blob before save!: a validation failure
+    # leaves the blob (and its file on disk) unattached forever
+    old_orphan = ActiveStorage::Blob.create_and_upload!(
+      io: StringIO.new("x"), filename: "orphan.pdf")
+    old_orphan.update_columns(created_at: 2.days.ago)
+    fresh_orphan = ActiveStorage::Blob.create_and_upload!(
+      io: StringIO.new("x"), filename: "fresh.pdf")
+    doc = Document.new(department: @finance, filename: "kept.pdf", uploaded_by: "seed")
+    doc.file.attach(io: StringIO.new("x"), filename: "kept.pdf",
+                    content_type: "application/pdf")
+    doc.save!
+    doc.file.blob.update_columns(created_at: 2.days.ago)
+
+    perform_enqueued_jobs(only: ActiveStorage::PurgeJob) do
+      ReconcileUploadRequestsJob.perform_now
+    end
+
+    assert_not ActiveStorage::Blob.exists?(old_orphan.id)
+    assert ActiveStorage::Blob.exists?(fresh_orphan.id)
+    assert ActiveStorage::Blob.exists?(doc.file.blob.id)
+  end
+
   test "purges staging files older than the retention window" do
     old_path = StagingStore.write("orphan-old", StringIO.new("x"))
     File.utime(Time.now, 31.days.ago.to_time, old_path)
