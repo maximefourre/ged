@@ -19,13 +19,19 @@ module Auth
     OPEN_TIMEOUT = 2 # seconds
     READ_TIMEOUT = 3 # seconds
 
+    INSTANCE_MUTEX = Mutex.new
+
     class << self
+      # double-checked locking: without it, two threads hitting a fresh
+      # process could each build (and fetch through) their own instance
       def instance
-        @instance ||= new(ENV.fetch("GED_OIDC_JWKS_URL"))
+        @instance || INSTANCE_MUTEX.synchronize do
+          @instance ||= new(ENV.fetch("GED_OIDC_JWKS_URL"))
+        end
       end
 
       def reset!
-        @instance = nil
+        INSTANCE_MUTEX.synchronize { @instance = nil }
       end
     end
 
