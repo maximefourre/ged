@@ -37,7 +37,9 @@ services:
       GED_ADMIN_USERNAME: ${GED_ADMIN_USERNAME:-admin}
       GED_ADMIN_PASSWORD: ${GED_ADMIN_PASSWORD:?set GED_ADMIN_PASSWORD}
     ports:
-      - "3000:3000"
+      # 80 is Thruster (X-Sendfile + compression in front of Puma, see
+      # Dockerfile CMD); mapping Puma's 3000 directly would bypass it
+      - "3000:80"
     volumes:
       - storage:/rails/storage
 
