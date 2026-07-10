@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_09_182719) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_10_170658) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
@@ -130,4 +130,5 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_09_182719) do
   add_foreign_key "document_tags", "tags"
   add_foreign_key "documents", "departments"
   add_foreign_key "upload_requests", "departments"
+  add_foreign_key "upload_requests", "documents", on_delete: :nullify
 end
