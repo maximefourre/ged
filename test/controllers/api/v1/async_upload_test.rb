@@ -75,6 +75,25 @@ class Api::V1::AsyncUploadTest < ActionDispatch::IntegrationTest
     assert_nil body["error_message"]
   end
 
+  test "an async failure is surfaced through the polling endpoint" do
+    stub_request(:post, @callback_url).to_return(status: 200)
+    post "/api/v1/documents", headers: bearer_header("erp-app"),
+         params: { department_id: @finance.id,
+                   file: fixture_file_upload("report.pdf", "application/pdf"),
+                   callback_url: @callback_url }
+    request_id = JSON.parse(response.body)["request_id"]
+
+    StagingStore.delete(request_id) # simulate the staged file being lost
+    perform_enqueued_jobs
+
+    get "/api/v1/upload_requests/#{request_id}", headers: bearer_header("erp-app")
+    assert_response :success
+    body = JSON.parse(response.body)
+    assert_equal "failed", body["status"]
+    assert body["error_message"].present?
+    assert_nil body["document_id"]
+  end
+
   test "polling an upload request of a forbidden department returns 403" do
     hr = Department.create!(name: "HR")
     upload_request = UploadRequest.create!(department: hr, filename: "report.pdf",

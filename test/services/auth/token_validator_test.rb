@@ -63,6 +63,24 @@ class Auth::TokenValidatorTest < ActiveSupport::TestCase
     assert_requested(:get, ENV.fetch("GED_OIDC_JWKS_URL"), times: 2)
   end
 
+  test "reads the client identifier from the claim named by GED_CLIENT_ID_CLAIM" do
+    stub_jwks!
+    ENV["GED_CLIENT_ID_CLAIM"] = "client_id"
+
+    payload = { sub: "ignored", client_id: "erp-app",
+                iss: ENV["GED_OIDC_ISSUER"], exp: 1.hour.from_now.to_i }
+    token = JWT.encode(payload, JwtTestHelpers::SIGNING_KEY, "RS256",
+                       kid: JwtTestHelpers::SIGNING_JWK.kid)
+    assert_equal "erp-app", Auth::TokenValidator.call(token).client_identifier
+
+    # a token carrying only sub is rejected when the custom claim is required
+    assert_raises(Auth::TokenValidator::InvalidToken) do
+      Auth::TokenValidator.call(issue_token(client_id: "erp-app"))
+    end
+  ensure
+    ENV.delete("GED_CLIENT_ID_CLAIM")
+  end
+
   test "accepts any aud when GED_OIDC_AUDIENCE is unset" do
     stub_jwks!
     result = Auth::TokenValidator.call(issue_token(client_id: "erp-app", aud: "some-other-api"))
