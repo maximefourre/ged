@@ -29,4 +29,32 @@ class DeliverCallbackJobTest < ActiveJob::TestCase
       DeliverCallbackJob.new.perform(@request.id)
     end
   end
+
+  test "raises DeliveryFailed on connection reset" do
+    stub_request(:post, "https://caller.test/cb").to_raise(Errno::ECONNRESET)
+    assert_raises(DeliverCallbackJob::DeliveryFailed) do
+      DeliverCallbackJob.new.perform(@request.id)
+    end
+  end
+
+  test "raises DeliveryFailed on SSL errors" do
+    stub_request(:post, "https://caller.test/cb").to_raise(OpenSSL::SSL::SSLError)
+    assert_raises(DeliverCallbackJob::DeliveryFailed) do
+      DeliverCallbackJob.new.perform(@request.id)
+    end
+  end
+
+  test "raises DeliveryFailed on unreachable host or network" do
+    stub_request(:post, "https://caller.test/cb").to_raise(Errno::EHOSTUNREACH)
+    assert_raises(DeliverCallbackJob::DeliveryFailed) do
+      DeliverCallbackJob.new.perform(@request.id)
+    end
+  end
+
+  test "raises DeliveryFailed on timeout" do
+    stub_request(:post, "https://caller.test/cb").to_timeout
+    assert_raises(DeliverCallbackJob::DeliveryFailed) do
+      DeliverCallbackJob.new.perform(@request.id)
+    end
+  end
 end
