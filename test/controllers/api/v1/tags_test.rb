@@ -43,6 +43,21 @@ class Api::V1::TagsTest < ActionDispatch::IntegrationTest
     assert_equal 1, doc.reload.tags.count
   end
 
+  test "non-string name params return 400 instead of 500" do
+    post "/api/v1/tags", headers: bearer_header("erp-app"),
+         params: { name: [ "invoice" ] }
+    assert_response :bad_request
+
+    doc = Document.new(department: @finance, filename: "report.pdf",
+                       uploaded_by: "seed")
+    doc.file.attach(io: StringIO.new("PDF!"), filename: "report.pdf",
+                    content_type: "application/pdf")
+    doc.save!
+    post "/api/v1/documents/#{doc.id}/tags", headers: bearer_header("erp-app"),
+         params: { name: { nested: "invoice" } }
+    assert_response :bad_request
+  end
+
   test "assigning an unknown tag returns 404" do
     doc = Document.new(department: @finance, filename: "report.pdf",
                        uploaded_by: "seed")
