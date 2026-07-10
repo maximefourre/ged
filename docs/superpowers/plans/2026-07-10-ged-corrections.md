@@ -1,8 +1,8 @@
 # GED Corrections & Improvements Plan
 
 **Date:** 2026-07-10
-**Status:** In progress — batches 1–3 done 2026-07-10 (P1 complete; 2.1,
-2.2, 2.4 done); remaining: 2.3, 2.5, P3
+**Status:** In progress — batches 1–4 done 2026-07-10 (P1 and P2 complete);
+remaining: P3 improvements only
 **Source audit:** full read of `docs/superpowers/specs/2026-07-08-ged-design.md`,
 the implementation plan, all app code, tests (61 main + 6 provider, all green),
 plus empirical verification of the P1-1 bug via `rails runner`.
@@ -135,7 +135,7 @@ once; Solid Queue keeps failed jobs but a lost enqueue is silent).
     window (e.g. 30 days).
 - Test: job-level tests for each branch.
 
-### 2.3 No `aud` (audience) verification — matters for the real-IdP cutover
+### 2.3 ✅ No `aud` (audience) verification — matters for the real-IdP cutover
 
 Today any token from the issuer is accepted regardless of its intended
 audience. With the temporary provider that's fine (it only issues tokens for
@@ -151,7 +151,7 @@ in AGENTS.md/README.
 only in logs. Add a read-only `/admin/upload_requests` list (status,
 error_message, created_at) — small ERB index, no actions needed.
 
-### 2.5 Spec drift to record (spec says "API … reused internally by the admin UI's controllers")
+### 2.5 ✅ Spec drift to record (spec says "API … reused internally by the admin UI's controllers")
 
 The admin controllers duplicate the upload/list logic instead of reusing the
 API layer. Working as-is; either extract a shared `DocumentCreator` service
