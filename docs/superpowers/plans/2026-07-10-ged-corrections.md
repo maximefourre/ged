@@ -1,8 +1,10 @@
 # GED Corrections & Improvements Plan
 
 **Date:** 2026-07-10
-**Status:** In progress — batches 1–4 done 2026-07-10 (P1 and P2 complete);
-remaining: P3 improvements only
+**Status:** Done — batches 1–5 done 2026-07-10. P1, P2 complete; P3 items
+1–7, 9, 10 done; P3-8 (recursive CTE for `accessible_department_ids`)
+deliberately deferred — fine at current scale, revisit if department counts
+grow.
 **Source audit:** full read of `docs/superpowers/specs/2026-07-08-ged-design.md`,
 the implementation plan, all app code, tests (61 main + 6 provider, all green),
 plus empirical verification of the P1-1 bug via `rails runner`.
@@ -163,33 +165,35 @@ extraction — three copies of "build Document + attach + save" already exist.
 
 ## P3 — Improvements (non-blocking)
 
-1. **Pagination on `GET /api/v1/documents`** (and tags/departments): unbounded
+All done 2026-07-10 except item 8 (deferred, see Status).
+
+1. ✅ **Pagination on `GET /api/v1/documents`** (and tags/departments): unbounded
    result sets. Simple `limit`/`offset` params with a default+max page size,
    documented in the JSON contract.
-2. **Streaming downloads:** `send_data document.file.download` loads the whole
+2. ✅ **Streaming downloads:** `send_data document.file.download` loads the whole
    blob in memory (API + admin). Async upload exists *because* files can be
    big — downloads have the same problem. Use `document.file.blob.open` +
    `send_file`, or Active Storage proxy routes.
-3. **Admin UX:** rename/edit departments (only new/destroy exist); manage a
+3. ✅ **Admin UX:** rename/edit departments (only new/destroy exist); manage a
    document's tags from the admin UI (currently API-only).
-4. **Fail fast on missing OIDC config:** `GED_OIDC_ISSUER`/`GED_OIDC_JWKS_URL`
+4. ✅ **Fail fast on missing OIDC config:** `GED_OIDC_ISSUER`/`GED_OIDC_JWKS_URL`
    are only read at request time (KeyError → 500 per request). Validate at
    boot in an initializer (skip in test).
-5. **Login brute-force protection:** Rails 8 `rate_limit` on
+5. ✅ **Login brute-force protection:** Rails 8 `rate_limit` on
    `Devise::SessionsController#create` (or `devise :lockable`).
-6. **Seeds password caveat:** `find_or_create_by!` never updates an existing
+6. ✅ **Seeds password caveat:** `find_or_create_by!` never updates an existing
    admin's password; changing `GED_ADMIN_PASSWORD` after first seed is a
    no-op. Either document it or update the password when the env var changes.
-7. **FK for `upload_requests.document_id`** (`on_delete: :nullify`) to avoid
+7. ✅ **FK for `upload_requests.document_id`** (`on_delete: :nullify`) to avoid
    dangling references after document deletion.
 8. **`accessible_department_ids` perf:** N queries per tree level per granted
    department on every list call. Fine at current scale; switch to a
    recursive CTE if department counts grow.
-9. **Tag assignment race:** concurrent `document.tags << tag` can raise
+9. ✅ **Tag assignment race:** concurrent `document.tags << tag` can raise
    `ActiveRecord::RecordNotUnique` (unique index) → 500. Rescue → treat as
    idempotent success. Also `params.require(:name).strip.downcase` 500s on
    non-string params (same class of fix as 1.6).
-10. **Missing test coverage worth adding:** custom `GED_CLIENT_ID_CLAIM`;
+10. ✅ **Missing test coverage worth adding:** custom `GED_CLIENT_ID_CLAIM`;
     JWKS rotation (after 1.3); admin department deletion with grants (after
     1.1); async failure surfaced via polling endpoint (after 2.1).
 
