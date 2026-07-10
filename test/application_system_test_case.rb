@@ -33,6 +33,10 @@ class ApplicationSystemTestCase < ActionDispatch::SystemTestCase
   setup { WebMock.allow_net_connect! }
   teardown { WebMock.disable_net_connect!(allow_localhost: true) }
 
+  # Every system test logs in from the same IP through the same in-process app
+  # server, so the login rate limit accumulates across tests — reset it.
+  setup { Admins::SessionsController::RATE_LIMIT_STORE.clear }
+
   # Sign in through the real Devise login form so the whole auth path is
   # exercised, and wait for the post-login documents list before returning so
   # callers don't race the redirect. Assumes an Admin with these credentials

@@ -4,7 +4,10 @@ require "application_system_test_case"
 # against the real admin UI, driven through a headless Chrome browser.
 class AdminUiTest < ApplicationSystemTestCase
   setup do
-    @admin = Admin.create!(username: "admin", password: "changeme")
+    # find_or_initialize: bin/ci's seeds step leaves a permanent "admin" row
+    # in the test database, which a plain create! would collide with
+    @admin = Admin.find_or_initialize_by(username: "admin")
+    @admin.update!(password: "changeme")
   end
 
   def report_pdf_path

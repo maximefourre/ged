@@ -4,10 +4,10 @@
 
 admin = Admin.find_or_initialize_by(username: ENV.fetch("GED_ADMIN_USERNAME", "admin"))
 password =
-  if Rails.env.development?
-    ENV.fetch("GED_ADMIN_PASSWORD", "changeme")
+  if Rails.env.production?
+    ENV.fetch("GED_ADMIN_PASSWORD") # raises KeyError if unset in production
   else
-    ENV.fetch("GED_ADMIN_PASSWORD") # raises KeyError if unset outside development
+    ENV.fetch("GED_ADMIN_PASSWORD", "changeme") # dev/test (bin/ci seeds in test)
   end
 admin.password = password unless admin.persisted? && admin.valid_password?(password)
 admin.save!

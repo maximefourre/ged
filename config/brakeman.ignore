@@ -1,0 +1,15 @@
+{
+  "ignored_warnings": [
+    {
+      "warning_type": "File Access",
+      "warning_code": 16,
+      "fingerprint": "3d1eeab8f7f12ed4fb8e1b7ba8cbaea4d6d093eac36044040d60f50e9bcf3976",
+      "check_name": "FileAccess",
+      "message": "Model attribute used in file name",
+      "file": "app/jobs/store_document_job.rb",
+      "line": 10,
+      "note": "StagingStore.path(upload_request.id) — the id is a server-generated uuid primary key, never user input"
+    }
+  ],
+  "brakeman_version": "8.0.5"
+}
