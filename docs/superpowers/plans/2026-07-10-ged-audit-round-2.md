@@ -1,8 +1,10 @@
 # GED Audit Round 2 — Findings
 
 **Date:** 2026-07-10 (after completion of the round-1 corrections plan)
-**Status:** P1 and P2 fixed 2026-07-10 (commits 994d935, dd408d9). P3 items
-remain open.
+**Status:** Complete 2026-07-10. P1 and P2 fixed (commits 994d935, dd408d9);
+P3 items 1–6 fixed (commits 600a1c1, 4beba4d, 1acf5d9, d9792aa, 62814bb,
+728f030). Only P3-7 (recursive CTE, carried over from round 1's P3-8) remains
+deliberately deferred.
 **Source audit:** full read of the design spec, all app code, config, Docker
 setup, oauth-provider, and tests (99 main + 6 provider, all green; RuboCop and
 Brakeman clean). P1-1 verified empirically via `rails runner`.
@@ -71,7 +73,7 @@ Rescue → 422 like the tags endpoint.
 
 ## P3 — Improvements / edge cases (non-blocking)
 
-1. **UploadRequest double-processing race:** `ReconcileUploadRequestsJob`
+1. ✅ (600a1c1) **UploadRequest double-processing race:** `ReconcileUploadRequestsJob`
    re-enqueues `StoreDocumentJob` for pending requests older than 10 min
    (`created_at`-based). If the queue backlog ever exceeds 10 min, or the
    process dies between `DocumentCreator.call` and `update!(:completed)`,
@@ -79,21 +81,21 @@ Rescue → 422 like the tags endpoint.
    Fix: `upload_request.with_lock { return unless pending }` re-check inside
    the job, or an intermediate `processing` status claimed atomically
    (`UploadRequest.where(id:, status: "pending").update_all(status: "processing") == 1`).
-2. **Orphaned blobs on failed creates:** `DocumentCreator` attaches (which
+2. ✅ (4beba4d) **Orphaned blobs on failed creates:** `DocumentCreator` attaches (which
    uploads the blob immediately) before `save!`; a validation failure leaves
    an unattached blob + file on disk. Purge via
    `ActiveStorage::Blob.unattached.where(created_at: ..1.day.ago).find_each(&:purge_later)`
    in the reconcile job.
-3. **Admin UI has no pagination** (documents and upload_requests indexes load
+3. ✅ (1acf5d9) **Admin UI has no pagination** (documents and upload_requests indexes load
    everything; API got pagination in P3-1). Fine at current volume.
-4. **Callback payload lacks `error_message`** on failure — callers relying
+4. ✅ (d9792aa) **Callback payload lacks `error_message`** on failure — callers relying
    only on the callback must re-poll to learn why. Add it for parity with the
    polling endpoint.
-5. **`JwksCache.instance` memoization isn't thread-safe** — two concurrent
+5. ✅ (62814bb) **`JwksCache.instance` memoization isn't thread-safe** — two concurrent
    first calls can build two instances (benign: one extra fetch, one instance
    garbage-collected). Wrap in a mutex or use `Concurrent::Lazy` if it ever
    matters.
-6. **Thruster is bypassed:** docker-compose maps `3000:3000` straight to
+6. ✅ (728f030) **Thruster is bypassed:** docker-compose maps `3000:3000` straight to
    Puma; Thruster listens on 80 inside the container. Works, but its
    X-Sendfile/compression does nothing. Map `3000:80` (or expose 80) to route
    through Thruster — worthwhile given downloads stream through `send_file`.
