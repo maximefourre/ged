@@ -63,6 +63,37 @@ class Auth::TokenValidatorTest < ActiveSupport::TestCase
     assert_requested(:get, ENV.fetch("GED_OIDC_JWKS_URL"), times: 2)
   end
 
+  test "accepts any aud when GED_OIDC_AUDIENCE is unset" do
+    stub_jwks!
+    result = Auth::TokenValidator.call(issue_token(client_id: "erp-app", aud: "some-other-api"))
+    assert_equal "erp-app", result.client_identifier
+  end
+
+  test "verifies the aud claim when GED_OIDC_AUDIENCE is set" do
+    stub_jwks!
+    ENV["GED_OIDC_AUDIENCE"] = "https://ged.internal"
+
+    result = Auth::TokenValidator.call(
+      issue_token(client_id: "erp-app", aud: "https://ged.internal")
+    )
+    assert_equal "erp-app", result.client_identifier
+
+    # aud may be an array — accepted if it includes the expected audience
+    result = Auth::TokenValidator.call(
+      issue_token(client_id: "erp-app", aud: [ "https://ged.internal", "other" ])
+    )
+    assert_equal "erp-app", result.client_identifier
+
+    [ "https://other-api.internal", nil ].each do |wrong_aud|
+      token = issue_token(client_id: "erp-app", aud: wrong_aud)
+      assert_raises(Auth::TokenValidator::InvalidToken, "aud=#{wrong_aud.inspect}") do
+        Auth::TokenValidator.call(token)
+      end
+    end
+  ensure
+    ENV.delete("GED_OIDC_AUDIENCE")
+  end
+
   test "keeps serving stale keys when a refresh fails" do
     stub_jwks!
     Auth::JwksCache.instance.key_set  # prime the cache

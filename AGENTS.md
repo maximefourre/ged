@@ -56,13 +56,57 @@ is the source of truth.
 - **No full-text search, no document versioning, no automated backups** in this
   pass — see the spec's Non-goals section before adding these.
 
+## How the pieces fit (implementation map)
+
+- **Bearer auth chain:** `Api::V1::BaseController#authenticate_app_client!` →
+  `Auth::TokenValidator.call` → `Auth::JwksCache` (process-local singleton,
+  300s TTL, serves stale keys on refresh failure, fails closed if never
+  fetched). Department authorization = `authorize_department!` +
+  `AppClient#can_access?` (walks `Department#self_and_ancestors`).
+- **Async upload flow:** controller creates an `UploadRequest` (uuid pk) +
+  writes raw bytes to `StagingStore` (`storage/staging/<id>`) → 202 →
+  `StoreDocumentJob` builds the `Document` and deletes the staging file →
+  `DeliverCallbackJob` POSTs `{ request_id, status, document_id }` to the
+  `callback_url` (5 attempts, polynomial backoff, logs on final failure).
+- **Jobs in production run inside Puma** (Solid Queue via
+  `SOLID_QUEUE_IN_PUMA=true` in docker-compose); dev/test use the default
+  ActiveJob adapters. There is no separate worker container.
+- **Admin controllers do NOT reuse the API controllers** (despite a spec
+  sentence suggesting it) — document upload logic currently exists in
+  `Api::V1::DocumentsController`, `Admin::DocumentsController`, and
+  `StoreDocumentJob`; touch all three when changing it.
+
+## Known gaps / pitfalls
+
+Correction plan with per-item status:
+`docs/superpowers/plans/2026-07-10-ged-corrections.md` (P1 bugs and P2 gaps
+fixed 2026-07-10; P3 improvements remain — notably no pagination and
+whole-blob-in-memory downloads). Standing pitfalls:
+
+- **Real-IdP cutover checklist:** point `GED_OIDC_ISSUER`/`GED_OIDC_JWKS_URL`
+  at the real IdP, set `GED_CLIENT_ID_CLAIM` to the claim carrying the client
+  id, and **set `GED_OIDC_AUDIENCE`** — a shared company IdP issues tokens for
+  every internal API under the same `iss`, so without `aud` verification any
+  app's token would be accepted by GED.
+- `active_storage_attachments.record_id` was converted to uuid by a
+  corrective migration — Document/UploadRequest use uuid pks, everything else
+  bigint. Keep this in mind for any new attachable model.
+
 ## Conventions
 
 - Tests: Minitest (Rails default), WebMock for HTTP stubs. Run `bin/rails test`
   (main app) and `cd oauth-provider && bundle exec rake` (provider).
+  System tests (Capybara + headless Chrome) are separate:
+  `bin/rails test:system`; `bin/ci` runs everything.
+- Test quirks: `JwtTestHelpers` (issue_token/stub_jwks!/bearer_header) backs
+  all API tests; `Auth::JwksCache.reset!` runs in every setup. WebMock's
+  `assert_requested` rejects the `(stub) { block }` form — use
+  `assert_requested(:post, url) { block }`.
 - Lint: RuboCop rails-omakase — `bin/rubocop` must pass before committing.
 - Ruby via mise (`.mise.toml`); dev Postgres via Homebrew (`postgresql@17`).
 - Env vars: `GED_OIDC_ISSUER`, `GED_OIDC_JWKS_URL`, `GED_CLIENT_ID_CLAIM`
-  (default `sub`), `GED_ADMIN_USERNAME`, `GED_ADMIN_PASSWORD`.
+  (default `sub`), `GED_OIDC_AUDIENCE` (optional; when set, `aud` is
+  verified — required at real-IdP cutover), `GED_ADMIN_USERNAME`,
+  `GED_ADMIN_PASSWORD`.
 - API error contract: 401 invalid/missing token, 403 unregistered client or
   forbidden department, 404 not found, 400 missing param, 422 validation.

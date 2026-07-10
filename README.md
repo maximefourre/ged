@@ -36,6 +36,14 @@ NOTE: containers reach the provider at `http://oauth-provider:9292` (compose DNS
 tokens fetched from the host at `localhost:9292` carry `iss=http://oauth-provider:9292`
 (set via OAUTH_ISSUER), so they validate correctly inside the stack.
 
+## Cutover to the real IdP
+
+Config change only, on the `web` service: set `GED_OIDC_ISSUER` and
+`GED_OIDC_JWKS_URL` to the real IdP, `GED_CLIENT_ID_CLAIM` to the claim that
+carries the client id, and `GED_OIDC_AUDIENCE` to GED's audience identifier —
+**required** with a shared IdP, otherwise any internal app's token grants
+access to GED. Then remove the `oauth-provider` service.
+
 ## Verification checklist (manual, after deploy)
 
 - [ ] Admin login works; create departments Finance + HR

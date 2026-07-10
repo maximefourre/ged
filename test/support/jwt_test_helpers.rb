@@ -8,8 +8,10 @@ module JwtTestHelpers
                  headers: { "Content-Type" => "application/json" })
   end
 
-  def issue_token(client_id:, iss: ENV.fetch("GED_OIDC_ISSUER"), exp: 1.hour.from_now.to_i)
+  def issue_token(client_id:, iss: ENV.fetch("GED_OIDC_ISSUER"), exp: 1.hour.from_now.to_i,
+                  aud: nil)
     payload = { sub: client_id, iss: iss, exp: exp, iat: Time.now.to_i }
+    payload[:aud] = aud if aud
     JWT.encode(payload, SIGNING_KEY, "RS256", kid: SIGNING_JWK.kid)
   end
 
