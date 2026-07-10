@@ -17,6 +17,22 @@ class Admin::DepartmentsController < Admin::BaseController
     end
   end
 
+  def edit
+    @department = Department.find(params[:id])
+  end
+
+  # Rename only: re-parenting a department would silently move its whole
+  # subtree across the permission boundary.
+  def update
+    @department = Department.find(params[:id])
+    if @department.update(params.require(:department).permit(:name))
+      redirect_to admin_departments_path, notice: "Department renamed."
+    else
+      flash.now[:alert] = @department.errors.full_messages.join(", ")
+      render :edit, status: :unprocessable_entity
+    end
+  end
+
   def destroy
     department = Department.find(params[:id])
     if department.destroy

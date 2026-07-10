@@ -6,8 +6,11 @@
     <tr>
       <td><%= dept.name %></td>
       <td><%= dept.parent&.name %></td>
-      <td><%= button_to "Delete", admin_department_path(dept), method: :delete,
-              data: { turbo_confirm: "Delete #{dept.name}?" } %></td>
+      <td>
+        <%= link_to "Rename", edit_admin_department_path(dept) %>
+        <%= button_to "Delete", admin_department_path(dept), method: :delete,
+            data: { turbo_confirm: "Delete #{dept.name}?" } %>
+      </td>
     </tr>
   <% end %>
 </table>

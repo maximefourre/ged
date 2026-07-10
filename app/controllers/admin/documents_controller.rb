@@ -36,6 +36,16 @@ class Admin::DocumentsController < Admin::BaseController
                 alert: e.record.errors.full_messages.join(", ")
   end
 
+  def edit
+    @document = Document.find(params[:id])
+  end
+
+  def update
+    document = Document.find(params[:id])
+    document.update!(tag_ids: params.require(:document).permit(tag_ids: [])[:tag_ids])
+    redirect_to admin_documents_path, notice: "Tags updated."
+  end
+
   def download
     send_document_file(Document.find(params[:id]))
   end

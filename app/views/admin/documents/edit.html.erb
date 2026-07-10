@@ -1,0 +1,8 @@
+<h1>Tags — <%= @document.filename %></h1>
+<%= form_with model: [ :admin, @document ] do |f| %>
+  <%= f.collection_check_boxes :tag_ids, Tag.order(:name), :id, :name do |b| %>
+    <div><%= b.checkbox %> <%= b.label %></div>
+  <% end %>
+  <%= f.submit "Save tags" %>
+<% end %>
+<p><%= link_to "Back to documents", admin_documents_path %></p>

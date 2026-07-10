@@ -1,0 +1,5 @@
+<h1>Rename department</h1>
+<%= form_with model: [ :admin, @department ] do |f| %>
+  <div><%= f.label :name %> <%= f.text_field :name %></div>
+  <%= f.submit "Rename" %>
+<% end %>

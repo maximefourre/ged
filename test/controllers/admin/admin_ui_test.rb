@@ -20,6 +20,43 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert Department.exists?(name: "Invoices", parent_id: @finance.id)
   end
 
+  test "renames a department" do
+    get "/admin/departments/#{@finance.id}/edit"
+    assert_response :success
+
+    patch "/admin/departments/#{@finance.id}",
+          params: { department: { name: "Finance & Ops" } }
+    assert_redirected_to "/admin/departments"
+    assert_equal "Finance & Ops", @finance.reload.name
+  end
+
+  test "rejects renaming a department to a blank name" do
+    patch "/admin/departments/#{@finance.id}", params: { department: { name: "" } }
+    assert_response :unprocessable_entity
+    assert_equal "Finance", @finance.reload.name
+  end
+
+  test "manages a document's tags" do
+    doc = Document.new(department: @finance, filename: "report.pdf", uploaded_by: "seed")
+    doc.file.attach(io: StringIO.new("PDF!"), filename: "report.pdf",
+                    content_type: "application/pdf")
+    doc.save!
+    invoice = Tag.create!(name: "invoice")
+    urgent = Tag.create!(name: "urgent")
+
+    get "/admin/documents/#{doc.id}/edit"
+    assert_response :success
+
+    patch "/admin/documents/#{doc.id}",
+          params: { document: { tag_ids: [ invoice.id, urgent.id ] } }
+    assert_redirected_to "/admin/documents"
+    assert_equal %w[invoice urgent], doc.reload.tags.order(:name).pluck(:name)
+
+    # unchecking everything (checkbox helper submits only the blank) clears tags
+    patch "/admin/documents/#{doc.id}", params: { document: { tag_ids: [ "" ] } }
+    assert_equal [], doc.reload.tags.to_a
+  end
+
   test "deletes a department granted to an app client" do
     client = AppClient.create!(client_identifier: "erp-app")
     client.departments << @finance
