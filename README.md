@@ -15,7 +15,14 @@ Rails app + PostgreSQL + temporary OAuth2 dev provider. Spec:
 
 ## Deployment (Docker Compose)
 
-    SECRET_KEY_BASE=$(bin/rails secret) GED_ADMIN_PASSWORD=<pw> docker compose up --build -d
+Create a `.env` file at the repo root (gitignored; read automatically by
+compose — required because every `docker compose` command re-evaluates it):
+
+    printf 'SECRET_KEY_BASE=%s\nGED_ADMIN_PASSWORD=changeme\n' "$(bin/rails secret)" > .env
+
+Then:
+
+    docker compose up --build -d
     docker compose exec web bin/rails db:seed     # first boot only: create admin
 
 ## Bootstrap an application client
