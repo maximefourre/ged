@@ -24,6 +24,24 @@ class DepartmentTest < ActiveSupport::TestCase
     assert_equal [ other.id ], other.subtree_ids
   end
 
+  test "destroying a department cascades its client access grants" do
+    dept = Department.create!(name: "Finance")
+    client = AppClient.create!(client_identifier: "erp-app")
+    client.departments << dept
+    assert dept.destroy
+    assert_not ClientDepartmentAccess.exists?(department_id: dept.id)
+  end
+
+  test "destroy is blocked when upload requests reference the department" do
+    dept = Department.create!(name: "Finance")
+    UploadRequest.create!(department: dept, filename: "report.pdf",
+                          callback_url: "https://caller.test/cb",
+                          uploaded_by: "erp-app", status: "pending")
+    assert_not dept.destroy
+    assert dept.errors[:base].any?
+    assert Department.exists?(dept.id)
+  end
+
   test "parent cannot be self or a descendant" do
     root = Department.create!(name: "Finance")
     child = Department.create!(name: "Invoices", parent: root)

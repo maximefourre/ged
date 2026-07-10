@@ -20,6 +20,24 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert Department.exists?(name: "Invoices", parent_id: @finance.id)
   end
 
+  test "deletes a department granted to an app client" do
+    client = AppClient.create!(client_identifier: "erp-app")
+    client.departments << @finance
+    delete "/admin/departments/#{@finance.id}"
+    assert_redirected_to "/admin/departments"
+    assert_not Department.exists?(@finance.id)
+  end
+
+  test "deleting a department with upload requests shows an alert instead of a 500" do
+    UploadRequest.create!(department: @finance, filename: "report.pdf",
+                          callback_url: "https://caller.test/cb",
+                          uploaded_by: "erp-app", status: "pending")
+    delete "/admin/departments/#{@finance.id}"
+    assert_redirected_to "/admin/departments"
+    assert flash[:alert].present?
+    assert Department.exists?(@finance.id)
+  end
+
   test "creates and deletes a tag" do
     post "/admin/tags", params: { tag: { name: "Invoice" } }
     tag = Tag.find_by(name: "invoice")

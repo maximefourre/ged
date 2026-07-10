@@ -3,6 +3,8 @@ class Department < ApplicationRecord
   has_many :children, class_name: "Department", foreign_key: :parent_id,
            dependent: :restrict_with_error
   has_many :documents, dependent: :restrict_with_error
+  has_many :client_department_accesses, dependent: :destroy
+  has_many :upload_requests, dependent: :restrict_with_error
 
   validates :name, presence: true, uniqueness: { scope: :parent_id }
   validate :parent_is_not_self_or_descendant

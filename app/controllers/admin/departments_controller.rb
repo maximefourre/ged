@@ -25,5 +25,8 @@ class Admin::DepartmentsController < Admin::BaseController
       redirect_to admin_departments_path,
                   alert: department.errors.full_messages.join(", ")
     end
+  rescue ActiveRecord::InvalidForeignKey
+    redirect_to admin_departments_path,
+                alert: "Department is still referenced by other records and cannot be deleted."
   end
 end
