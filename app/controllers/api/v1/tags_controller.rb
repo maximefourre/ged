@@ -2,7 +2,7 @@ module Api
   module V1
     class TagsController < BaseController
       def index
-        render json: Tag.order(:name).map { |t| { id: t.id, name: t.name } }
+        render json: paginate(Tag.order(:name)).map { |t| { id: t.id, name: t.name } }
       end
 
       def create

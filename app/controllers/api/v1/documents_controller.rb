@@ -13,7 +13,8 @@ module Api
                               "%#{Document.sanitize_sql_like(params[:filename])}%")
         end
         scope = scope.joins(:tags).where(tags: { name: params[:tag] }) if params[:tag].present?
-        render json: scope.includes(:tags).order(created_at: :desc).map { |d| document_json(d) }
+        scope = paginate(scope.includes(:tags).order(created_at: :desc, id: :desc))
+        render json: scope.map { |d| document_json(d) }
       end
 
       def create

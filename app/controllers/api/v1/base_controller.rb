@@ -45,6 +45,17 @@ module Api
           raise NotAuthorizedError, "no access to this department"
         end
       end
+
+      DEFAULT_PAGE_SIZE = 100
+      MAX_PAGE_SIZE = 500
+
+      # limit/offset pagination for list endpoints: non-positive or non-numeric
+      # values fall back to the default, oversized limits are clamped.
+      def paginate(scope)
+        requested = params[:limit].to_i
+        limit = requested.positive? ? [ requested, MAX_PAGE_SIZE ].min : DEFAULT_PAGE_SIZE
+        scope.limit(limit).offset([ params[:offset].to_i, 0 ].max)
+      end
     end
   end
 end

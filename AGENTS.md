@@ -111,3 +111,4 @@ whole-blob-in-memory downloads). Standing pitfalls:
   `GED_ADMIN_PASSWORD`.
 - API error contract: 401 invalid/missing token, 403 unregistered client or
   forbidden department, 404 not found, 400 missing param, 422 validation.
+- API list endpoints paginate via `limit`/`offset` (default 100, max 500).

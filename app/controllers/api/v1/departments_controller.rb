@@ -4,7 +4,7 @@ module Api
       def index
         departments = Department.where(id: current_app_client.accessible_department_ids)
                                 .order(:name)
-        render json: departments.map { |d| department_json(d) }
+        render json: paginate(departments).map { |d| department_json(d) }
       end
 
       def create

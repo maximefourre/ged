@@ -73,6 +73,41 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     assert_equal 0, JSON.parse(response.body).size
   end
 
+  test "list paginates with limit and offset" do
+    3.times { |i| create_document(@finance, "doc-#{i}.pdf") }
+
+    get "/api/v1/documents", headers: bearer_header("erp-app"),
+        params: { limit: 2 }
+    assert_equal 2, JSON.parse(response.body).size
+
+    get "/api/v1/documents", headers: bearer_header("erp-app"),
+        params: { limit: 2, offset: 2 }
+    assert_equal 1, JSON.parse(response.body).size
+
+    # garbage / non-positive values fall back to the default page size
+    [ "abc", 0, -5 ].each do |bad_limit|
+      get "/api/v1/documents", headers: bearer_header("erp-app"),
+          params: { limit: bad_limit, offset: "junk" }
+      assert_equal 3, JSON.parse(response.body).size, "limit=#{bad_limit.inspect}"
+    end
+
+    # a limit above the cap is clamped, not an error
+    get "/api/v1/documents", headers: bearer_header("erp-app"),
+        params: { limit: 999_999 }
+    assert_response :success
+    assert_equal 3, JSON.parse(response.body).size
+  end
+
+  test "tags and departments lists paginate too" do
+    2.times { |i| Tag.create!(name: "tag-#{i}") }
+    get "/api/v1/tags", headers: bearer_header("erp-app"), params: { limit: 1 }
+    assert_equal 1, JSON.parse(response.body).size
+
+    Department.create!(name: "Ops", parent: @finance).tap { |d| @client.departments << d }
+    get "/api/v1/departments", headers: bearer_header("erp-app"), params: { limit: 1 }
+    assert_equal 1, JSON.parse(response.body).size
+  end
+
   test "filtering by a forbidden department returns 403" do
     get "/api/v1/documents", headers: bearer_header("erp-app"),
         params: { department_id: @hr.id }

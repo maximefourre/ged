@@ -133,6 +133,10 @@ and reused internally by the admin UI's controllers:
 - Tags: create, assign to document, list
 - Admin-only: register/manage application clients, assign department access
 
+List endpoints accept `limit`/`offset` query params (default page size 100,
+capped at 500; invalid values fall back to the default) and return a plain
+JSON array — callers page by requesting until a short page comes back.
+
 ### Document upload: synchronous vs. asynchronous
 
 A single endpoint, `POST /api/v1/documents`, supports two interaction modes,
