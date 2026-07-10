@@ -2,11 +2,15 @@ module Api
   module V1
     class BaseController < ActionController::API
       class NotAuthorizedError < StandardError; end
+      class BadParameter < StandardError; end
 
       before_action :authenticate_app_client!
 
       rescue_from NotAuthorizedError do |e|
         render json: { error: e.message.presence || "forbidden" }, status: :forbidden
+      end
+      rescue_from BadParameter do |e|
+        render json: { error: e.message }, status: :bad_request
       end
       rescue_from ActiveRecord::RecordNotFound do
         render json: { error: "not found" }, status: :not_found
@@ -46,15 +50,36 @@ module Api
         end
       end
 
+      # Crafted non-scalar params (name[]=x, department_id[a]=b) would
+      # otherwise reach finder/model code as Array/Parameters and 500 on
+      # NoMethodError.
+      def scalar_param(key)
+        value = params[key]
+        unless value.nil? || value.is_a?(String)
+          raise BadParameter, "#{key} must be a string"
+        end
+        value
+      end
+
+      def require_scalar_param(key)
+        scalar_param(key).presence || raise(ActionController::ParameterMissing.new(key))
+      end
+
       DEFAULT_PAGE_SIZE = 100
       MAX_PAGE_SIZE = 500
 
-      # limit/offset pagination for list endpoints: non-positive or non-numeric
-      # values fall back to the default, oversized limits are clamped.
+      # limit/offset pagination for list endpoints: non-positive, non-numeric
+      # or non-scalar values fall back to the default, oversized limits are
+      # clamped.
       def paginate(scope)
-        requested = params[:limit].to_i
+        requested = int_param(:limit)
         limit = requested.positive? ? [ requested, MAX_PAGE_SIZE ].min : DEFAULT_PAGE_SIZE
-        scope.limit(limit).offset([ params[:offset].to_i, 0 ].max)
+        scope.limit(limit).offset([ int_param(:offset), 0 ].max)
+      end
+
+      def int_param(key)
+        value = params[key]
+        value.is_a?(String) ? value.to_i : 0
       end
     end
   end

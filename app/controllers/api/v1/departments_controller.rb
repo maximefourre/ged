@@ -8,10 +8,14 @@ module Api
       end
 
       def create
-        parent = Department.find(params.require(:parent_id))
+        parent = Department.find(require_scalar_param(:parent_id))
         authorize_department!(parent)
-        department = Department.create!(name: params.require(:name), parent: parent)
+        department = Department.create!(name: require_scalar_param(:name), parent: parent)
         render json: department_json(department), status: :created
+      rescue ActiveRecord::RecordNotUnique
+        # unique-index race: a concurrent create slipped past the validation
+        render json: { error: "Name has already been taken" },
+               status: :unprocessable_entity
       end
 
       private

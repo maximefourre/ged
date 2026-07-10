@@ -43,4 +43,31 @@ class Api::V1::DepartmentsTest < ActionDispatch::IntegrationTest
          params: { name: "Invoices", parent_id: @finance.id }
     assert_response :unprocessable_entity
   end
+
+  test "non-string name or parent_id returns 400 instead of a garbage row" do
+    post "/api/v1/departments", headers: bearer_header("erp-app"),
+         params: { name: { a: "b" }, parent_id: @finance.id }
+    assert_response :bad_request
+
+    post "/api/v1/departments", headers: bearer_header("erp-app"),
+         params: { name: "Ok", parent_id: [ @finance.id ] }
+    assert_response :bad_request
+
+    assert_equal 3, Department.count
+  end
+
+  test "unique-index race on create returns 422 like the validation path" do
+    # concurrent create of the same sibling name: the validation passes for
+    # both requests and the [parent_id, name] unique index rejects the loser
+    Department.define_singleton_method(:create!) do |**|
+      raise ActiveRecord::RecordNotUnique, "duplicate key"
+    end
+    begin
+      post "/api/v1/departments", headers: bearer_header("erp-app"),
+           params: { name: "Race", parent_id: @finance.id }
+    ensure
+      Department.singleton_class.remove_method(:create!)
+    end
+    assert_response :unprocessable_entity
+  end
 end

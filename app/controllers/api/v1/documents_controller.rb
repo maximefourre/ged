@@ -5,16 +5,18 @@ module Api
 
       def index
         scope = Document.where(department_id: current_app_client.accessible_department_ids)
-        if params[:department_id].present?
-          department = Department.find(params[:department_id])
+        if (department_id = scalar_param(:department_id)).present?
+          department = Department.find(department_id)
           authorize_department!(department)
           scope = scope.where(department_id: department.subtree_ids)
         end
-        if params[:filename].present?
+        if (filename = scalar_param(:filename)).present?
           scope = scope.where("filename ILIKE ?",
-                              "%#{Document.sanitize_sql_like(params[:filename])}%")
+                              "%#{Document.sanitize_sql_like(filename)}%")
         end
-        scope = scope.joins(:tags).where(tags: { name: params[:tag] }) if params[:tag].present?
+        if (tag = scalar_param(:tag)).present?
+          scope = scope.joins(:tags).where(tags: { name: tag })
+        end
         # preload, not includes: with the tag filter above, includes would be
         # promoted to eager_load and the WHERE would also filter the preloaded
         # tags collection (documents would appear to carry only the filter tag)
@@ -23,7 +25,7 @@ module Api
       end
 
       def create
-        department = Department.find(params.require(:department_id))
+        department = Department.find(require_scalar_param(:department_id))
         authorize_department!(department)
         file = params.require(:file)
         unless file.respond_to?(:original_filename)
@@ -31,7 +33,7 @@ module Api
                         status: :bad_request
         end
 
-        if params[:callback_url].present?
+        if scalar_param(:callback_url).present?
           return create_async(department, file)
         end
 

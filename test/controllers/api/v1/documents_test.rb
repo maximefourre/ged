@@ -120,6 +120,35 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     assert_equal 1, JSON.parse(response.body).size
   end
 
+  test "non-scalar limit and offset fall back to the default page size" do
+    3.times { |i| create_document(@finance, "doc-#{i}.pdf") }
+    get "/api/v1/documents", headers: bearer_header("erp-app"),
+        params: { limit: [ 2 ], offset: { page: 1 } }
+    assert_response :success
+    assert_equal 3, JSON.parse(response.body).size
+  end
+
+  test "non-string filter params return 400 instead of 500" do
+    { filename: [ "x" ], tag: [ "invoice" ],
+      department_id: { a: "b" } }.each do |key, value|
+      get "/api/v1/documents", headers: bearer_header("erp-app"),
+          params: { key => value }
+      assert_response :bad_request, "filter #{key}"
+    end
+  end
+
+  test "non-string department_id or callback_url on upload returns 400" do
+    post "/api/v1/documents", headers: bearer_header("erp-app"),
+         params: { department_id: [ @finance.id ], file: upload_file }
+    assert_response :bad_request
+
+    post "/api/v1/documents", headers: bearer_header("erp-app"),
+         params: { department_id: @finance.id, file: upload_file,
+                   callback_url: [ "https://caller.test/cb" ] }
+    assert_response :bad_request
+    assert_equal 0, UploadRequest.count
+  end
+
   test "filtering by a forbidden department returns 403" do
     get "/api/v1/documents", headers: bearer_header("erp-app"),
         params: { department_id: @hr.id }

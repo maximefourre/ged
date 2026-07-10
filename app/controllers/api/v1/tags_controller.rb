@@ -6,11 +6,7 @@ module Api
       end
 
       def create
-        name = params.require(:name)
-        unless name.is_a?(String)
-          return render json: { error: "name must be a string" }, status: :bad_request
-        end
-        tag = Tag.create!(name: name)
+        tag = Tag.create!(name: require_scalar_param(:name))
         render json: { id: tag.id, name: tag.name }, status: :created
       rescue ActiveRecord::RecordNotUnique
         # unique-index race: a concurrent create slipped past the validation

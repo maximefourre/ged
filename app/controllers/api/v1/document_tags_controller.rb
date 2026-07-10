@@ -4,11 +4,7 @@ module Api
       def create
         document = Document.find(params[:document_id])
         authorize_department!(document.department)
-        name = params.require(:name)
-        unless name.is_a?(String)
-          return render json: { error: "name must be a string" }, status: :bad_request
-        end
-        tag = Tag.find_by!(name: name.strip.downcase)
+        tag = Tag.find_by!(name: require_scalar_param(:name).strip.downcase)
         begin
           document.tags << tag
         rescue ActiveRecord::RecordNotUnique
