@@ -1,8 +1,8 @@
 # GED Corrections & Improvements Plan
 
 **Date:** 2026-07-10
-**Status:** In progress — batches 1 (1.1, 1.4, 1.5, 1.6) and 2 (1.2, 1.3)
-done 2026-07-10; P1 complete
+**Status:** In progress — batches 1–3 done 2026-07-10 (P1 complete; 2.1,
+2.2, 2.4 done); remaining: 2.3, 2.5, P3
 **Source audit:** full read of `docs/superpowers/specs/2026-07-08-ged-design.md`,
 the implementation plan, all app code, tests (61 main + 6 provider, all green),
 plus empirical verification of the P1-1 bug via `rails runner`.
@@ -108,7 +108,7 @@ Test: `post /api/v1/documents, params: { department_id:, file: "hello" }` → 40
 
 ## P2 — Functional gaps vs. spec intent
 
-### 2.1 Async upload status is untrackable (no polling endpoint)
+### 2.1 ✅ Async upload status is untrackable (no polling endpoint)
 
 The spec promises a "request-tracking reference", but the `request_id` can't
 be used anywhere: if the callback never arrives (caller down, retries
@@ -119,7 +119,7 @@ exhausted, job lost) the client has no way to learn the outcome.
   department.
 - Test: pending → completed transition visible; forbidden department → 403.
 
-### 2.2 Orphaned `pending` upload requests and staging files are never recovered
+### 2.2 ✅ Orphaned `pending` upload requests and staging files are never recovered
 
 If the process dies between 202 and job completion (deploy, crash), the
 `UploadRequest` stays `pending` forever, the staging file leaks, no callback
@@ -145,7 +145,7 @@ same `iss`; any app's token would then grant access to GED as whatever its
 when set, `JWT.decode` verifies `aud`. Document it as a cutover requirement
 in AGENTS.md/README.
 
-### 2.4 Async failures invisible to humans
+### 2.4 ✅ Async failures invisible to humans
 
 `upload_requests` appears nowhere in the admin UI; failed async uploads are
 only in logs. Add a read-only `/admin/upload_requests` list (status,
