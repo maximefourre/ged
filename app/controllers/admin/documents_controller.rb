@@ -17,6 +17,9 @@ class Admin::DocumentsController < Admin::BaseController
     if file.blank?
       redirect_to new_admin_document_path, alert: "File is required." and return
     end
+    unless file.respond_to?(:original_filename)
+      redirect_to new_admin_document_path, alert: "File must be a file upload." and return
+    end
     document = Document.new(
       department_id: params.require(:document)[:department_id],
       filename: file.original_filename,

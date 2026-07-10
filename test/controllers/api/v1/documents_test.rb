@@ -32,6 +32,13 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     assert_response :created
   end
 
+  test "upload with a non-file file param returns 400" do
+    post "/api/v1/documents", headers: bearer_header("erp-app"),
+         params: { department_id: @finance.id, file: "hello" }
+    assert_response :bad_request
+    assert_equal 0, Document.count
+  end
+
   test "upload into a forbidden department returns 403" do
     post "/api/v1/documents", headers: bearer_header("erp-app"),
          params: { department_id: @hr.id, file: upload_file }

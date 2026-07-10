@@ -20,6 +20,10 @@ module Api
         department = Department.find(params.require(:department_id))
         authorize_department!(department)
         file = params.require(:file)
+        unless file.respond_to?(:original_filename)
+          return render json: { error: "file must be a multipart file upload" },
+                        status: :bad_request
+        end
 
         if params[:callback_url].present?
           return create_async(department, file)

@@ -72,6 +72,15 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert_not Document.exists?(doc.id)
   end
 
+  test "uploading a non-file file param shows an alert instead of a 500" do
+    post "/admin/documents", params: {
+      document: { department_id: @finance.id, file: "hello" }
+    }
+    assert_redirected_to "/admin/documents/new"
+    assert flash[:alert].present?
+    assert_equal 0, Document.count
+  end
+
   test "downloads a document" do
     doc = Document.new(department: @finance, filename: "report.pdf", uploaded_by: "seed")
     doc.file.attach(io: StringIO.new("PDF!"), filename: "report.pdf",
