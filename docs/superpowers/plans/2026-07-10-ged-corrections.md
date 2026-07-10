@@ -1,8 +1,8 @@
 # GED Corrections & Improvements Plan
 
 **Date:** 2026-07-10
-**Status:** In progress — batch 1 (1.1, 1.4, 1.5, 1.6) done 2026-07-10 on
-branch `fix/corrections-lot-1`
+**Status:** In progress — batches 1 (1.1, 1.4, 1.5, 1.6) and 2 (1.2, 1.3)
+done 2026-07-10; P1 complete
 **Source audit:** full read of `docs/superpowers/specs/2026-07-08-ged-design.md`,
 the implementation plan, all app code, tests (61 main + 6 provider, all green),
 plus empirical verification of the P1-1 bug via `rails runner`.
@@ -33,7 +33,7 @@ instead of the graceful `restrict_with_error` path used for children/documents.
   `Admin::DepartmentsController#destroy` (and consider the same in
   `Api::V1::BaseController` → 409 or 422) so any future FK can't 500.
 
-### 1.2 `Auth::JwksCache` — no HTTP timeouts, fetch under the global mutex, no failure backoff
+### 1.2 ✅ `Auth::JwksCache` — no HTTP timeouts, fetch under the global mutex, no failure backoff
 
 Three compounding problems in `app/services/auth/jwks_cache.rb`:
 
@@ -55,7 +55,7 @@ Fix:
   token validation still succeeds fast and only one refresh attempt is made
   within the backoff window.
 
-### 1.3 No JWKS re-fetch on unknown `kid` (IdP key rotation → up to 5 min of 401s)
+### 1.3 ✅ No JWKS re-fetch on unknown `kid` (IdP key rotation → up to 5 min of 401s)
 
 `TokenValidator` passes a static key set to `JWT.decode`. After the IdP
 rotates its signing key, all tokens fail with 401 until the 300s TTL expires.
