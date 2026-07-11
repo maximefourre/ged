@@ -1,9 +1,9 @@
 # GED — Document Management System
 
 Self-hosted document store for a 10+ person team/company, organized around
-departments (folders, the permission boundary) and cross-cutting tags. Accessed
-mostly by other internal applications over an API secured with OAuth2/JWT bearer
-tokens, plus a minimal admin web UI for humans.
+departments (folders, the permission boundary) and per-document key→value
+tags. Accessed mostly by other internal applications over an API secured with
+OAuth2/JWT bearer tokens, plus a minimal admin web UI for humans.
 
 Full design: `docs/superpowers/specs/2026-07-08-ged-design.md`. Read it before
 making architectural changes — this file is a quick-reference summary, the spec
@@ -13,7 +13,7 @@ is the source of truth.
 
 - **Ruby on Rails** — single app, API-only controllers under `/api/v1/...` for
   application clients, regular controllers + ERB views for the admin UI
-- **PostgreSQL** — app data (departments, tags, documents, app_clients, admins)
+- **PostgreSQL** — app data (departments, documents, app_clients, admins)
 - **Active Storage** (local disk service) — document file storage
 - **Devise** — admin UI username/password session login
 - **`jwt` gem** — validates bearer tokens from app clients against a JWKS endpoint
@@ -55,6 +55,13 @@ is the source of truth.
   considered but deferred — callback URL only for now.
 - **No full-text search, no document versioning, no automated backups** in this
   pass — see the spec's Non-goals section before adding these.
+- **Tags are a key→value map, not a registry:** `documents.tags` is a
+  single-level jsonb map (`{"type": "facture", "urgent": null}`, GIN-indexed),
+  validated/normalized by the `KvTaggable` concern (also on
+  `upload_requests.tags`). Tags are passed at upload (`tags[type]=facture`),
+  replaced wholesale via `PUT /api/v1/documents/:id/tags`, and filtered with
+  `?tag=<key>` / `?tag=<key>&tag_value=<value>`. There are no `/api/v1/tags`
+  endpoints and no admin tags section.
 
 ## How the pieces fit (implementation map)
 
@@ -65,12 +72,23 @@ is the source of truth.
   `AppClient#can_access?` (walks `Department#self_and_ancestors`).
 - **Async upload flow:** controller creates an `UploadRequest` (uuid pk) +
   writes raw bytes to `StagingStore` (`storage/staging/<id>`) → 202 →
-  `StoreDocumentJob` builds the `Document` and deletes the staging file →
-  `DeliverCallbackJob` POSTs `{ request_id, status, document_id }` to the
-  `callback_url` (5 attempts, polynomial backoff, logs on final failure).
+  `StoreDocumentJob` (runs on the dedicated `uploads` queue) builds the
+  `Document`, applies `upload_request.tags`, and deletes the staging file →
+  `DeliverCallbackJob` POSTs
+  `{ request_id, status, document_id, error_message, tags }` (tags `null` on
+  failure) to the `callback_url` (5 attempts, polynomial backoff, logs on
+  final failure). `GET /api/v1/upload_requests/:id` mirrors the same payload
+  shape for polling.
+- **Upload queue pause:** `UploadQueue` (facade over Solid Queue's native
+  pause) backs the Pause/Resume button on `/admin/upload_requests`. Pausing
+  stops claiming new `StoreDocumentJob`s; running jobs finish and their
+  callbacks (on `default`) still deliver. `ReconcileUploadRequestsJob` skips
+  pending re-enqueues while paused. Solid Queue runs in every environment
+  (dev: inside Puma via `bin/dev`, queue database `ged_development_queue`).
 - **Jobs in production run inside Puma** (Solid Queue via
-  `SOLID_QUEUE_IN_PUMA=true` in docker-compose); dev/test use the default
-  ActiveJob adapters. There is no separate worker container.
+  `SOLID_QUEUE_IN_PUMA=true` in docker-compose); dev uses Solid Queue in Puma
+  too; the test env keeps the `:test` adapter but has the queue schema loaded
+  (`ged_test_queue`). There is no separate worker container.
 - **Document creation is shared, controllers are not:** the admin UI does not
   reuse the API controllers (despite a spec sentence suggesting it) — instead
   `Api::V1::DocumentsController`, `Admin::DocumentsController`, and
