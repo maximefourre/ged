@@ -354,7 +354,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 22px;
-  max-width: 560px;
+  max-width: 720px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -405,8 +405,23 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .dropzone:hover { border-color: var(--accent); }
 .dropzone.is-drag { border-color: var(--accent); background: var(--accent-weak); }
 /* The native file input stays visible (and interactable for tests); the whole
-   zone additionally accepts drops via JS. */
-.dropzone input[type="file"] { margin-top: 8px; font: inherit; font-size: 13px; color: var(--muted); max-width: 100%; }
+   zone additionally accepts drops via JS. Its button is themed via the
+   ::file-selector-button pseudo-element. */
+.dropzone input[type="file"] { margin-top: 10px; font: inherit; font-size: 13px; color: var(--muted); max-width: 100%; }
+.dropzone input[type="file"]::file-selector-button {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 8px 14px;
+  margin-right: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  transition: background .15s, border-color .15s;
+}
+.dropzone input[type="file"]::file-selector-button:hover { background: var(--surface-2); border-color: var(--accent); }
 .dropzone .dz-icon { font-size: 26px; line-height: 1; color: var(--accent); }
 .dropzone .dz-primary { font-weight: 600; color: var(--text); }
 .dropzone .dz-file { font-family: var(--font-mono); font-size: 13px; color: var(--accent-ink); }
