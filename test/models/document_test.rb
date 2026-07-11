@@ -31,7 +31,7 @@ class DocumentTest < ActiveSupport::TestCase
   test "can be tagged" do
     doc = build_document
     doc.save!
-    doc.tags << Tag.create!(name: "invoice")
-    assert_equal [ "invoice" ], doc.tags.pluck(:name)
+    doc.update!(tags: { "invoice" => nil })
+    assert_equal({ "invoice" => nil }, doc.reload.tags)
   end
 end

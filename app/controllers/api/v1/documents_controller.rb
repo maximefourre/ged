@@ -2,6 +2,7 @@ module Api
   module V1
     class DocumentsController < BaseController
       include DocumentStreaming
+      include DocumentJson
 
       def index
         scope = Document.where(department_id: current_app_client.accessible_department_ids)
@@ -15,12 +16,17 @@ module Api
                               "%#{Document.sanitize_sql_like(filename)}%")
         end
         if (tag = scalar_param(:tag)).present?
-          scope = scope.joins(:tags).where(tags: { name: tag })
+          tag = tag.strip.downcase
+          if (tag_value = scalar_param(:tag_value)).present?
+            scope = scope.where("documents.tags @> ?", { tag => tag_value.strip }.to_json)
+          else
+            # ? is the jsonb key-exists operator (GIN-served), not a bind marker
+            scope = scope.where("documents.tags ? :key", key: tag)
+          end
+        elsif scalar_param(:tag_value).present?
+          raise BadParameter, "tag_value requires tag"
         end
-        # preload, not includes: with the tag filter above, includes would be
-        # promoted to eager_load and the WHERE would also filter the preloaded
-        # tags collection (documents would appear to carry only the filter tag)
-        scope = paginate(scope.preload(:tags).order(created_at: :desc, id: :desc))
+        scope = paginate(scope.order(created_at: :desc, id: :desc))
         render json: scope.map { |d| document_json(d) }
       end
 
@@ -83,19 +89,6 @@ module Api
         document = Document.find(params[:id])
         authorize_department!(document.department)
         document
-      end
-
-      def document_json(document)
-        {
-          id: document.id,
-          filename: document.filename,
-          content_type: document.content_type,
-          byte_size: document.byte_size,
-          department_id: document.department_id,
-          uploaded_by: document.uploaded_by,
-          tags: document.tags.map(&:name),
-          created_at: document.created_at
-        }
       end
     end
   end

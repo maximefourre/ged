@@ -36,25 +36,44 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert_equal "Finance", @finance.reload.name
   end
 
-  test "manages a document's tags" do
+  test "manages a document's tags through the key=value textarea" do
     doc = Document.new(department: @finance, filename: "report.pdf", uploaded_by: "seed")
     doc.file.attach(io: StringIO.new("PDF!"), filename: "report.pdf",
                     content_type: "application/pdf")
     doc.save!
-    invoice = Tag.create!(name: "invoice")
-    urgent = Tag.create!(name: "urgent")
 
     get "/admin/documents/#{doc.id}/edit"
     assert_response :success
 
     patch "/admin/documents/#{doc.id}",
-          params: { document: { tag_ids: [ invoice.id, urgent.id ] } }
+          params: { document: { tags_text: "Type=Facture\nurgent" } }
     assert_redirected_to "/admin/documents"
-    assert_equal %w[invoice urgent], doc.reload.tags.order(:name).pluck(:name)
+    assert_equal({ "type" => "Facture", "urgent" => nil }, doc.reload.tags)
 
-    # unchecking everything (checkbox helper submits only the blank) clears tags
-    patch "/admin/documents/#{doc.id}", params: { document: { tag_ids: [ "" ] } }
-    assert_equal [], doc.reload.tags.to_a
+    # an empty textarea clears the map
+    patch "/admin/documents/#{doc.id}", params: { document: { tags_text: "" } }
+    assert_equal({}, doc.reload.tags)
+
+    # an invalid map redirects back to the form with an alert, tags untouched
+    patch "/admin/documents/#{doc.id}",
+          params: { document: { tags_text: "#{"k" * 101}=x" } }
+    assert_redirected_to "/admin/documents/#{doc.id}/edit"
+    assert_equal({}, doc.reload.tags)
+  end
+
+  test "filters documents by tag key" do
+    doc = Document.new(department: @finance, filename: "tagged.pdf", uploaded_by: "seed",
+                       tags: { "type" => "facture" })
+    doc.file.attach(io: StringIO.new("PDF!"), filename: "tagged.pdf",
+                    content_type: "application/pdf")
+    doc.save!
+
+    get "/admin/documents", params: { tag: "type" }
+    assert_includes response.body, "tagged.pdf"
+    assert_includes response.body, "type=facture"
+
+    get "/admin/documents", params: { tag: "absent" }
+    assert_not_includes response.body, "tagged.pdf"
   end
 
   test "deletes a department granted to an app client" do
@@ -73,14 +92,6 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert_redirected_to "/admin/departments"
     assert flash[:alert].present?
     assert Department.exists?(@finance.id)
-  end
-
-  test "creates and deletes a tag" do
-    post "/admin/tags", params: { tag: { name: "Invoice" } }
-    tag = Tag.find_by(name: "invoice")
-    assert tag
-    delete "/admin/tags/#{tag.id}"
-    assert_not Tag.exists?(tag.id)
   end
 
   test "registers an app client with department access" do

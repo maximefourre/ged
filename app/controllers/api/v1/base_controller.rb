@@ -65,6 +65,14 @@ module Api
         scalar_param(key).presence || raise(ActionController::ParameterMissing.new(key))
       end
 
+      # tags arrives as nested params (tags[type]=facture). Anything that is
+      # not a nested hash is passed through so model validation rejects it
+      # with 422 instead of a 500 here.
+      def tags_param
+        value = params[:tags]
+        value.respond_to?(:to_unsafe_h) ? value.to_unsafe_h : value
+      end
+
       DEFAULT_PAGE_SIZE = 100
       MAX_PAGE_SIZE = 500
 

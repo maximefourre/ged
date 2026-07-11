@@ -5,7 +5,6 @@ Rails.application.routes.draw do
   namespace :admin do
     root to: "dashboard#index"
     resources :departments, only: [ :index, :new, :create, :edit, :update, :destroy ]
-    resources :tags, only: [ :index, :create, :destroy ]
     resources :app_clients, except: [ :show ]
     resources :documents, only: [ :index, :new, :create, :edit, :update, :destroy ] do
       member { get :download }
@@ -19,10 +18,9 @@ Rails.application.routes.draw do
       get "ping", to: "pings#show"
       resources :documents, only: [ :index, :create, :show, :destroy ] do
         member { get :download }
-        resources :tags, only: [ :create ], controller: "document_tags"
+        resource :tags, only: [ :update ], controller: "document_tags"
       end
       resources :departments, only: [ :index, :create ]
-      resources :tags, only: [ :index, :create ]
       resources :upload_requests, only: [ :show ]
     end
   end

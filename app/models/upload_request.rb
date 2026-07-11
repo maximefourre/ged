@@ -1,4 +1,6 @@
 class UploadRequest < ApplicationRecord
+  include KvTaggable
+
   STATUSES = %w[pending processing completed failed].freeze
 
   belongs_to :department

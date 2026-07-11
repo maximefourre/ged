@@ -54,7 +54,7 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
   test "list returns only accessible documents, with filters" do
     doc = create_document(@invoices, "facture-2026.pdf")
     create_document(@hr, "salaries.pdf")
-    doc.tags << Tag.create!(name: "invoice")
+    doc.update!(tags: { "invoice" => "2026" })
 
     get "/api/v1/documents", headers: bearer_header("erp-app")
     names = JSON.parse(response.body).map { |d| d["filename"] }
@@ -73,16 +73,30 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     assert_equal 0, JSON.parse(response.body).size
   end
 
-  test "tag filter does not hide the document's other tags" do
+  test "documents carry their tags as a map and tag_value filters on the pair" do
     doc = create_document(@invoices, "facture-2026.pdf")
-    doc.tags << Tag.create!(name: "invoice")
-    doc.tags << Tag.create!(name: "archived")
+    doc.update!(tags: { "type" => "facture", "urgent" => nil })
 
     get "/api/v1/documents", headers: bearer_header("erp-app"),
-        params: { tag: "invoice" }
+        params: { tag: "type", tag_value: "facture" }
     body = JSON.parse(response.body)
     assert_equal 1, body.size
-    assert_equal %w[archived invoice], body.first["tags"].sort
+    assert_equal({ "type" => "facture", "urgent" => nil }, body.first["tags"])
+
+    # filter params are normalized like stored tags
+    get "/api/v1/documents", headers: bearer_header("erp-app"),
+        params: { tag: " Type ", tag_value: " facture " }
+    assert_equal 1, JSON.parse(response.body).size
+
+    get "/api/v1/documents", headers: bearer_header("erp-app"),
+        params: { tag: "type", tag_value: "devis" }
+    assert_equal 0, JSON.parse(response.body).size
+  end
+
+  test "tag_value without tag returns 400" do
+    get "/api/v1/documents", headers: bearer_header("erp-app"),
+        params: { tag_value: "facture" }
+    assert_response :bad_request
   end
 
   test "list paginates with limit and offset" do
@@ -110,11 +124,7 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     assert_equal 3, JSON.parse(response.body).size
   end
 
-  test "tags and departments lists paginate too" do
-    2.times { |i| Tag.create!(name: "tag-#{i}") }
-    get "/api/v1/tags", headers: bearer_header("erp-app"), params: { limit: 1 }
-    assert_equal 1, JSON.parse(response.body).size
-
+  test "departments list paginates too" do
     Department.create!(name: "Ops", parent: @finance).tap { |d| @client.departments << d }
     get "/api/v1/departments", headers: bearer_header("erp-app"), params: { limit: 1 }
     assert_equal 1, JSON.parse(response.body).size
@@ -129,7 +139,7 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
   end
 
   test "non-string filter params return 400 instead of 500" do
-    { filename: [ "x" ], tag: [ "invoice" ],
+    { filename: [ "x" ], tag: [ "invoice" ], tag_value: [ "x" ],
       department_id: { a: "b" } }.each do |key, value|
       get "/api/v1/documents", headers: bearer_header("erp-app"),
           params: { key => value }

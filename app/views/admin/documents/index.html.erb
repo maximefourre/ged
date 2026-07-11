@@ -6,6 +6,7 @@
         options_from_collection_for_select(Department.order(:name), :id, :name,
                                            params[:department_id]),
         include_blank: "all departments" %>
+  <%= f.text_field :tag, value: params[:tag], placeholder: "tag key" %>
   <%= f.submit "Filter" %>
 <% end %>
 <table>
@@ -14,7 +15,7 @@
     <tr>
       <td><%= doc.filename %></td>
       <td><%= doc.department.name %></td>
-      <td><%= doc.tags.map(&:name).join(", ") %></td>
+      <td><%= format_tags(doc.tags) %></td>
       <td><%= doc.uploaded_by %></td>
       <td><%= doc.created_at.strftime("%Y-%m-%d %H:%M") %></td>
       <td>

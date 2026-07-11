@@ -2,12 +2,16 @@ class Admin::DocumentsController < Admin::BaseController
   include DocumentStreaming
 
   def index
-    scope = Document.includes(:department, :tags).order(created_at: :desc, id: :desc)
+    scope = Document.includes(:department).order(created_at: :desc, id: :desc)
     if params[:filename].present?
       scope = scope.where("filename ILIKE ?",
                           "%#{Document.sanitize_sql_like(params[:filename])}%")
     end
     scope = scope.where(department_id: params[:department_id]) if params[:department_id].present?
+    if params[:tag].present? && params[:tag].is_a?(String)
+      # ? is the jsonb key-exists operator, not a bind marker
+      scope = scope.where("documents.tags ? :key", key: params[:tag].strip.downcase)
+    end
     @documents = paginate(scope)
   end
 
@@ -43,8 +47,11 @@ class Admin::DocumentsController < Admin::BaseController
 
   def update
     document = Document.find(params[:id])
-    document.update!(tag_ids: params.require(:document).permit(tag_ids: [])[:tag_ids])
+    document.update!(tags: parse_tags_text(params.require(:document)[:tags_text]))
     redirect_to admin_documents_path, notice: "Tags updated."
+  rescue ActiveRecord::RecordInvalid => e
+    redirect_to edit_admin_document_path(document),
+                alert: e.record.errors.full_messages.join(", ")
   end
 
   def download
@@ -54,5 +61,15 @@ class Admin::DocumentsController < Admin::BaseController
   def destroy
     Document.find(params[:id]).destroy
     redirect_to admin_documents_path, notice: "Document deleted."
+  end
+
+  private
+
+  # One "key=value" pair per line; a line without "=" is a key with no value.
+  def parse_tags_text(text)
+    text.to_s.each_line.map(&:strip).reject(&:empty?).to_h do |line|
+      key, value = line.split("=", 2)
+      [ key, value ]
+    end
   end
 end

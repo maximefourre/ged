@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_10_170658) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_11_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
@@ -79,32 +79,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_10_170658) do
     t.index ["parent_id"], name: "index_departments_on_parent_id"
   end
 
-  create_table "document_tags", force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.uuid "document_id", null: false
-    t.bigint "tag_id", null: false
-    t.datetime "updated_at", null: false
-    t.index ["document_id", "tag_id"], name: "index_document_tags_on_document_id_and_tag_id", unique: true
-    t.index ["document_id"], name: "index_document_tags_on_document_id"
-    t.index ["tag_id"], name: "index_document_tags_on_tag_id"
-  end
-
   create_table "documents", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.bigint "byte_size"
     t.string "content_type"
     t.datetime "created_at", null: false
     t.bigint "department_id", null: false
     t.string "filename", null: false
+    t.jsonb "tags", default: {}, null: false
     t.datetime "updated_at", null: false
     t.string "uploaded_by", null: false
     t.index ["department_id"], name: "index_documents_on_department_id"
-  end
-
-  create_table "tags", force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.string "name", null: false
-    t.datetime "updated_at", null: false
-    t.index ["name"], name: "index_tags_on_name", unique: true
+    t.index ["tags"], name: "index_documents_on_tags", using: :gin
   end
 
   create_table "upload_requests", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -116,6 +101,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_10_170658) do
     t.string "error_message"
     t.string "filename", null: false
     t.string "status", default: "pending", null: false
+    t.jsonb "tags", default: {}, null: false
     t.datetime "updated_at", null: false
     t.string "uploaded_by", null: false
     t.index ["department_id"], name: "index_upload_requests_on_department_id"
@@ -126,8 +112,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_10_170658) do
   add_foreign_key "client_department_accesses", "app_clients"
   add_foreign_key "client_department_accesses", "departments"
   add_foreign_key "departments", "departments", column: "parent_id"
-  add_foreign_key "document_tags", "documents"
-  add_foreign_key "document_tags", "tags"
   add_foreign_key "documents", "departments"
   add_foreign_key "upload_requests", "departments"
   add_foreign_key "upload_requests", "documents", on_delete: :nullify
