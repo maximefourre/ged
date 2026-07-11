@@ -4,6 +4,7 @@ class UploadRequest < ApplicationRecord
   STATUSES = %w[pending processing completed failed].freeze
 
   belongs_to :department
+  belongs_to :document, optional: true
 
   validates :status, inclusion: { in: STATUSES }
   validates :callback_url, :filename, :uploaded_by, presence: true

@@ -120,6 +120,16 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert_not Document.exists?(doc.id)
   end
 
+  test "uploads a document with tags" do
+    post "/admin/documents",
+         params: { document: { department_id: @finance.id,
+                               file: fixture_file_upload("report.pdf", "application/pdf"),
+                               tags_text: "type=facture\nurgent" } }
+    assert_redirected_to "/admin/documents"
+    doc = Document.order(:created_at).last
+    assert_equal({ "type" => "facture", "urgent" => nil }, doc.tags)
+  end
+
   test "uploading a non-file file param shows an alert instead of a 500" do
     post "/admin/documents", params: {
       document: { department_id: @finance.id, file: "hello" }

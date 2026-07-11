@@ -94,6 +94,67 @@ class Api::V1::AsyncUploadTest < ActionDispatch::IntegrationTest
     assert_nil body["document_id"]
   end
 
+  test "async upload applies tags and returns them in the callback and polling" do
+    stub_request(:post, @callback_url).to_return(status: 200)
+
+    perform_enqueued_jobs do
+      post "/api/v1/documents", headers: bearer_header("erp-app"),
+           params: { department_id: @finance.id,
+                     file: fixture_file_upload("report.pdf", "application/pdf"),
+                     callback_url: @callback_url,
+                     tags: { type: "facture", urgent: "" } }
+      assert_response :accepted
+    end
+
+    request_id = JSON.parse(response.body)["request_id"]
+    document = Document.find(UploadRequest.find(request_id).document_id)
+    assert_equal({ "type" => "facture", "urgent" => nil }, document.tags)
+
+    assert_requested(:post, @callback_url) do |req|
+      payload = JSON.parse(req.body)
+      payload["request_id"] == request_id &&
+        payload["tags"] == { "type" => "facture", "urgent" => nil }
+    end
+
+    get "/api/v1/upload_requests/#{request_id}", headers: bearer_header("erp-app")
+    assert_equal({ "type" => "facture", "urgent" => nil },
+                 JSON.parse(response.body)["tags"])
+  end
+
+  test "async upload with invalid tags is rejected with 422 before the 202" do
+    assert_no_enqueued_jobs do
+      post "/api/v1/documents", headers: bearer_header("erp-app"),
+           params: { department_id: @finance.id,
+                     file: fixture_file_upload("report.pdf", "application/pdf"),
+                     callback_url: @callback_url,
+                     tags: "flat" }
+    end
+    assert_response :unprocessable_entity
+    assert_equal 0, UploadRequest.count
+  end
+
+  test "a failed async upload reports null tags in the callback" do
+    stub_request(:post, @callback_url).to_return(status: 200)
+    post "/api/v1/documents", headers: bearer_header("erp-app"),
+         params: { department_id: @finance.id,
+                   file: fixture_file_upload("report.pdf", "application/pdf"),
+                   callback_url: @callback_url,
+                   tags: { type: "facture" } }
+    request_id = JSON.parse(response.body)["request_id"]
+    StagingStore.delete(request_id) # force the store to fail
+
+    # a bare perform_enqueued_jobs only flushes a snapshot of the queue taken
+    # at call time, so it won't also run DeliverCallbackJob, which
+    # StoreDocumentJob enqueues as a side effect of running here - drain fully.
+    perform_enqueued_jobs until enqueued_jobs.empty?
+
+    assert_equal "failed", UploadRequest.find(request_id).status
+    assert_requested(:post, @callback_url) do |req|
+      payload = JSON.parse(req.body)
+      payload["status"] == "failed" && payload.key?("tags") && payload["tags"].nil?
+    end
+  end
+
   test "polling an upload request of a forbidden department returns 403" do
     hr = Department.create!(name: "HR")
     upload_request = UploadRequest.create!(department: hr, filename: "report.pdf",

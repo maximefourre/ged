@@ -8,7 +8,8 @@ module Api
           request_id: upload_request.id,
           status: upload_request.status,
           document_id: upload_request.document_id,
-          error_message: upload_request.error_message
+          error_message: upload_request.error_message,
+          tags: upload_request.document&.tags
         }
       end
     end

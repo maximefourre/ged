@@ -6,12 +6,13 @@
   <%= f.submit "Filter" %>
 <% end %>
 <table>
-  <tr><th>Request</th><th>Department</th><th>Filename</th><th>Status</th><th>Error</th><th>Uploaded by</th><th>Date</th></tr>
+  <tr><th>Request</th><th>Department</th><th>Filename</th><th>Tags</th><th>Status</th><th>Error</th><th>Uploaded by</th><th>Date</th></tr>
   <% @upload_requests.each do |request| %>
     <tr>
       <td><%= request.id %></td>
       <td><%= request.department.name %></td>
       <td><%= request.filename %></td>
+      <td><%= format_tags(request.tags) %></td>
       <td><%= request.status %></td>
       <td><%= request.error_message %></td>
       <td><%= request.uploaded_by %></td>

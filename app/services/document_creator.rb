@@ -3,13 +3,14 @@
 # documents through here. Raises ActiveRecord::RecordInvalid on validation
 # failure.
 class DocumentCreator
-  def self.call(department_id:, io:, filename:, content_type:, byte_size:, uploaded_by:)
+  def self.call(department_id:, io:, filename:, content_type:, byte_size:, uploaded_by:, tags: {})
     document = Document.new(
       department_id: department_id,
       filename: filename,
       content_type: content_type,
       byte_size: byte_size,
-      uploaded_by: uploaded_by
+      uploaded_by: uploaded_by,
+      tags: tags
     )
     document.file.attach(io: io, filename: filename, content_type: content_type)
     document.save!

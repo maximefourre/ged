@@ -33,7 +33,8 @@ class Admin::DocumentsController < Admin::BaseController
       filename: file.original_filename,
       content_type: file.content_type,
       byte_size: file.size,
-      uploaded_by: "admin:#{current_admin.username}"
+      uploaded_by: "admin:#{current_admin.username}",
+      tags: parse_tags_text(params.require(:document)[:tags_text])
     )
     redirect_to admin_documents_path, notice: "Document uploaded."
   rescue ActiveRecord::RecordInvalid => e

@@ -14,7 +14,8 @@ class StoreDocumentJob < ApplicationJob
           filename: upload_request.filename,
           content_type: upload_request.content_type,
           byte_size: File.size(path),
-          uploaded_by: upload_request.uploaded_by
+          uploaded_by: upload_request.uploaded_by,
+          tags: upload_request.tags
         )
       end
       upload_request.update!(status: "completed", document_id: document.id)

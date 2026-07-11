@@ -49,7 +49,8 @@ module Api
           filename: file.original_filename,
           content_type: file.content_type,
           byte_size: file.size,
-          uploaded_by: current_app_client.client_identifier
+          uploaded_by: current_app_client.client_identifier,
+          tags: tags_param || {}
         )
         render json: document_json(document), status: :created
       end
@@ -77,7 +78,8 @@ module Api
           callback_url: params[:callback_url],
           filename: file.original_filename,
           content_type: file.content_type,
-          uploaded_by: current_app_client.client_identifier
+          uploaded_by: current_app_client.client_identifier,
+          tags: tags_param || {}
         )
         StagingStore.write(upload_request.id, file.tempfile)
         StoreDocumentJob.perform_later(upload_request.id)

@@ -32,6 +32,23 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     assert_response :created
   end
 
+  test "sync upload accepts tags and returns them in the map" do
+    post "/api/v1/documents", headers: bearer_header("erp-app"),
+         params: { department_id: @finance.id, file: upload_file,
+                   tags: { Type: " Facture ", urgent: "" } }
+    assert_response :created
+    body = JSON.parse(response.body)
+    assert_equal({ "type" => "Facture", "urgent" => nil }, body["tags"])
+    assert_equal({ "type" => "Facture", "urgent" => nil }, Document.find(body["id"]).tags)
+  end
+
+  test "sync upload with a non-map tags param returns 422" do
+    post "/api/v1/documents", headers: bearer_header("erp-app"),
+         params: { department_id: @finance.id, file: upload_file, tags: "flat" }
+    assert_response :unprocessable_entity
+    assert_equal 0, Document.count
+  end
+
   test "upload with a non-file file param returns 400" do
     post "/api/v1/documents", headers: bearer_header("erp-app"),
          params: { department_id: @finance.id, file: "hello" }

@@ -19,6 +19,18 @@ class StoreDocumentJobTest < ActiveJob::TestCase
     assert_enqueued_with(job: DeliverCallbackJob, args: [ @request.id ])
   end
 
+  test "applies the requested tags to the created document" do
+    request = UploadRequest.create!(department: @finance, filename: "report.pdf",
+                                    callback_url: "https://caller.test/cb",
+                                    uploaded_by: "erp-app",
+                                    tags: { "type" => "facture" })
+    StagingStore.write(request.id, StringIO.new("PDF!"))
+
+    StoreDocumentJob.perform_now(request.id)
+
+    assert_equal({ "type" => "facture" }, Document.find(request.reload.document_id).tags)
+  end
+
   test "concurrent double execution stores the document only once" do
     # simulate a reconcile-re-enqueued copy starting while the first run is
     # mid-storage (queue backlog > STUCK_AFTER): it must back off, not store
