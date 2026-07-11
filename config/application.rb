@@ -35,5 +35,10 @@ module Ged
     #
     # config.time_zone = "Central Time (US & Canada)"
     # config.eager_load_paths << Rails.root.join("extras")
+
+    # Solid Queue is available in every environment (dev mirrors production
+    # so the uploads-queue pause is testable locally); its schema lives in
+    # the dedicated queue database.
+    config.solid_queue.connects_to = { database: { writing: :queue } }
   end
 end
