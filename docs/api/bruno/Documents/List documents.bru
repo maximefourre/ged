@@ -1,0 +1,29 @@
+meta {
+  name: List documents
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/documents
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~department_id: {{departmentId}}
+  ~filename: invoice
+  ~tag: type
+  ~tag_value: facture
+  ~limit: 100
+  ~offset: 0
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Lists accessible documents, newest first. Enable any of the disabled query
+  params to filter. `tag_value` requires `tag`.
+}

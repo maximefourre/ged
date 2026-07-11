@@ -1,0 +1,31 @@
+meta {
+  name: Get token
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{tokenUrl}}
+  body: formUrlEncoded
+  auth: none
+}
+
+body:form-urlencoded {
+  grant_type: client_credentials
+  client_id: {{clientId}}
+  client_secret: {{clientSecret}}
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.access_token) {
+    bru.setEnvVar("token", res.body.access_token);
+  }
+}
+
+docs {
+  Fetches a client_credentials token from the dev OAuth provider and stores it
+  in the `token` (secret) environment variable that every other request uses.
+
+  Set `clientId` / `clientSecret` in the environment first. The same client_id
+  must be registered in the GED admin UI with department access.
+}

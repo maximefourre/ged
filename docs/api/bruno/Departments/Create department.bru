@@ -1,0 +1,26 @@
+meta {
+  name: Create department
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/departments
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "parent_id": {{departmentId}},
+    "name": "Accounting"
+  }
+}
+
+docs {
+  Creates a child of `departmentId` (which must be accessible).
+}

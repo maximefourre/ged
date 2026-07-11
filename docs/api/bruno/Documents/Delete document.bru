@@ -1,0 +1,19 @@
+meta {
+  name: Delete document
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/documents/{{documentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Deletes the document. Returns 204 No Content.
+}

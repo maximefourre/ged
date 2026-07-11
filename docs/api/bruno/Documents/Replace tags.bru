@@ -1,0 +1,29 @@
+meta {
+  name: Replace tags
+  type: http
+  seq: 6
+}
+
+put {
+  url: {{baseUrl}}/api/v1/documents/{{documentId}}/tags
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "tags": {
+      "type": "facture",
+      "urgent": null
+    }
+  }
+}
+
+docs {
+  Replaces the document's whole tag map (map semantics). Send `"tags": {}` or omit
+  it to clear all tags.
+}

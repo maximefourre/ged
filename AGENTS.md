@@ -25,6 +25,8 @@ is the source of truth.
   decisions)
 - `docs/superpowers/plans/` — implementation plans (checkbox progress tracking,
   designed for resuming and/or delegation to subagents)
+- `docs/api/` — `openapi.yaml` (OpenAPI 3.1 contract, hand-maintained source of
+  truth for the API) and `bruno/` (ready-to-run Bruno collection)
 - `oauth-provider/` — temporary standalone OAuth2 dev provider (own Gemfile)
 
 ## Key architectural decisions
@@ -94,6 +96,12 @@ is the source of truth.
   `Api::V1::DocumentsController`, `Admin::DocumentsController`, and
   `StoreDocumentJob` all create documents through the `DocumentCreator`
   service. Listing/download logic is still per-controller.
+- **API docs are served, hand-maintained:** `ApiDocsController`
+  (`ActionController::Base`, no auth — deliberately public) serves the committed
+  `docs/api/openapi.yaml` at `GET /api/v1/openapi.yaml` and a Redoc page at
+  `GET /api/docs`. The spec is written by hand; `test/integration/api_docs_test.rb`
+  fails if a routed `/api/v1` path is missing from it (structure only, not
+  params/shapes) — update the YAML when adding or renaming an endpoint.
 
 ## Known gaps / pitfalls
 

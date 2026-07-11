@@ -1,0 +1,19 @@
+meta {
+  name: Ping
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/ping
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Verifies the token and echoes the authenticated client identifier.
+}

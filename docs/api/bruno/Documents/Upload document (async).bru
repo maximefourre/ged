@@ -1,0 +1,34 @@
+meta {
+  name: Upload document (async)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/documents
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:multipart-form {
+  department_id: {{departmentId}}
+  file: @file(/path/to/your/file.pdf)
+  callback_url: {{callbackUrl}}
+  tags[type]: facture
+}
+
+script:post-response {
+  if (res.status === 202 && res.body && res.body.request_id) {
+    bru.setEnvVar("requestId", res.body.request_id);
+  }
+}
+
+docs {
+  Asynchronous upload — the `callback_url` param makes the endpoint return 202
+  with a `request_id` (stored into `requestId`). Poll "Get upload request", or
+  use a real callback URL (e.g. https://webhook.site) to receive the result.
+}

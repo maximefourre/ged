@@ -1,0 +1,20 @@
+meta {
+  name: Get upload request
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/upload_requests/{{requestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Polls the status of an asynchronous upload (pending → processing → completed /
+  failed). `requestId` is set by "Upload document (async)".
+}

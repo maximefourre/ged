@@ -14,6 +14,10 @@ Rails.application.routes.draw do
   end
   root to: redirect("/admin")
 
+  # API documentation (public, no auth): the OpenAPI spec and a Redoc page.
+  get "api/docs", to: "api_docs#show"
+  get "api/v1/openapi.yaml", to: "api_docs#spec", as: :api_openapi_spec
+
   namespace :api do
     namespace :v1 do
       get "ping", to: "pings#show"

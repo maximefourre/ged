@@ -1,0 +1,33 @@
+meta {
+  name: Upload document (sync)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/documents
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:multipart-form {
+  department_id: {{departmentId}}
+  file: @file(/path/to/your/file.pdf)
+  tags[type]: facture
+}
+
+script:post-response {
+  if (res.status === 201 && res.body && res.body.id) {
+    bru.setEnvVar("documentId", res.body.id);
+  }
+}
+
+docs {
+  Synchronous upload — returns the created document (201). Point `file` at a real
+  file on disk. The response `id` is stored into `documentId` for the get /
+  download / tags / delete requests.
+}

@@ -1,0 +1,25 @@
+meta {
+  name: List departments
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/departments
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~limit: 100
+  ~offset: 0
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Lists departments the client can access. Copy an `id` into the `departmentId`
+  environment variable to drive the document requests.
+}

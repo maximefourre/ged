@@ -36,6 +36,21 @@ NOTE: containers reach the provider at `http://oauth-provider:9292` (compose DNS
 tokens fetched from the host at `localhost:9292` carry `iss=http://oauth-provider:9292`
 (set via OAUTH_ISSUER), so they validate correctly inside the stack.
 
+## API documentation & test client
+
+The API contract is an OpenAPI 3.1 spec at `docs/api/openapi.yaml`, served by the
+`web` service (no auth):
+
+- `http://localhost:3000/api/docs` — browsable reference (Redoc; needs internet
+  in the browser to load the bundle)
+- `http://localhost:3000/api/v1/openapi.yaml` — the raw spec
+
+A ready-to-run [Bruno](https://www.usebruno.com) collection lives in
+`docs/api/bruno/`. Open that folder in Bruno, pick the **local** environment, set
+`clientId`/`clientSecret` (secret vars), then run **Auth → Get token** first — it
+stores the token so every other request is authenticated. Upload requests need
+`file` pointed at a real file and `departmentId` set from **List departments**.
+
 ## Cutover to the real IdP
 
 Config change only, on the `web` service: set `GED_OIDC_ISSUER` and

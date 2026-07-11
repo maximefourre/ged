@@ -1,0 +1,19 @@
+meta {
+  name: Download document
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/v1/documents/{{documentId}}/download
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Streams the document's file. In Bruno, use "Save Response" to write it to disk.
+}

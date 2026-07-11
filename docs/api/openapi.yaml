@@ -1,0 +1,569 @@
+openapi: 3.1.0
+info:
+  title: GED API
+  version: "1.0.0"
+  description: |
+    HTTP API for the GED document store. Documents live under departments
+    (the permission boundary) and carry a single-level key→value tag map.
+
+    ## Authentication
+
+    Every `/api/v1` endpoint (except this spec and the docs page) requires a
+    JWT bearer token: `Authorization: Bearer <token>`.
+
+    During the OAuth2 stopgap, tokens come from the local dev provider's
+    `client_credentials` flow:
+
+    ```
+    curl -X POST http://localhost:9292/token \
+      -d grant_type=client_credentials \
+      -d client_id=<id> -d client_secret=<secret>
+    ```
+
+    The `client_id` must also be registered in the GED admin UI and granted
+    access to at least one department, otherwise calls return `403`.
+
+    ## Errors
+
+    Errors share the shape `{ "error": "<message>" }`:
+
+    - `400` — missing or non-scalar parameter
+    - `401` — missing or invalid token
+    - `403` — client not registered, or no access to the department
+    - `404` — resource not found
+    - `422` — validation failed
+servers:
+  - url: http://localhost:3000
+    description: Local / Docker Compose (Puma behind Thruster on :3000)
+tags:
+  - name: Meta
+    description: Connectivity check
+  - name: Documents
+    description: Upload, list, fetch, tag and delete documents
+  - name: Departments
+    description: Department tree (permission boundary)
+  - name: Upload requests
+    description: Status of asynchronous uploads
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/ping:
+    get:
+      tags: [Meta]
+      summary: Verify the token and echo the calling client
+      operationId: ping
+      responses:
+        "200":
+          description: Token is valid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client:
+                    type: string
+                    description: The authenticated client's identifier
+                    example: my-app
+                required: [client]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/documents:
+    get:
+      tags: [Documents]
+      summary: List accessible documents
+      description: |
+        Returns documents in departments the client can access, newest first.
+        Optional filters narrow the set; `tag_value` requires `tag`.
+      operationId: listDocuments
+      parameters:
+        - name: department_id
+          in: query
+          description: Restrict to this department and its subtree
+          schema:
+            type: integer
+        - name: filename
+          in: query
+          description: Case-insensitive substring match on the filename
+          schema:
+            type: string
+        - name: tag
+          in: query
+          description: Only documents that have this tag key
+          schema:
+            type: string
+          example: type
+        - name: tag_value
+          in: query
+          description: Combined with `tag`, require this exact value. Requires `tag`.
+          schema:
+            type: string
+          example: facture
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Matching documents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Document"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Documents]
+      summary: Upload a document (synchronous or asynchronous)
+      description: |
+        Multipart upload. Without `callback_url` the file is stored inline and
+        the created document is returned (`201`). With `callback_url` the file
+        is staged, a background job stores it, and the endpoint returns `202`
+        immediately; the result is later POSTed to the callback URL and can
+        also be polled via `GET /api/v1/upload_requests/{id}`.
+
+        Tags are passed as nested params, e.g. `tags[type]=facture&tags[urgent]=`
+        (a blank value stores `null`).
+      operationId: createDocument
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                department_id:
+                  type: integer
+                  description: Target department (must be accessible)
+                file:
+                  type: string
+                  format: binary
+                  description: The file to store
+                callback_url:
+                  type: string
+                  format: uri
+                  description: If present, upload is asynchronous and this URL receives the result
+                  example: https://webhook.site/xxxx
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                    nullable: true
+                  description: Key→value tag map (nested params, e.g. tags[type]=facture)
+                  example:
+                    type: facture
+              required: [department_id, file]
+      responses:
+        "201":
+          description: Document stored (synchronous)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+        "202":
+          description: Upload accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AsyncAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/documents/{id}:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    get:
+      tags: [Documents]
+      summary: Fetch a document's metadata
+      operationId: getDocument
+      responses:
+        "200":
+          description: The document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Documents]
+      summary: Delete a document
+      operationId: deleteDocument
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/documents/{id}/download:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    get:
+      tags: [Documents]
+      summary: Download a document's file
+      operationId: downloadDocument
+      responses:
+        "200":
+          description: The file stream
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/documents/{id}/tags:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    put:
+      tags: [Documents]
+      summary: Replace a document's whole tag map
+      description: |
+        Map semantics: the client owns the full map. The supplied `tags` replace
+        the existing map wholesale; omitting `tags` clears it.
+      operationId: replaceDocumentTags
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  $ref: "#/components/schemas/Tags"
+            example:
+              tags:
+                type: facture
+                urgent: null
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                tags:
+                  $ref: "#/components/schemas/Tags"
+      responses:
+        "200":
+          description: Updated document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/departments:
+    get:
+      tags: [Departments]
+      summary: List accessible departments
+      operationId: listDepartments
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Accessible departments, ordered by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Department"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Departments]
+      summary: Create a sub-department
+      description: Creates a child of `parent_id`, which must be accessible.
+      operationId: createDepartment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                parent_id:
+                  type: integer
+                name:
+                  type: string
+              required: [parent_id, name]
+            example:
+              parent_id: 1
+              name: Accounting
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                parent_id:
+                  type: integer
+                name:
+                  type: string
+              required: [parent_id, name]
+      responses:
+        "201":
+          description: Created department
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Department"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/upload_requests/{id}:
+    get:
+      tags: [Upload requests]
+      summary: Poll the status of an asynchronous upload
+      description: |
+        Mirrors the callback payload. `status` is one of `pending`,
+        `processing`, `completed`, `failed`. `document_id` and `tags` are
+        populated once the upload completes; `error_message` is set on failure.
+      operationId: getUploadRequest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The upload request id (returned by an async upload)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Current status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadRequestStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT obtained from the OAuth2 client_credentials flow at
+        http://localhost:9292/token (dev provider).
+    oauth2ClientCredentials:
+      type: oauth2
+      description: |
+        The bearer tokens above are issued by this flow. Documented for
+        reference; GED itself acts only as a resource server.
+      flows:
+        clientCredentials:
+          tokenUrl: http://localhost:9292/token
+          scopes: {}
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Page size (default 100, max 500)
+      schema:
+        type: integer
+        default: 100
+        maximum: 500
+        minimum: 1
+    Offset:
+      name: offset
+      in: query
+      description: Rows to skip (default 0)
+      schema:
+        type: integer
+        default: 0
+        minimum: 0
+    DocumentId:
+      name: id
+      in: path
+      required: true
+      description: Document UUID
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    Tags:
+      type: object
+      additionalProperties:
+        type: string
+        nullable: true
+      description: |
+        Single-level key→value map. Keys are non-empty strings (≤100 chars,
+        stored lower-cased); values are strings (≤500 chars) or null; at most
+        50 entries.
+      example:
+        type: facture
+        urgent: null
+
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+          example: invoice.pdf
+        content_type:
+          type: string
+          nullable: true
+          example: application/pdf
+        byte_size:
+          type: integer
+          example: 20481
+        department_id:
+          type: integer
+        uploaded_by:
+          type: string
+          description: The client identifier that uploaded the document
+          example: my-app
+        tags:
+          $ref: "#/components/schemas/Tags"
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - filename
+        - byte_size
+        - department_id
+        - uploaded_by
+        - tags
+        - created_at
+
+    Department:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          example: Finance
+        parent_id:
+          type: integer
+          nullable: true
+          description: null for a root department
+      required: [id, name, parent_id]
+
+    AsyncAccepted:
+      type: object
+      properties:
+        request_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending]
+      required: [request_id, status]
+
+    UploadRequestStatus:
+      type: object
+      properties:
+        request_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        document_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Set once the upload completes
+        error_message:
+          type: string
+          nullable: true
+          description: Set when status is failed
+        tags:
+          oneOf:
+            - $ref: "#/components/schemas/Tags"
+            - type: "null"
+          description: The stored document's tags once completed, otherwise null
+      required: [request_id, status, document_id, error_message, tags]
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+      example:
+        error: not found
+
+  responses:
+    BadRequest:
+      description: Missing or invalid parameter
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Client not registered, or no access to the department
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnprocessableEntity:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
