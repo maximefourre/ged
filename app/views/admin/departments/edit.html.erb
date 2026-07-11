@@ -1,5 +1,14 @@
-<h1>Rename department</h1>
-<%= form_with model: [ :admin, @department ] do |f| %>
-  <div><%= f.label :name %> <%= f.text_field :name %></div>
-  <%= f.submit "Rename" %>
+<header class="page-head">
+  <h1>Rename department</h1>
+</header>
+
+<%= form_with model: [ :admin, @department ], class: "form-card" do |f| %>
+  <div class="field">
+    <%= f.label :name %>
+    <%= f.text_field :name, class: "input" %>
+  </div>
+  <div class="form-actions">
+    <%= f.submit "Rename", class: "btn btn-primary" %>
+    <%= link_to "Cancel", admin_departments_path, class: "btn" %>
+  </div>
 <% end %>

@@ -1,16 +1,30 @@
-<h1>Departments</h1>
-<%= link_to "New department", new_admin_department_path %>
-<table>
-  <tr><th>Name</th><th>Parent</th><th></th></tr>
-  <% @departments.each do |dept| %>
-    <tr>
-      <td><%= dept.name %></td>
-      <td><%= dept.parent&.name %></td>
-      <td>
-        <%= link_to "Rename", edit_admin_department_path(dept) %>
-        <%= button_to "Delete", admin_department_path(dept), method: :delete,
-            data: { turbo_confirm: "Delete #{dept.name}?" } %>
-      </td>
-    </tr>
-  <% end %>
-</table>
+<header class="page-head">
+  <h1>Departments</h1>
+  <%= link_to "New department", new_admin_department_path, class: "btn btn-primary" %>
+</header>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr><th>Name</th><th>Parent</th><th></th></tr>
+      </thead>
+      <tbody>
+        <% @departments.each do |dept| %>
+          <tr>
+            <td class="strong"><%= dept.name %></td>
+            <td><% if dept.parent %><%= dept.parent.name %><% else %><span class="dash">—</span><% end %></td>
+            <td>
+              <div class="row-actions">
+                <%= link_to "Rename", edit_admin_department_path(dept), class: "btn btn-link btn-sm" %>
+                <%= button_to "Delete", admin_department_path(dept), method: :delete,
+                    class: "btn btn-danger btn-sm",
+                    data: { turbo_confirm: "Delete #{dept.name}?" } %>
+              </div>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+</div>

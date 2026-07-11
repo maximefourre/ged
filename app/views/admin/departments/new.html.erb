@@ -1,8 +1,19 @@
-<h1>New department</h1>
-<%= form_with model: [ :admin, @department ] do |f| %>
-  <div><%= f.label :name %> <%= f.text_field :name %></div>
-  <div><%= f.label :parent_id, "Parent (blank = top-level)" %>
+<header class="page-head">
+  <h1>New department</h1>
+</header>
+
+<%= form_with model: [ :admin, @department ], class: "form-card" do |f| %>
+  <div class="field">
+    <%= f.label :name %>
+    <%= f.text_field :name, class: "input" %>
+  </div>
+  <div class="field">
+    <%= f.label :parent_id, "Parent (blank = top-level)" %>
     <%= f.collection_select :parent_id, Department.order(:name), :id, :name,
-                            include_blank: true %></div>
-  <%= f.submit "Create" %>
+          { include_blank: true }, { class: "select" } %>
+  </div>
+  <div class="form-actions">
+    <%= f.submit "Create", class: "btn btn-primary" %>
+    <%= link_to "Cancel", admin_departments_path, class: "btn" %>
+  </div>
 <% end %>

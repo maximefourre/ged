@@ -1,6 +1,18 @@
-<h2>Log in</h2>
-<%= form_for(resource, as: resource_name, url: session_path(resource_name)) do |f| %>
-  <div><%= f.label :username %> <%= f.text_field :username, autofocus: true %></div>
-  <div><%= f.label :password %> <%= f.password_field :password %></div>
-  <div><%= f.submit "Log in" %></div>
-<% end %>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-brand"><b>GED</b><span>Admin</span></div>
+    <h2>Log in</h2>
+    <p class="auth-lede">Espace d'administration réservé.</p>
+    <%= form_for(resource, as: resource_name, url: session_path(resource_name)) do |f| %>
+      <div class="field">
+        <%= f.label :username %>
+        <%= f.text_field :username, autofocus: true, class: "input" %>
+      </div>
+      <div class="field">
+        <%= f.label :password %>
+        <%= f.password_field :password, class: "input" %>
+      </div>
+      <%= f.submit "Log in", class: "btn btn-primary" %>
+    <% end %>
+  </div>
+</div>

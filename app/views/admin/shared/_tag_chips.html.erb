@@ -1,0 +1,13 @@
+<% if tags.present? %>
+  <div class="tags">
+    <% tags.each do |key, value| %>
+      <% if value.nil? %>
+        <span class="tag solo"><span class="k"><%= key %></span></span>
+      <% else %>
+        <span class="tag"><span class="k"><%= key %></span><span class="v"><%= value %></span></span>
+      <% end %>
+    <% end %>
+  </div>
+<% else %>
+  <span class="dash">—</span>
+<% end %>

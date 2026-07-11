@@ -76,8 +76,11 @@ class AdminUiTest < ApplicationSystemTestCase
     click_button "Save tags"
 
     assert_text "Tags updated."
-    # Keys are downcased, values keep their case, a bare key has no value.
-    assert_selector "td", text: "type=Facture, urgent"
+    # Tags render as key/value chips: keys are downcased, values keep their
+    # case, and a bare key (no value) shows as a solo chip.
+    assert_selector ".tag .k", text: "type"
+    assert_selector ".tag .v", text: "Facture"
+    assert_selector ".tag.solo .k", text: "urgent"
   end
 
   # --- 2.6 / 2.7 / 2.8 / 2.9 Documents -------------------------------------
@@ -171,6 +174,22 @@ class AdminUiTest < ApplicationSystemTestCase
     visit "/admin/documents"
     assert_selector "h2", text: "Log in"
     assert_no_button "Log out"
+  end
+
+  # --- Theme toggle --------------------------------------------------------
+
+  test "the light/dark toggle switches the theme and persists across reloads" do
+    sign_in_admin
+
+    initial = page.evaluate_script("document.documentElement.dataset.theme")
+    toggled = initial == "dark" ? "light" : "dark"
+
+    find("#theme-toggle").click
+    assert_equal toggled, page.evaluate_script("document.documentElement.dataset.theme")
+
+    # The choice is stored and re-applied before paint on the next page load.
+    visit admin_documents_path
+    assert_equal toggled, page.evaluate_script("document.documentElement.dataset.theme")
   end
 
   private

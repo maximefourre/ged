@@ -70,7 +70,8 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
 
     get "/admin/documents", params: { tag: "type" }
     assert_includes response.body, "tagged.pdf"
-    assert_includes response.body, "type=facture"
+    # Tags now render as key/value chips rather than "type=facture" text.
+    assert_includes response.body, "facture"
 
     get "/admin/documents", params: { tag: "absent" }
     assert_not_includes response.body, "tagged.pdf"

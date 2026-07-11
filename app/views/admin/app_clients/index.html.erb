@@ -1,16 +1,39 @@
-<h1>Application clients</h1>
-<%= link_to "Register client", new_admin_app_client_path %>
-<table>
-  <tr><th>client_id</th><th>Description</th><th>Departments</th><th></th></tr>
-  <% @app_clients.each do |client| %>
-    <tr>
-      <td><%= client.client_identifier %></td>
-      <td><%= client.description %></td>
-      <td><%= client.departments.map(&:name).join(", ") %></td>
-      <td>
-        <%= link_to "Edit", edit_admin_app_client_path(client) %>
-        <%= button_to "Delete", admin_app_client_path(client), method: :delete %>
-      </td>
-    </tr>
-  <% end %>
-</table>
+<header class="page-head">
+  <h1>Application clients</h1>
+  <%= link_to "Register client", new_admin_app_client_path, class: "btn btn-primary" %>
+</header>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr><th>client_id</th><th>Description</th><th>Departments</th><th></th></tr>
+      </thead>
+      <tbody>
+        <% @app_clients.each do |client| %>
+          <tr>
+            <td class="mono strong"><%= client.client_identifier %></td>
+            <td class="muted"><%= client.description %></td>
+            <td>
+              <% if client.departments.any? %>
+                <div class="tags">
+                  <% client.departments.each do |dept| %>
+                    <span class="tag solo"><span class="k"><%= dept.name %></span></span>
+                  <% end %>
+                </div>
+              <% else %>
+                <span class="dash">—</span>
+              <% end %>
+            </td>
+            <td>
+              <div class="row-actions">
+                <%= link_to "Edit", edit_admin_app_client_path(client), class: "btn btn-link btn-sm" %>
+                <%= button_to "Delete", admin_app_client_path(client), method: :delete, class: "btn btn-danger btn-sm" %>
+              </div>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+</div>

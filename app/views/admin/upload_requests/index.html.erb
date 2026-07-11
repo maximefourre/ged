@@ -1,34 +1,47 @@
-<h1>Upload requests</h1>
-<p>
-  Upload queue:
+<header class="page-head">
+  <h1>Upload requests</h1>
+</header>
+
+<div class="queue <%= "is-paused" if @queue_paused %>">
   <% if @queue_paused %>
-    <strong>paused</strong>
-    <%= button_to "Resume", admin_upload_queue_pause_path, method: :delete %>
+    <span class="badge warn">paused</span>
+    <%= button_to "Resume", admin_upload_queue_pause_path, method: :delete, class: "btn btn-sm" %>
   <% else %>
-    active
-    <%= button_to "Pause", admin_upload_queue_pause_path, method: :post %>
+    <span class="badge ok">active</span>
+    <%= button_to "Pause", admin_upload_queue_pause_path, method: :post, class: "btn btn-sm" %>
   <% end %>
-  — <%= @pending_count %> pending, <%= @processing_count %> processing
-</p>
-<%= form_with url: admin_upload_requests_path, method: :get do |f| %>
-  <%= f.select :status,
-        options_for_select(UploadRequest::STATUSES, params[:status]),
-        include_blank: "all statuses" %>
-  <%= f.submit "Filter" %>
+  <span class="spacer"></span>
+  <span class="counts"><%= @pending_count %> pending · <%= @processing_count %> processing</span>
+</div>
+
+<%= form_with url: admin_upload_requests_path, method: :get, class: "filters" do |f| %>
+  <%= f.select :status, options_for_select(UploadRequest::STATUSES, params[:status]),
+        { include_blank: "all statuses" }, { class: "select" } %>
+  <%= f.submit "Filter", class: "btn" %>
 <% end %>
-<table>
-  <tr><th>Request</th><th>Department</th><th>Filename</th><th>Tags</th><th>Status</th><th>Error</th><th>Uploaded by</th><th>Date</th></tr>
-  <% @upload_requests.each do |request| %>
-    <tr>
-      <td><%= request.id %></td>
-      <td><%= request.department.name %></td>
-      <td><%= request.filename %></td>
-      <td><%= format_tags(request.tags) %></td>
-      <td><%= request.status %></td>
-      <td><%= request.error_message %></td>
-      <td><%= request.uploaded_by %></td>
-      <td><%= request.created_at.strftime("%Y-%m-%d %H:%M") %></td>
-    </tr>
-  <% end %>
-</table>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr><th>Request</th><th>Department</th><th>Filename</th><th>Tags</th><th>Status</th><th>Error</th><th>Uploaded by</th><th>Date</th></tr>
+      </thead>
+      <tbody>
+        <% @upload_requests.each do |request| %>
+          <tr>
+            <td class="id"><%= request.id %></td>
+            <td><%= request.department.name %></td>
+            <td class="strong"><%= request.filename %></td>
+            <td><%= render "admin/shared/tag_chips", tags: request.tags %></td>
+            <td><span class="badge <%= status_badge_class(request.status) %>"><%= request.status %></span></td>
+            <td class="muted"><% if request.error_message.present? %><%= request.error_message %><% else %><span class="dash">—</span><% end %></td>
+            <td class="muted"><%= request.uploaded_by %></td>
+            <td class="date"><%= request.created_at.strftime("%Y-%m-%d %H:%M") %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <%= render "admin/shared/pagination" %>

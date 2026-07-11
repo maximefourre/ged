@@ -9,6 +9,27 @@ Full design: `docs/superpowers/specs/2026-07-08-ged-design.md`. Read it before
 making architectural changes — this file is a quick-reference summary, the spec
 is the source of truth.
 
+## Workflow (mandatory)
+
+- **Always work in a dedicated git worktree and branch** — never edit directly
+  on `main` or in the primary working tree. Create an isolated worktree +
+  feature branch for every task before making changes.
+- **Always get the user's explicit confirmation before the final merge** — do
+  not merge back into `main` (or open/complete a PR) without validating the
+  result with the user first.
+- **Commit, push, and open PRs only on request** — never commit/push/merge
+  proactively; wait for the user's explicit go-ahead (consistent with the
+  merge-confirmation rule above).
+- **Green checks before proposing a merge** — `bin/ci` must pass (at minimum
+  `bin/rails test` + `bin/rubocop`); report the actual output, don't claim
+  success without running it.
+- **Keep docs in sync when scope changes** — update `docs/api/openapi.yaml`
+  when adding/renaming an `/api/v1` endpoint (a test fails otherwise) and this
+  `AGENTS.md` when conventions change.
+- **Go through specs/plans for architectural changes** — capture the design in
+  `docs/superpowers/specs/` and the steps in `docs/superpowers/plans/` before
+  touching code, rather than improvising.
+
 ## Stack
 
 - **Ruby on Rails** — single app, API-only controllers under `/api/v1/...` for
@@ -96,6 +117,19 @@ is the source of truth.
   `Api::V1::DocumentsController`, `Admin::DocumentsController`, and
   `StoreDocumentJob` all create documents through the `DocumentCreator`
   service. Listing/download logic is still per-controller.
+- **Admin UI is a hand-rolled design system, no framework:** one plain
+  `app/assets/stylesheets/application.css` (CSS custom-property tokens, served
+  by Propshaft, no build) styles a top-bar layout via class names on the views.
+  Light/dark is token-driven (`:root` vs `:root[data-theme="dark"]`), set before
+  paint by an inline script in the layout `<head>` and toggled by
+  `#theme-toggle` (persisted in `localStorage`, handled in the importmap
+  `application.js` — the only JS, no Stimulus/Turbo). The admin document upload
+  is a drag-and-drop dropzone (`[data-dropzone]` + `[data-dropzone-file]`,
+  progressive enhancement over a visible `<input type=file>` so Capybara's
+  `attach_file` still works). Tags render as key/value chips via
+  `admin/shared/_tag_chips`; upload-request status uses
+  `AdminHelper#status_badge_class`. Keep visible labels/field names stable —
+  `test/system/admin_ui_test.rb` and `test/controllers/admin/*` assert on them.
 - **API docs are served, hand-maintained:** `ApiDocsController`
   (`ActionController::Base`, no auth — deliberately public) serves the committed
   `docs/api/openapi.yaml` at `GET /api/v1/openapi.yaml` and a Redoc page at

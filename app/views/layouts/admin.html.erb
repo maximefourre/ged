@@ -2,20 +2,58 @@
 <html>
   <head>
     <title>GED Admin</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <script>
+      // Set the theme before first paint (no flash). Toggle lives in application.js.
+      (function () {
+        try {
+          var t = localStorage.getItem("ged-theme") ||
+            (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+          document.documentElement.dataset.theme = t;
+        } catch (e) {}
+      })();
+    </script>
     <%= csrf_meta_tags %>
     <%= stylesheet_link_tag "application" %>
+    <%= javascript_importmap_tags %>
   </head>
-  <body>
-    <nav>
-      <%= link_to "Documents", "/admin/documents" %> |
-      <%= link_to "Departments", "/admin/departments" %> |
-      <%= link_to "Clients", "/admin/app_clients" %> |
-      <%= link_to "Upload requests", "/admin/upload_requests" %> |
-      <% if admin_signed_in? %>
-        <%= button_to "Log out", destroy_admin_session_path, method: :delete %>
+  <body class="admin">
+    <header class="topbar">
+      <%= link_to admin_root_path, class: "brand" do %><b>GED</b><span>Admin</span><% end %>
+      <nav class="nav">
+        <% [["Documents", admin_documents_path, "documents"],
+            ["Departments", admin_departments_path, "departments"],
+            ["Clients", admin_app_clients_path, "app_clients"],
+            ["Upload requests", admin_upload_requests_path, "upload_requests"]].each do |label, path, ctrl| %>
+          <%= link_to label, path,
+                class: class_names("nav-link", "is-active" => controller_name == ctrl) %>
+        <% end %>
+      </nav>
+      <div class="topbar-right">
+        <button type="button" class="icon-btn" id="theme-toggle"
+                aria-label="Basculer clair / sombre" title="Basculer clair / sombre">
+          <span class="theme-ico theme-ico-dark">☾</span>
+          <span class="theme-ico theme-ico-light">☀</span>
+        </button>
+        <% if admin_signed_in? %>
+          <div class="who">
+            <span class="avatar"><%= current_admin.username.first.upcase %></span>
+            <%= current_admin.username %>
+          </div>
+          <%= button_to "Log out", destroy_admin_session_path, method: :delete, class: "btn btn-sm" %>
+        <% end %>
+      </div>
+    </header>
+
+    <main class="content">
+      <% if flash.any? %>
+        <div class="flashes">
+          <% flash.each do |kind, msg| %>
+            <div class="flash flash-<%= kind %>"><%= msg %></div>
+          <% end %>
+        </div>
       <% end %>
-    </nav>
-    <% flash.each do |kind, msg| %><p class="flash-<%= kind %>"><%= msg %></p><% end %>
-    <%= yield %>
+      <%= yield %>
+    </main>
   </body>
 </html>

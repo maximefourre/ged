@@ -1,7 +1,15 @@
-<h1>Tags — <%= @document.filename %></h1>
-<%= form_with model: [ :admin, @document ] do |f| %>
-  <p>One <code>key=value</code> pair per line; a line without <code>=</code> is a key with no value.</p>
-  <div><%= text_area_tag "document[tags_text]", tags_text(@document.tags), rows: 8 %></div>
-  <%= f.submit "Save tags" %>
+<header class="page-head">
+  <h1>Tags — <%= @document.filename %></h1>
+</header>
+
+<%= form_with model: [ :admin, @document ], class: "form-card" do |f| %>
+  <div class="field">
+    <%= label_tag "document[tags_text]", "Tags" %>
+    <span class="hint">Une paire <code>key=value</code> par ligne ; une ligne sans « = » est une clé sans valeur.</span>
+    <%= text_area_tag "document[tags_text]", tags_text(@document.tags), rows: 8, class: "input" %>
+  </div>
+  <div class="form-actions">
+    <%= f.submit "Save tags", class: "btn btn-primary" %>
+    <%= link_to "Back to documents", admin_documents_path, class: "btn" %>
+  </div>
 <% end %>
-<p><%= link_to "Back to documents", admin_documents_path %></p>

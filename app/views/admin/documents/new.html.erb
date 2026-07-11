@@ -1,9 +1,32 @@
-<h1>Upload document</h1>
-<%= form_with model: [ :admin, @document ] do |f| %>
-  <div><%= f.label :department_id %>
-    <%= f.collection_select :department_id, Department.order(:name), :id, :name %></div>
-  <div><%= f.label :file %> <%= f.file_field :file %></div>
-  <div><%= label_tag "document[tags_text]", "Tags (one key=value per line)" %>
-    <%= text_area_tag "document[tags_text]", nil, rows: 5 %></div>
-  <%= f.submit "Upload" %>
+<header class="page-head">
+  <h1>Upload document</h1>
+</header>
+
+<%= form_with model: [ :admin, @document ], class: "form-card" do |f| %>
+  <div class="field">
+    <%= f.label :department_id %>
+    <%= f.collection_select :department_id, Department.order(:name), :id, :name, {}, { class: "select" } %>
+  </div>
+
+  <div class="field">
+    <%= f.label :file %>
+    <div class="dropzone" data-dropzone>
+      <span class="dz-icon">⬆</span>
+      <span class="dz-primary">Glissez un fichier ici</span>
+      <span class="hint">ou choisissez-le ci-dessous</span>
+      <%= f.file_field :file %>
+      <span class="dz-file" data-dropzone-file></span>
+    </div>
+  </div>
+
+  <div class="field">
+    <%= label_tag "document[tags_text]", "Tags" %>
+    <span class="hint">Une paire <code>key=value</code> par ligne ; une ligne sans « = » est une clé sans valeur.</span>
+    <%= text_area_tag "document[tags_text]", nil, rows: 5, class: "input" %>
+  </div>
+
+  <div class="form-actions">
+    <%= f.submit "Upload", class: "btn btn-primary" %>
+    <%= link_to "Cancel", admin_documents_path, class: "btn" %>
+  </div>
 <% end %>
