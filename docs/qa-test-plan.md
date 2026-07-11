@@ -58,13 +58,15 @@ Scénarios à dérouler :
 | 2.2 | Connexion avec un mauvais mot de passe | Erreur, pas de session |
 | 2.3 | Departments → créer `Finance` (sans parent), puis `Invoices` avec parent `Finance`, puis `HR` | Les 3 apparaissent dans la liste avec la bonne hiérarchie |
 | 2.4 | Créer un doublon `Finance` au même niveau | Message d'erreur, pas de création |
-| 2.5 | Tags → créer `Facture` | Le tag apparaît en minuscules : `facture` |
+| 2.5 | Documents → un document → "Tags", saisir `Type=Facture` puis `urgent` (une paire `clé=valeur` par ligne, une clé seule = valeur nulle) | Colonne Tags = `type=Facture, urgent` (clé normalisée en minuscules, valeur conservée) |
 | 2.6 | Documents → Upload d'un fichier dans `Finance` | Le document apparaît dans la liste, colonne "Uploaded by" = `admin:admin` |
 | 2.7 | Documents → Download du fichier uploadé | Le fichier téléchargé est identique à l'original |
 | 2.8 | Documents → filtre par nom de fichier et par département | La liste se restreint correctement |
 | 2.9 | Documents → Delete | Le document disparaît |
 | 2.10 | Supprimer un département qui contient des documents | Refus avec message d'erreur |
 | 2.11 | Log out puis accès direct à http://localhost:3000/admin/documents | Redirection vers la page de login |
+| 2.12 | Upload requests → bouton "Pause" | Le bandeau passe à `paused`, un "Resume" apparaît ; les uploads async en file ne sont plus dépilés (le job en cours finit et son callback part quand même) |
+| 2.13 | Upload requests → "Resume" | Le bandeau repasse à `active`, la file se vide |
 
 ---
 
@@ -145,21 +147,25 @@ printf 'contenu de test' > /tmp/qa-doc.pdf
 | 6.3 | Upload dans **HR** (non autorisé) | idem avec `department_id=3` | `403` `{"error":"no access to this department"}` |
 | 6.4 | Upload **sans fichier** | idem sans `-F file=...` | `400` |
 | 6.5 | **Lister** | `curl -s http://localhost:3000/api/v1/documents -H "Authorization: Bearer $TOKEN"` | Uniquement les documents des départements accessibles |
-| 6.6 | Lister avec filtres | `...?filename=qa`, `...?tag=facture`, `...?department_id=1` | Liste filtrée ; `department_id=3` → `403` |
+| 6.6 | Lister avec filtres | `...?filename=qa`, `...?tag=type`, `...?tag=type&tag_value=facture`, `...?department_id=1` | Liste filtrée (`tag` = présence de la clé, `+tag_value` = paire exacte) ; `department_id=3` → `403` ; `tag_value` seul → `400` |
 | 6.7 | **Télécharger** | `curl -s http://localhost:3000/api/v1/documents/<UUID>/download -H "Authorization: Bearer $TOKEN"` | Contenu identique à l'original |
 | 6.8 | **Supprimer** | `curl -s -X DELETE http://localhost:3000/api/v1/documents/<UUID> -H "Authorization: Bearer $TOKEN"` | `204` ; re-GET → `404` |
 | 6.9 | Accéder à un document d'HR (créé via l'admin UI) | GET/download/DELETE avec son UUID | `403` sur les trois |
 | 6.10 | UUID inexistant | `curl -s http://localhost:3000/api/v1/documents/00000000-0000-0000-0000-000000000000 -H "Authorization: Bearer $TOKEN"` | `404` |
 
-## 7. API Tags & Départements
+## 7. API Tags (map clé→valeur) & Départements
+
+Les tags sont une map `clé→valeur` portée par le document (plus de registre :
+`GET`/`POST /api/v1/tags` n'existent plus). On les passe à l'upload avec
+`tags[clé]=valeur` et on remplace la map entière via `PUT`.
 
 | # | Cas | Commande | Attendu |
 |---|---|---|---|
-| 7.1 | Créer un tag | `curl -s -X POST http://localhost:3000/api/v1/tags -H "Authorization: Bearer $TOKEN" -d "name=Facture"` | `201`, nom normalisé en `facture` |
-| 7.2 | Tag en doublon (`FACTURE`) | idem | `422` |
-| 7.3 | Assigner un tag à un document | `curl -s -X POST http://localhost:3000/api/v1/documents/<UUID>/tags -H "Authorization: Bearer $TOKEN" -d "name=facture"` | `201` ; ré-assigner le même → `201` sans doublon |
-| 7.4 | Assigner un tag inexistant | idem avec `name=fantome` | `404` |
-| 7.5 | Lister les tags | `curl -s http://localhost:3000/api/v1/tags -H "Authorization: Bearer $TOKEN"` | Tous les tags |
+| 7.1 | Tags à l'upload | `curl -s -X POST http://localhost:3000/api/v1/documents -H "Authorization: Bearer $TOKEN" -F "department_id=1" -F "file=@/tmp/qa-doc.pdf" -F "tags[type]=Facture" -F "tags[urgent]="` | `201`, JSON `"tags":{"type":"Facture","urgent":null}` (clé en minuscules) |
+| 7.2 | Remplacer la map d'un document | `curl -s -X PUT http://localhost:3000/api/v1/documents/<UUID>/tags -H "Authorization: Bearer $TOKEN" -d "tags[type]=devis" -d "tags[annee]=2026"` | `200`, `"tags":{"type":"devis","annee":"2026"}` (remplace tout, pas de fusion) |
+| 7.3 | Vider la map | `curl -s -X PUT http://localhost:3000/api/v1/documents/<UUID>/tags -H "Authorization: Bearer $TOKEN"` | `200`, `"tags":{}` |
+| 7.4 | Tags invalides (non-map ou valeur imbriquée) | `... -d "tags=flat"` | `422`, map inchangée |
+| 7.5 | Anciens endpoints de registre supprimés | `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/v1/tags -H "Authorization: Bearer $TOKEN"` | `404` |
 | 7.6 | Lister les départements | `curl -s http://localhost:3000/api/v1/departments -H "Authorization: Bearer $TOKEN"` | Uniquement Finance + Invoices (pas HR) |
 | 7.7 | Créer un sous-dossier via l'API | `curl -s -X POST http://localhost:3000/api/v1/departments -H "Authorization: Bearer $TOKEN" -d "name=2026" -d "parent_id=2"` | `201` |
 | 7.8 | Créer un sous-dossier sous HR | idem `parent_id=3` | `403` |
@@ -171,7 +177,9 @@ printf 'contenu de test' > /tmp/qa-doc.pdf
 
 L'upload async se déclenche en ajoutant `callback_url` à la requête : la GED
 répond immédiatement `202` avec un `request_id`, stocke le fichier en tâche de
-fond, puis POste `{request_id, status, document_id}` sur l'URL fournie.
+fond, puis POste `{request_id, status, document_id, error_message, tags}` sur
+l'URL fournie (`tags` = la map du document créé, `null` en cas d'échec). On
+peut aussi passer `tags[clé]=valeur` à l'upload async, comme en synchrone.
 
 Option simple : créer une URL jetable sur https://webhook.site et l'utiliser
 comme `callback_url`.
@@ -193,7 +201,7 @@ curl -s -w " [%{http_code}]" -X POST http://localhost:3000/api/v1/documents \
 | # | Cas | Attendu |
 |---|---|---|
 | 8.1 | Réponse immédiate | `202` `{"request_id":"<uuid>","status":"pending"}` |
-| 8.2 | Callback reçu (quelques secondes après) | POST JSON `{"request_id":..., "status":"completed", "document_id":"<uuid>"}` |
+| 8.2 | Callback reçu (quelques secondes après) | POST JSON `{"request_id":..., "status":"completed", "document_id":"<uuid>", "error_message":null, "tags":{...}}` |
 | 8.3 | Le document existe | `GET /api/v1/documents/<document_id>/download` → contenu du fichier |
 | 8.4 | Async vers un département interdit | `403` immédiat, aucun callback |
 | 8.5 | `callback_url` injoignable | `202` quand même ; la livraison est retentée 5 fois puis abandonnée (visible dans `docker compose logs web`) |
@@ -223,7 +231,7 @@ docker compose exec web bin/rails db:seed
 ## Rappels / limites connues (hors périmètre v1)
 
 - Pas de recherche plein-texte dans le contenu des fichiers (filtres sur nom,
-  tag, département uniquement).
+  tag (clé ou paire clé/valeur), département uniquement).
 - Pas de versionnage des documents, pas de sauvegardes automatiques.
 - HTTP uniquement (usage LAN) — pas de TLS.
 - Les droits d'un client sont lecture/écriture complets sur ses départements
