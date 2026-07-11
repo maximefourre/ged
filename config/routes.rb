@@ -10,6 +10,7 @@ Rails.application.routes.draw do
       member { get :download }
     end
     resources :upload_requests, only: [ :index ]
+    resource :upload_queue_pause, only: [ :create, :destroy ]
   end
   root to: redirect("/admin")
 

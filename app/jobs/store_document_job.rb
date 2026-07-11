@@ -1,5 +1,5 @@
 class StoreDocumentJob < ApplicationJob
-  queue_as :default
+  queue_as :uploads
 
   def perform(upload_request_id)
     upload_request = UploadRequest.find(upload_request_id)

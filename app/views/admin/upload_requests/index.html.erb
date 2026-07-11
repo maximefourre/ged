@@ -1,4 +1,15 @@
 <h1>Upload requests</h1>
+<p>
+  Upload queue:
+  <% if @queue_paused %>
+    <strong>paused</strong>
+    <%= button_to "Resume", admin_upload_queue_pause_path, method: :delete %>
+  <% else %>
+    active
+    <%= button_to "Pause", admin_upload_queue_pause_path, method: :post %>
+  <% end %>
+  — <%= @pending_count %> pending, <%= @processing_count %> processing
+</p>
 <%= form_with url: admin_upload_requests_path, method: :get do |f| %>
   <%= f.select :status,
         options_for_select(UploadRequest::STATUSES, params[:status]),

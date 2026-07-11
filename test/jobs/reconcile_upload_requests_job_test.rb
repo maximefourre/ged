@@ -105,4 +105,18 @@ class ReconcileUploadRequestsJobTest < ActiveJob::TestCase
     StagingStore.delete("orphan-old")
     StagingStore.delete("orphan-fresh")
   end
+
+  test "does not re-enqueue stuck pending requests while the uploads queue is paused" do
+    request = create_request(age: 20.minutes)
+    StagingStore.write(request.id, StringIO.new("PDF!"))
+    UploadQueue.pause!
+
+    ReconcileUploadRequestsJob.perform_now
+
+    assert_no_enqueued_jobs only: StoreDocumentJob
+    assert_equal "pending", request.reload.status
+  ensure
+    UploadQueue.resume!
+    StagingStore.delete(request.id)
+  end
 end

@@ -65,4 +65,8 @@ class StoreDocumentJobTest < ActiveJob::TestCase
     assert_nil @request.document_id
     assert_enqueued_with(job: DeliverCallbackJob, args: [ @request.id ])
   end
+
+  test "runs on the dedicated uploads queue" do
+    assert_equal "uploads", StoreDocumentJob.new.queue_name
+  end
 end

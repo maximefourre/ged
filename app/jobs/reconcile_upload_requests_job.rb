@@ -19,6 +19,10 @@ class ReconcileUploadRequestsJob < ApplicationJob
   private
 
   def recover_stuck_pending_requests
+    # A paused uploads queue means pending requests are intentionally
+    # waiting; re-enqueueing every run would pile duplicates into it.
+    return if UploadQueue.paused?
+
     UploadRequest.where(status: "pending")
                  .where(created_at: ..STUCK_AFTER.ago).find_each do |request|
       if File.exist?(StagingStore.path(request.id))
