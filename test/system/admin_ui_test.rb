@@ -65,14 +65,19 @@ class AdminUiTest < ApplicationSystemTestCase
 
   # --- 2.5 Tags ------------------------------------------------------------
 
-  test "2.5 a tag name is normalized to lowercase" do
+  test "2.5 tag keys are normalized to lowercase in the document tags textarea" do
+    finance = Department.create!(name: "Finance")
+    attach_report(finance, filename: "report.pdf")
     sign_in_admin
-    visit admin_tags_path
-    fill_in "new tag", with: "Facture"
-    click_button "Add"
 
-    assert_selector "li", text: "facture"
-    assert_no_selector "li", text: "Facture"
+    visit admin_documents_path
+    within("tr", text: "report.pdf") { click_link "Tags" }
+    fill_in "document[tags_text]", with: "Type=Facture\nUrgent"
+    click_button "Save tags"
+
+    assert_text "Tags updated."
+    # Keys are downcased, values keep their case, a bare key has no value.
+    assert_selector "td", text: "type=Facture, urgent"
   end
 
   # --- 2.6 / 2.7 / 2.8 / 2.9 Documents -------------------------------------
