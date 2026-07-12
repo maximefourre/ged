@@ -3,7 +3,7 @@ module Api
     class UploadRequestsController < BaseController
       def show
         upload_request = UploadRequest.find(params[:id])
-        authorize_department!(upload_request.department)
+        authorize_department!(upload_request.department, mode: :read)
         render json: {
           request_id: upload_request.id,
           status: upload_request.status,

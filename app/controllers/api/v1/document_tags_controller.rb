@@ -7,7 +7,7 @@ module Api
       # the full map; omitting tags clears it).
       def update
         document = Document.find(params[:document_id])
-        authorize_department!(document.department)
+        authorize_department!(document.department, mode: :write)
         document.update!(tags: tags_param || {})
         render json: document_json(document)
       end

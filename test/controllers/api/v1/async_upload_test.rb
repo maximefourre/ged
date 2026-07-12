@@ -11,6 +11,15 @@ class Api::V1::AsyncUploadTest < ActionDispatch::IntegrationTest
     @callback_url = "https://caller.test/ged-callback"
   end
 
+  test "upload with a callback_url targeting an internal address returns 422" do
+    post "/api/v1/documents", headers: bearer_header("erp-app"),
+         params: { department_id: @finance.id,
+                   file: fixture_file_upload("report.pdf", "application/pdf"),
+                   callback_url: "http://169.254.169.254/latest/meta-data" }
+    assert_response :unprocessable_entity
+    assert_equal 0, UploadRequest.count
+  end
+
   test "upload with callback_url returns 202 and processes in background" do
     stub_request(:post, @callback_url).to_return(status: 200)
 

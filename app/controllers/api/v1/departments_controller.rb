@@ -2,14 +2,14 @@ module Api
   module V1
     class DepartmentsController < BaseController
       def index
-        departments = Department.where(id: current_app_client.accessible_department_ids)
+        departments = Department.where(id: current_app_client.accessible_department_ids(:read))
                                 .order(:name)
         render json: paginate(departments).map { |d| department_json(d) }
       end
 
       def create
         parent = Department.find(require_scalar_param(:parent_id))
-        authorize_department!(parent)
+        authorize_department!(parent, mode: :write)
         department = Department.create!(name: require_scalar_param(:name), parent: parent)
         render json: department_json(department), status: :created
       rescue ActiveRecord::RecordNotUnique

@@ -5,10 +5,10 @@ module Api
       include DocumentJson
 
       def index
-        scope = Document.where(department_id: current_app_client.accessible_department_ids)
+        scope = Document.where(department_id: current_app_client.accessible_department_ids(:read))
         if (department_id = scalar_param(:department_id)).present?
           department = Department.find(department_id)
-          authorize_department!(department)
+          authorize_department!(department, mode: :read)
           scope = scope.where(department_id: department.subtree_ids)
         end
         if (filename = scalar_param(:filename)).present?
@@ -33,7 +33,7 @@ module Api
 
       def create
         department = Department.find(require_scalar_param(:department_id))
-        authorize_department!(department)
+        authorize_department!(department, mode: :write)
         file = params.require(:file)
         unless file.respond_to?(:original_filename)
           return render json: { error: "file must be a multipart file upload" },
@@ -57,16 +57,16 @@ module Api
       end
 
       def show
-        document = find_authorized_document
+        document = find_authorized_document(mode: :read)
         render json: document_json(document)
       end
 
       def download
-        send_document_file(find_authorized_document)
+        send_document_file(find_authorized_document(mode: :read))
       end
 
       def destroy
-        document = find_authorized_document
+        document = find_authorized_document(mode: :write)
         document.soft_delete!
         head :no_content
       end
@@ -88,9 +88,9 @@ module Api
                status: :accepted
       end
 
-      def find_authorized_document
+      def find_authorized_document(mode:)
         document = Document.find(params[:id])
-        authorize_department!(document.department)
+        authorize_department!(document.department, mode: mode)
         document
       end
 

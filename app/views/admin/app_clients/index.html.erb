@@ -15,10 +15,13 @@
             <td class="mono strong"><%= client.client_identifier %></td>
             <td class="muted"><%= client.description %></td>
             <td>
-              <% if client.departments.any? %>
+              <% if client.client_department_accesses.any? %>
                 <div class="tags">
-                  <% client.departments.each do |dept| %>
-                    <span class="tag solo"><span class="k"><%= dept.name %></span></span>
+                  <% client.client_department_accesses.each do |access| %>
+                    <span class="tag">
+                      <span class="k"><%= access.department.name %></span>
+                      <span class="v"><%= [ ("R" if access.can_read?), ("W" if access.can_write?) ].compact.join %></span>
+                    </span>
                   <% end %>
                 </div>
               <% else %>

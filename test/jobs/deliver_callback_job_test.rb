@@ -69,4 +69,28 @@ class DeliverCallbackJobTest < ActiveJob::TestCase
       DeliverCallbackJob.new.perform(@request.id)
     end
   end
+
+  test "refuses a callback host resolving to a private address, without retrying" do
+    stub_request(:post, "https://caller.test/cb")
+    stub_dns([ "10.0.0.5" ]) do
+      assert_nothing_raised { DeliverCallbackJob.new.perform(@request.id) }
+    end
+    assert_not_requested(:post, "https://caller.test/cb")
+  end
+
+  test "refuses an IP-literal loopback callback slipped past validation" do
+    # update_column bypasses validation, like a row created before the policy
+    @request.update_column(:callback_url, "http://127.0.0.1/cb")
+    stub_request(:post, "http://127.0.0.1/cb")
+    assert_nothing_raised { DeliverCallbackJob.new.perform(@request.id) }
+    assert_not_requested(:post, "http://127.0.0.1/cb")
+  end
+
+  test "delivers normally when the host resolves publicly" do
+    stub_request(:post, "https://caller.test/cb").to_return(status: 200)
+    stub_dns([ "93.184.216.34" ]) do
+      DeliverCallbackJob.new.perform(@request.id)
+    end
+    assert_requested(:post, "https://caller.test/cb")
+  end
 end

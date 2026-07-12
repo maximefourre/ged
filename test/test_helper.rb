@@ -18,6 +18,7 @@ module ActiveSupport
     fixtures :all
 
     include JwtTestHelpers
+    include DnsTestHelpers
 
     setup { Auth::JwksCache.reset! }
   end

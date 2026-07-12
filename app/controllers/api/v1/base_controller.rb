@@ -44,9 +44,9 @@ module Api
         render json: { error: message }, status: :unauthorized
       end
 
-      def authorize_department!(department)
-        unless current_app_client.can_access?(department)
-          raise NotAuthorizedError, "no access to this department"
+      def authorize_department!(department, mode:)
+        unless current_app_client.can_access?(department, mode)
+          raise NotAuthorizedError, "no #{mode} access to this department"
         end
       end
 

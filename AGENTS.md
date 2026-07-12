@@ -65,7 +65,14 @@ is the source of truth.
 
 - **Permission model:** departments are folders and the permission boundary.
   Access to a department covers its whole subtree — no finer-grained
-  per-subfolder permissions.
+  per-subfolder permissions. Each grant (`client_department_accesses` row)
+  carries independent `can_read` / `can_write` booleans (DB check: at least
+  one true; "no access" = no row). READ gates list/show/download/poll, WRITE
+  gates upload/delete/replace-tags/create-sub-department; write does **not**
+  imply read (a write-only client still gets the created document echoed back
+  — that's the result of its write, not a read). Read and write cascade
+  independently down the subtree; child grants never escalate upward. The
+  admin app-client form is a per-department Read/Write checkbox grid.
 - **Two auth paths:** application clients use OAuth2 client_credentials JWTs
   (validated as a resource server via JWKS); admins use a separate built-in
   username/password login, unrelated to the OIDC flow.
@@ -122,8 +129,13 @@ is the source of truth.
 - **Bearer auth chain:** `Api::V1::BaseController#authenticate_app_client!` →
   `Auth::TokenValidator.call` → `Auth::JwksCache` (process-local singleton,
   300s TTL, serves stale keys on refresh failure, fails closed if never
-  fetched). Department authorization = `authorize_department!` +
-  `AppClient#can_access?` (walks `Department#self_and_ancestors`).
+  fetched). Department authorization = `authorize_department!(dept, mode:)` +
+  `AppClient#can_access?(dept, mode)` — `mode` (`:read`/`:write`) is required
+  on both, so a forgotten mode fails loudly instead of silently authorizing
+  the wrong verb (walks `Department#self_and_ancestors` over the grants where
+  the mode's column is true). List scopes use
+  `accessible_department_ids(:read)`; `find_authorized_document(mode:)` splits
+  show/download (`:read`) from destroy (`:write`).
 - **Async upload flow:** controller creates an `UploadRequest` (uuid pk) +
   writes raw bytes to `StagingStore` (`storage/staging/<id>`) → 202 →
   `StoreDocumentJob` (runs on the dedicated `uploads` queue) builds the
@@ -132,7 +144,12 @@ is the source of truth.
   `{ request_id, status, document_id, error_message, tags, metadata }` (tags and
   metadata `null` until the document exists) to the `callback_url` (5 attempts,
   polynomial backoff, logs on final failure). `GET /api/v1/upload_requests/:id`
-  mirrors the same payload shape for polling.
+  mirrors the same payload shape for polling. **SSRF guard:**
+  `CallbackUrlPolicy.reject_reason(url, resolve:)` blocks non-routable
+  `callback_url` targets (loopback, RFC1918, link-local incl. cloud metadata,
+  CGNAT, IPv4-mapped IPv6) — syntactically at request time in `UploadRequest`
+  (422, no DNS) and after DNS resolution in `DeliverCallbackJob` (refuse + log,
+  no retry). Security audit findings live in `docs/security/`.
 - **Upload queue pause:** `UploadQueue` (facade over Solid Queue's native
   pause) backs the Pause/Resume button on `/admin/upload_requests`. Pausing
   stops claiming new `StoreDocumentJob`s; running jobs finish and their

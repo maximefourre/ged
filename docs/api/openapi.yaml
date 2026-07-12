@@ -23,13 +23,22 @@ info:
     The `client_id` must also be registered in the GED admin UI and granted
     access to at least one department, otherwise calls return `403`.
 
+    ## Permissions
+
+    Each department grant carries independent **read** and **write** flags,
+    and covers the department's whole subtree. Read gates listing, fetching,
+    downloading and polling; write gates uploading, deleting, replacing tags
+    and creating sub-departments. Write does **not** imply read: a write-only
+    client can upload (and receives the created document in the response) but
+    cannot list or fetch it back.
+
     ## Errors
 
     Errors share the shape `{ "error": "<message>" }`:
 
     - `400` — missing or non-scalar parameter
     - `401` — missing or invalid token
-    - `403` — client not registered, or no access to the department
+    - `403` — client not registered, or no read (resp. write) access to the department
     - `404` — resource not found
     - `422` — validation failed
 servers:
@@ -75,8 +84,8 @@ paths:
       tags: [Documents]
       summary: List accessible documents
       description: |
-        Returns documents in departments the client can access, newest first.
-        Optional filters narrow the set; `tag_value` requires `tag`.
+        Returns documents in departments the client has **read** access to,
+        newest first. Optional filters narrow the set; `tag_value` requires `tag`.
       operationId: listDocuments
       parameters:
         - name: department_id
@@ -170,11 +179,16 @@ paths:
       tags: [Documents]
       summary: Upload a document (synchronous or asynchronous)
       description: |
-        Multipart upload. Without `callback_url` the file is stored inline and
-        the created document is returned (`201`). With `callback_url` the file
-        is staged, a background job stores it, and the endpoint returns `202`
-        immediately; the result is later POSTed to the callback URL and can
-        also be polled via `GET /api/v1/upload_requests/{id}`.
+        Multipart upload — requires **write** access to the department. Without
+        `callback_url` the file is stored inline and the created document is
+        returned (`201`). With `callback_url` the file is staged, a background
+        job stores it, and the endpoint returns `202` immediately; the result
+        is later POSTed to the callback URL and can also be polled via
+        `GET /api/v1/upload_requests/{id}`.
+
+        `callback_url` must point at a **publicly routable** http(s) host:
+        private, loopback and link-local targets are rejected with `422` at
+        upload time, and refused again (after DNS resolution) at delivery time.
 
         Tags are passed as nested params, e.g. `tags[type]=facture&tags[urgent]=`
         (a blank value stores `null`).
@@ -188,7 +202,7 @@ paths:
               properties:
                 department_id:
                   type: integer
-                  description: Target department (must be accessible)
+                  description: Target department (requires write access)
                 file:
                   type: string
                   format: binary
@@ -196,7 +210,10 @@ paths:
                 callback_url:
                   type: string
                   format: uri
-                  description: If present, upload is asynchronous and this URL receives the result
+                  description: >
+                    If present, upload is asynchronous and this URL receives the
+                    result. Must resolve to a public address (private/loopback/
+                    link-local targets → 422).
                   example: https://webhook.site/xxxx
                 tags:
                   type: object
@@ -235,6 +252,7 @@ paths:
     get:
       tags: [Documents]
       summary: Fetch a document's metadata
+      description: Requires read access to the document's department.
       operationId: getDocument
       responses:
         "200":
@@ -253,10 +271,10 @@ paths:
       tags: [Documents]
       summary: Delete a document
       description: >
-        Soft-deletes the document: it is hidden immediately (subsequent reads
-        return 404) and its file is retained for a 30-day window, after which a
-        scheduled job permanently purges it. An admin can restore it from the
-        admin Trash before the purge date.
+        Requires write access. Soft-deletes the document: it is hidden
+        immediately (subsequent reads return 404) and its file is retained for
+        a 30-day window, after which a scheduled job permanently purges it. An
+        admin can restore it from the admin Trash before the purge date.
       operationId: deleteDocument
       responses:
         "204":
@@ -274,6 +292,7 @@ paths:
     get:
       tags: [Documents]
       summary: Download a document's file
+      description: Requires read access to the document's department.
       operationId: downloadDocument
       responses:
         "200":
@@ -297,8 +316,9 @@ paths:
       tags: [Documents]
       summary: Replace a document's whole tag map
       description: |
-        Map semantics: the client owns the full map. The supplied `tags` replace
-        the existing map wholesale; omitting `tags` clears it.
+        Requires write access. Map semantics: the client owns the full map. The
+        supplied `tags` replace the existing map wholesale; omitting `tags`
+        clears it.
       operationId: replaceDocumentTags
       requestBody:
         required: false
@@ -339,6 +359,7 @@ paths:
     get:
       tags: [Departments]
       summary: List accessible departments
+      description: Returns the departments the client has read access to.
       operationId: listDepartments
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -359,7 +380,7 @@ paths:
     post:
       tags: [Departments]
       summary: Create a sub-department
-      description: Creates a child of `parent_id`, which must be accessible.
+      description: Creates a child of `parent_id`, which requires write access.
       operationId: createDepartment
       requestBody:
         required: true
@@ -408,9 +429,10 @@ paths:
       tags: [Upload requests]
       summary: Poll the status of an asynchronous upload
       description: |
-        Mirrors the callback payload. `status` is one of `pending`,
-        `processing`, `completed`, `failed`. `document_id` and `tags` are
-        populated once the upload completes; `error_message` is set on failure.
+        Requires read access to the upload's department. Mirrors the callback
+        payload. `status` is one of `pending`, `processing`, `completed`,
+        `failed`. `document_id` and `tags` are populated once the upload
+        completes; `error_message` is set on failure.
       operationId: getUploadRequest
       parameters:
         - name: id
@@ -630,7 +652,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     Forbidden:
-      description: Client not registered, or no access to the department
+      description: Client not registered, or no read (resp. write) access to the department
       content:
         application/json:
           schema:

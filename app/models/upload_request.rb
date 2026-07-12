@@ -8,17 +8,16 @@ class UploadRequest < ApplicationRecord
 
   validates :status, inclusion: { in: STATUSES }
   validates :callback_url, :filename, :uploaded_by, presence: true
-  validate :callback_url_is_http
+  validate :callback_url_allowed
 
   private
 
-  def callback_url_is_http
+  # Syntactic SSRF check only (no DNS — fast 422 for the client); the
+  # resolution-based barrier runs in DeliverCallbackJob.
+  def callback_url_allowed
     return if callback_url.blank?
-    uri = URI.parse(callback_url)
-    unless uri.is_a?(URI::HTTP) && uri.host.present?
-      errors.add(:callback_url, "must be an http(s) URL with a host")
+    if (reason = CallbackUrlPolicy.reject_reason(callback_url))
+      errors.add(:callback_url, reason)
     end
-  rescue URI::InvalidURIError
-    errors.add(:callback_url, "must be an http(s) URL with a host")
   end
 end

@@ -16,6 +16,15 @@ class DeliverCallbackJob < ApplicationJob
 
   def perform(upload_request_id)
     upload_request = UploadRequest.find(upload_request_id)
+    # SSRF barrier: refuse blocked targets outright (no DeliveryFailed — a
+    # forbidden destination must not be retried).
+    if (reason = CallbackUrlPolicy.reject_reason(upload_request.callback_url, resolve: true))
+      Rails.logger.error(
+        "Callback refused for upload_request #{upload_request.id}: callback_url #{reason}"
+      )
+      return
+    end
+
     payload = {
       request_id: upload_request.id,
       status: upload_request.status,

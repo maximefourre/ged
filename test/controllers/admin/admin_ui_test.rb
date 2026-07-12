@@ -122,13 +122,79 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert Document.with_deleted.exists?(doc.id)
   end
 
-  test "registers an app client with department access" do
+  test "registers an app client with full read/write access from the grid" do
     post "/admin/app_clients", params: {
       app_client: { client_identifier: "erp-app", description: "ERP",
-                    department_ids: [ @finance.id ] }
+                    access: { @finance.id.to_s => { read: "1", write: "1" } } }
     }
     client = AppClient.find_by(client_identifier: "erp-app")
-    assert_equal [ @finance.id ], client.department_ids
+    access = client.client_department_accesses.find_by!(department: @finance)
+    assert access.can_read?
+    assert access.can_write?
+  end
+
+  test "registers a read-only app client" do
+    post "/admin/app_clients", params: {
+      app_client: { client_identifier: "reader-app",
+                    access: { @finance.id.to_s => { read: "1", write: "0" } } }
+    }
+    access = AppClient.find_by(client_identifier: "reader-app")
+                      .client_department_accesses.find_by!(department: @finance)
+    assert access.can_read?
+    assert_not access.can_write?
+  end
+
+  test "registers a write-only app client" do
+    post "/admin/app_clients", params: {
+      app_client: { client_identifier: "writer-app",
+                    access: { @finance.id.to_s => { read: "0", write: "1" } } }
+    }
+    access = AppClient.find_by(client_identifier: "writer-app")
+                      .client_department_accesses.find_by!(department: @finance)
+    assert_not access.can_read?
+    assert access.can_write?
+  end
+
+  test "unchecking both boxes removes the department access row" do
+    client = AppClient.create!(client_identifier: "erp-app")
+    client.client_department_accesses.create!(department: @finance)
+
+    patch "/admin/app_clients/#{client.id}", params: {
+      app_client: { client_identifier: "erp-app",
+                    access: { @finance.id.to_s => { read: "0", write: "0" } } }
+    }
+    assert_redirected_to "/admin/app_clients"
+    assert_not client.client_department_accesses.exists?(department: @finance)
+  end
+
+  test "updating access flags edits the existing row in place" do
+    client = AppClient.create!(client_identifier: "erp-app")
+    client.client_department_accesses.create!(department: @finance)
+
+    patch "/admin/app_clients/#{client.id}", params: {
+      app_client: { client_identifier: "erp-app",
+                    access: { @finance.id.to_s => { read: "1", write: "0" } } }
+    }
+    access = client.client_department_accesses.find_by!(department: @finance)
+    assert access.can_read?
+    assert_not access.can_write?
+  end
+
+  test "the app client form shows the read/write grid" do
+    get "/admin/app_clients/new"
+    assert_response :success
+    assert_includes response.body, "Department access"
+    assert_includes response.body, "app_client[access][#{@finance.id}][read]"
+    assert_includes response.body, "app_client[access][#{@finance.id}][write]"
+  end
+
+  test "the legacy department_ids param no longer grants access" do
+    post "/admin/app_clients", params: {
+      app_client: { client_identifier: "legacy-app",
+                    department_ids: [ @finance.id ] }
+    }
+    client = AppClient.find_by(client_identifier: "legacy-app")
+    assert_empty client.client_department_accesses
   end
 
   test "uploads a document, then soft-deletes it to the trash" do

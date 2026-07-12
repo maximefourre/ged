@@ -9,10 +9,31 @@
   </div>
   <div class="field">
     <span class="field-label">Department access</span>
-    <div class="check-grid">
-      <%= f.collection_check_boxes :department_ids, Department.order(:name), :id, :name do |b| %>
-        <%= b.label { safe_join([ b.checkbox, b.text ]) } %>
-      <% end %>
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Department</th><th>Read</th><th>Write</th></tr>
+        </thead>
+        <tbody>
+          <% @departments.each do |department| %>
+            <% access = @app_client.client_department_accesses
+                                   .detect { |a| a.department_id == department.id } %>
+            <tr>
+              <td><%= department.name %></td>
+              <td>
+                <%= hidden_field_tag "app_client[access][#{department.id}][read]", "0", id: nil %>
+                <%= check_box_tag "app_client[access][#{department.id}][read]", "1",
+                                  access&.can_read? %>
+              </td>
+              <td>
+                <%= hidden_field_tag "app_client[access][#{department.id}][write]", "0", id: nil %>
+                <%= check_box_tag "app_client[access][#{department.id}][write]", "1",
+                                  access&.can_write? %>
+              </td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
     </div>
   </div>
   <div class="form-actions">
