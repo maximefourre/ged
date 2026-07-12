@@ -20,6 +20,15 @@ is the source of truth.
 - **Commit, push, and open PRs only on request** — never commit/push/merge
   proactively; wait for the user's explicit go-ahead (consistent with the
   merge-confirmation rule above).
+- **Finish a feature with a testable, isolated stack** — when the work in a
+  worktree is done, finalize it on the worktree branch (merge/commit there, not
+  into `main`) and bring up its own Docker stack with `bin/worktree-stack up`.
+  Each worktree gets an isolated `COMPOSE_PROJECT_NAME` + host ports (data
+  volumes are namespaced too), so it runs alongside `main` and other worktrees
+  for independent testing. Let the user validate against that stack before any
+  merge. On repatriating into `main`, do the ménage: `bin/worktree-stack clean`
+  (drops its containers, volumes, and locally-built images), then remove the
+  worktree.
 - **Green checks before proposing a merge** — `bin/ci` must pass (at minimum
   `bin/rails test` + `bin/rubocop`); report the actual output, don't claim
   success without running it.
@@ -38,7 +47,9 @@ is the source of truth.
 - **Active Storage** (local disk service) — document file storage
 - **Devise** — admin UI username/password session login
 - **`jwt` gem** — validates bearer tokens from app clients against a JWKS endpoint
-- **Docker Compose** — `web` (Rails/Puma), `postgres`, `oauth-provider`
+- **Docker Compose** — `web` (Rails/Puma), `postgres`, `oauth-provider`;
+  `bin/worktree-stack up` boots an isolated per-worktree copy for testing (see
+  the Workflow section)
 
 ## Repo layout
 

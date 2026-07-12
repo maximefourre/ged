@@ -16,7 +16,9 @@ services:
     environment:
       OAUTH_ISSUER: http://oauth-provider:9292
     ports:
-      - "9292:9292"
+      # GED_OAUTH_PORT lets bin/worktree-stack publish an isolated host port per
+      # worktree; defaults to 9292 for the primary-tree stack.
+      - "${GED_OAUTH_PORT:-9292}:9292"
     volumes:
       - oauth_data:/app/data
 
@@ -38,8 +40,10 @@ services:
       GED_ADMIN_PASSWORD: ${GED_ADMIN_PASSWORD:?set GED_ADMIN_PASSWORD}
     ports:
       # 80 is Thruster (X-Sendfile + compression in front of Puma, see
-      # Dockerfile CMD); mapping Puma's 3000 directly would bypass it
-      - "3000:80"
+      # Dockerfile CMD); mapping Puma's 3000 directly would bypass it.
+      # GED_WEB_PORT lets bin/worktree-stack publish an isolated host port per
+      # worktree; defaults to 3000 for the primary-tree stack.
+      - "${GED_WEB_PORT:-3000}:80"
     volumes:
       - storage:/rails/storage
 
