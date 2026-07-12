@@ -10,7 +10,9 @@ Full specification: `docs/superpowers/specs/2026-07-08-ged-design.md`
 ## Features
 
 - **Department-based access control** — departments are folders and the permission
-  boundary; access to a department covers its entire subtree
+  boundary; access to a department covers its entire subtree, with independent
+  **read** and **write** grants per client (a client can upload without being able
+  to read back, or the reverse)
 - **Per-document tags** — key→value map per document, filterable via `?tag=<key>`
   or `?tag=<key>&tag_value=<value>`
 - **System-managed metadata** — readonly `uploaded_at`, `updated_at`, `upload_mode`
