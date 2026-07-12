@@ -1,9 +1,35 @@
 # GED — document management system
 
-Rails app + PostgreSQL + temporary OAuth2 dev provider. Spec:
-`docs/superpowers/specs/2026-07-08-ged-design.md`.
+Self-hosted document store for a team/company, organized around departments (folders,
+the permission boundary) and per-document key→value tags. Accessed primarily by
+internal applications over an API secured with OAuth2/JWT bearer tokens, plus a
+minimal admin web UI for humans to manage departments, clients, and documents.
 
-## Development
+Full specification: `docs/superpowers/specs/2026-07-08-ged-design.md`
+
+## Features
+
+- **Department-based access control** — departments are folders and the permission
+  boundary; access to a department covers its entire subtree
+- **Per-document tags** — key→value map per document, filterable via `?tag=<key>`
+  or `?tag=<key>&tag_value=<value>`
+- **System-managed metadata** — readonly `uploaded_at`, `updated_at`, `upload_mode`
+  block separate from user tags
+- **Sync and async uploads** — same endpoint (`POST /api/v1/documents`); async mode
+  accepts a `callback_url` to POST the result to when the upload completes
+- **Logical deletion with retention** — documents soft-delete for 30 days before
+  hard purge; admin can restore from Trash within the window
+- **Two auth paths** — application clients authenticate via OAuth2 client_credentials
+  (JWT/JWKS); admin users via Devise username/password
+- **Admin UI** — manage departments, register application clients, upload/list/tag
+  documents, restore from Trash
+- **API documentation** — OpenAPI 3.1 spec served at `GET /api/docs` (Redoc
+  browser) and `/api/v1/openapi.yaml` (raw spec); includes a ready-to-run
+  [Bruno](https://www.usebruno.com) collection for testing
+
+## Installation (local development)
+
+For quick local development without Docker overhead:
 
     brew install mise postgresql@17 && brew services start postgresql@17
     mise install                # ruby from .mise.toml
@@ -11,77 +37,77 @@ Rails app + PostgreSQL + temporary OAuth2 dev provider. Spec:
     bin/rails db:setup          # create + migrate + seed (admin/changeme)
     bin/rails test              # main app tests
     (cd oauth-provider && bundle install && bundle exec rake)  # provider tests
-    bin/rails server            # http://localhost:3000 → admin UI
+    bin/dev                     # http://localhost:3000 → admin UI
 
-## Deployment (Docker Compose)
+## Deployment (Docker)
 
-Create a `.env` file at the repo root (gitignored; read automatically by
-compose — required because every `docker compose` command re-evaluates it):
+For production or integrated testing (postgres, oauth provider, and rails in
+containers):
+
+Create a `.env` file at the repo root (gitignored; read automatically by compose):
 
     printf 'SECRET_KEY_BASE=%s\nGED_ADMIN_PASSWORD=changeme\n' "$(bin/rails secret)" > .env
 
-Then:
+Boot the full stack:
 
     docker compose up --build -d
     docker compose exec web bin/rails db:seed     # first boot only: create admin
 
-## Testing a feature branch in isolation
+## Setup
 
-Each git worktree can run its own stack, side by side with `main` and other
-worktrees, via `bin/worktree-stack`. It sets a per-worktree
-`COMPOSE_PROJECT_NAME` (namespacing containers, network, and data volumes) and
-publishes distinct host ports derived from the worktree name — no manual
-`.env`/port juggling:
+### Bootstrap an application client
 
-    bin/worktree-stack up        # build + start (prints the chosen URLs/ports)
-    bin/worktree-stack seed      # first boot only: create the admin user
-    bin/worktree-stack ps        # any docker compose subcommand passes through
-    bin/worktree-stack clean     # ménage: down -v + remove locally-built images
+1. Register the client in the OAuth provider:
+   ```
+   docker compose exec oauth-provider bin/register-client my-app
+   ```
+   Save the returned secret.
 
-Secrets are reused from the primary tree's `.env` if present, otherwise a
-throwaway `.env` is generated (`GED_ADMIN_PASSWORD=changeme`). Override ports
-with `GED_WEB_PORT` / `GED_OAUTH_PORT` in the rare event two worktrees collide.
-Run from the primary tree it's just the normal stack on 3000 / 9292.
+2. Register the client in the admin UI (http://localhost:3000):
+   - Navigate to **Clients** → **Register** with client ID `my-app`
+   - Grant department access
 
-## Bootstrap an application client
+3. Obtain an OAuth token:
+   ```
+   curl -X POST http://localhost:9292/token \
+     -d grant_type=client_credentials \
+     -d client_id=my-app \
+     -d client_secret=<secret>
+   ```
 
-1. `docker compose exec oauth-provider bin/register-client my-app` → note the secret
-2. Admin UI (http://localhost:3000) → Clients → Register `my-app` + department access
-3. `curl -X POST http://localhost:9292/token -d grant_type=client_credentials -d client_id=my-app -d client_secret=<secret>`
-4. Call the API: `curl http://localhost:3000/api/v1/documents -H "Authorization: Bearer <token>"`
+4. Call the API:
+   ```
+   curl http://localhost:3000/api/v1/documents \
+     -H "Authorization: Bearer <token>"
+   ```
 
-NOTE: containers reach the provider at `http://oauth-provider:9292` (compose DNS);
-tokens fetched from the host at `localhost:9292` carry `iss=http://oauth-provider:9292`
-(set via OAUTH_ISSUER), so they validate correctly inside the stack.
+**Note:** Containers reach the provider at `http://oauth-provider:9292` (Docker
+Compose DNS); tokens issued by the provider carry `iss=http://oauth-provider:9292`,
+which validates correctly inside the stack.
 
-## API documentation & test client
+### API documentation & test client
 
-The API contract is an OpenAPI 3.1 spec at `docs/api/openapi.yaml`, served by the
-`web` service (no auth):
+The API spec is served at:
+- `http://localhost:3000/api/docs` — interactive reference (Redoc)
+- `http://localhost:3000/api/v1/openapi.yaml` — raw OpenAPI 3.1 spec
 
-- `http://localhost:3000/api/docs` — browsable reference (Redoc; needs internet
-  in the browser to load the bundle)
-- `http://localhost:3000/api/v1/openapi.yaml` — the raw spec
+To test with Bruno:
+1. Open the collection in `docs/api/bruno/`
+2. Select the **local** environment
+3. Set `clientId` and `clientSecret` secret vars
+4. Run **Auth → Get token** first — it caches the token for all subsequent requests
+5. Upload requests require `file` (path to a real file) and `departmentId` (list from
+   **List departments**)
 
-A ready-to-run [Bruno](https://www.usebruno.com) collection lives in
-`docs/api/bruno/`. Open that folder in Bruno, pick the **local** environment, set
-`clientId`/`clientSecret` (secret vars), then run **Auth → Get token** first — it
-stores the token so every other request is authenticated. Upload requests need
-`file` pointed at a real file and `departmentId` set from **List departments**.
+### Cutover to production IdP
 
-## Cutover to the real IdP
+When migrating from the temporary OAuth provider to a real IdP, update the `web`
+service environment variables:
 
-Config change only, on the `web` service: set `GED_OIDC_ISSUER` and
-`GED_OIDC_JWKS_URL` to the real IdP, `GED_CLIENT_ID_CLAIM` to the claim that
-carries the client id, and `GED_OIDC_AUDIENCE` to GED's audience identifier —
-**required** with a shared IdP, otherwise any internal app's token grants
-access to GED. Then remove the `oauth-provider` service.
+- `GED_OIDC_ISSUER` — the real IdP's issuer URL
+- `GED_OIDC_JWKS_URL` — the real IdP's JWKS endpoint
+- `GED_CLIENT_ID_CLAIM` — the claim containing the client ID (default: `sub`)
+- `GED_OIDC_AUDIENCE` — **required** with a shared IdP to prevent token reuse
+  across services
 
-## Verification checklist (manual, after deploy)
-
-- [ ] Admin login works; create departments Finance + HR
-- [ ] Register client, grant Finance only
-- [ ] Upload to Finance → 201 + uuid; upload to HR → 403
-- [ ] List/download/delete document; tag a document; filter by tag
-- [ ] Async upload with callback_url (use https://webhook.site) → 202 then callback with document_id
-- [ ] Restart stack (`docker compose restart`) → documents still present
+Then remove the `oauth-provider` service from `docker-compose.yml`.
