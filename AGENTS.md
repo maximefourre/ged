@@ -210,9 +210,10 @@ is the source of truth.
 ## Known gaps / pitfalls
 
 Correction plan with per-item status:
-`docs/superpowers/plans/2026-07-10-ged-corrections.md` (P1 bugs and P2 gaps
-fixed 2026-07-10; P3 improvements remain — notably no pagination and
-whole-blob-in-memory downloads). Standing pitfalls:
+`docs/superpowers/plans/2026-07-10-ged-corrections.md` (P1 bugs, P2 gaps,
+and P3 improvements fixed 2026-07-10, except P3-8 — `accessible_department_ids`
+perf, deliberately deferred until department counts grow). Standing
+pitfalls:
 
 - **Real-IdP cutover checklist:** point `GED_OIDC_ISSUER`/`GED_OIDC_JWKS_URL`
   at the real IdP, set `GED_CLIENT_ID_CLAIM` to the claim carrying the client
