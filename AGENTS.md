@@ -14,6 +14,14 @@ is the source of truth.
 - **Always work in a dedicated git worktree and branch** — never edit directly
   on `main` or in the primary working tree. Create an isolated worktree +
   feature branch for every task before making changes.
+- **Keep history linear — rebase over merge whenever possible** — update a
+  feature branch from `main` with `git rebase main` (never `git merge main`
+  into it), and land finished work with a rebase + fast-forward
+  (`git rebase main` then `git merge --ff-only`, or an equivalent
+  rebase/squash PR merge) instead of a merge commit. Only fall back to a real
+  merge commit if a rebase would rewrite commits already pushed/shared in a
+  way the user doesn't want rewritten — flag that tradeoff to the user instead
+  of silently merging.
 - **Always get the user's explicit confirmation before the final merge** — do
   not merge back into `main` (or open/complete a PR) without validating the
   result with the user first.
@@ -21,14 +29,15 @@ is the source of truth.
   proactively; wait for the user's explicit go-ahead (consistent with the
   merge-confirmation rule above).
 - **Finish a feature with a testable, isolated stack** — when the work in a
-  worktree is done, finalize it on the worktree branch (merge/commit there, not
-  into `main`) and bring up its own Docker stack with `bin/worktree-stack up`.
-  Each worktree gets an isolated `COMPOSE_PROJECT_NAME` + host ports (data
-  volumes are namespaced too), so it runs alongside `main` and other worktrees
-  for independent testing. Let the user validate against that stack before any
-  merge. On repatriating into `main`, do the ménage: `bin/worktree-stack clean`
-  (drops its containers, volumes, and locally-built images), then remove the
-  worktree.
+  worktree is done, finalize it on the worktree branch (rebase onto latest
+  `main` there, not the other way around) and bring up its own Docker stack
+  with `bin/worktree-stack up`. Each worktree gets an isolated
+  `COMPOSE_PROJECT_NAME` + host ports (data volumes are namespaced too), so it
+  runs alongside `main` and other worktrees for independent testing. Let the
+  user validate against that stack before any merge. On repatriating into
+  `main`, rebase + fast-forward merge (see above), then do the ménage:
+  `bin/worktree-stack clean` (drops its containers, volumes, and
+  locally-built images), then remove the worktree.
 - **Green checks before proposing a merge** — `bin/ci` must pass (at minimum
   `bin/rails test` + `bin/rubocop`); report the actual output, don't claim
   success without running it.
