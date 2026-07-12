@@ -25,6 +25,24 @@ Then:
     docker compose up --build -d
     docker compose exec web bin/rails db:seed     # first boot only: create admin
 
+## Testing a feature branch in isolation
+
+Each git worktree can run its own stack, side by side with `main` and other
+worktrees, via `bin/worktree-stack`. It sets a per-worktree
+`COMPOSE_PROJECT_NAME` (namespacing containers, network, and data volumes) and
+publishes distinct host ports derived from the worktree name — no manual
+`.env`/port juggling:
+
+    bin/worktree-stack up        # build + start (prints the chosen URLs/ports)
+    bin/worktree-stack seed      # first boot only: create the admin user
+    bin/worktree-stack ps        # any docker compose subcommand passes through
+    bin/worktree-stack clean     # ménage: down -v + remove locally-built images
+
+Secrets are reused from the primary tree's `.env` if present, otherwise a
+throwaway `.env` is generated (`GED_ADMIN_PASSWORD=changeme`). Override ports
+with `GED_WEB_PORT` / `GED_OAUTH_PORT` in the rare event two worktrees collide.
+Run from the primary tree it's just the normal stack on 3000 / 9292.
+
 ## Bootstrap an application client
 
 1. `docker compose exec oauth-provider bin/register-client my-app` → note the secret

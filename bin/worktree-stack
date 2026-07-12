@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+#
+# worktree-stack — run an isolated Docker Compose stack for the current git
+# worktree, so a feature branch can be tested independently of `main` and of
+# other worktrees running at the same time.
+#
+# Each linked worktree gets:
+#   * its own COMPOSE_PROJECT_NAME  → namespaced containers, network, volumes
+#     (data is isolated: ged-<slug>_pgdata / _oauth_data / _storage)
+#   * distinct host ports           → GED_WEB_PORT / GED_OAUTH_PORT, derived
+#     deterministically from the worktree directory name so the URLs are stable
+#
+# docker-compose.yml publishes "${GED_WEB_PORT:-3000}:80" and
+# "${GED_OAUTH_PORT:-9292}:9292", so run from the primary tree this is just the
+# normal stack on 3000 / 9292.
+#
+# Usage:
+#   bin/worktree-stack up           build + start the stack (detached)
+#   bin/worktree-stack seed         create the admin user (first boot only)
+#   bin/worktree-stack down [-v]    stop + remove containers (-v also volumes)
+#   bin/worktree-stack clean        full ménage: down -v + remove built images
+#   bin/worktree-stack <cmd> ...    passthrough to `docker compose` (ps, logs…)
+#
+# Ports collide only if two worktree slugs hash to the same offset; override
+# with GED_WEB_PORT / GED_OAUTH_PORT if that ever happens.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+
+git_dir=$(cd "$(git rev-parse --git-dir)" && pwd -P)
+git_common=$(cd "$(git rev-parse --git-common-dir)" && pwd -P)
+
+slug=$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' \
+       | sed -E 's/-+/-/g; s/^-//; s/-$//')
+
+if [ "$git_dir" != "$git_common" ]; then
+  # Linked worktree: isolate project + ports from everything else.
+  project="ged-$slug"
+  offset=$(( ( $(printf '%s' "$slug" | cksum | cut -d' ' -f1) % 250 ) + 1 ))
+  web_port="${GED_WEB_PORT:-$((3000 + offset))}"
+  oauth_port="${GED_OAUTH_PORT:-$((9292 + offset))}"
+else
+  # Primary tree: the normal stack on the default ports.
+  project="${COMPOSE_PROJECT_NAME:-ged}"
+  web_port="${GED_WEB_PORT:-3000}"
+  oauth_port="${GED_OAUTH_PORT:-9292}"
+fi
+
+export COMPOSE_PROJECT_NAME="$project"
+export GED_WEB_PORT="$web_port"
+export GED_OAUTH_PORT="$oauth_port"
+
+# Compose reads .env from the project dir for SECRET_KEY_BASE / GED_ADMIN_PASSWORD,
+# but .env is gitignored so a fresh worktree has none. Reuse the primary tree's
+# secrets if present, otherwise generate a throwaway .env for this worktree.
+ensure_env() {
+  [ -f "$ROOT/.env" ] && return 0
+  local main_env="$(dirname "$git_common")/.env"
+  if [ -f "$main_env" ] && [ "$main_env" != "$ROOT/.env" ]; then
+    cp "$main_env" "$ROOT/.env"
+    echo "→ copied secrets from $main_env"
+  else
+    printf 'SECRET_KEY_BASE=%s\nGED_ADMIN_PASSWORD=changeme\n' \
+      "$(openssl rand -hex 64)" > "$ROOT/.env"
+    echo "→ generated $ROOT/.env (GED_ADMIN_PASSWORD=changeme)"
+  fi
+}
+
+urls() {
+  cat <<EOF
+
+  Admin UI   http://localhost:$web_port
+  API docs   http://localhost:$web_port/api/docs
+  OpenAPI    http://localhost:$web_port/api/v1/openapi.yaml
+  OAuth      http://localhost:$oauth_port/token
+EOF
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  up)
+    ensure_env
+    echo "▶ project=$COMPOSE_PROJECT_NAME  web=$web_port  oauth=$oauth_port"
+    docker compose up --build -d "$@"
+    urls
+    echo
+    echo "  First boot only — create the admin user:"
+    echo "    bin/worktree-stack seed"
+    ;;
+  seed)
+    docker compose exec web bin/rails db:seed
+    ;;
+  down)
+    docker compose down "$@"
+    ;;
+  clean)
+    docker compose down -v --rmi local "$@"
+    ;;
+  urls|url)
+    echo "▶ project=$COMPOSE_PROJECT_NAME  web=$web_port  oauth=$oauth_port"
+    urls
+    ;;
+  help|-h|--help)
+    # Print the leading comment block (from line 3) as usage text.
+    awk 'NR>2 && /^#/ { sub(/^# ?/, ""); print; next } NR>2 { exit }' "$0"
+    ;;
+  *)
+    # Passthrough: any other docker compose subcommand (ps, logs, exec, …)
+    # with this worktree's project + ports already exported.
+    docker compose "$cmd" "$@"
+    ;;
+esac
