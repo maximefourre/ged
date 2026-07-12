@@ -2,6 +2,16 @@
   <h1>Tags — <%= @document.filename %></h1>
 </header>
 
+<section class="card meta-card">
+  <dl class="meta-list">
+    <div><dt>Uploaded</dt><dd class="mono"><%= @document.uploaded_at.strftime("%Y-%m-%d %H:%M") %></dd></div>
+    <div><dt>Indexed</dt><dd class="mono"><%= @document.created_at.strftime("%Y-%m-%d %H:%M") %></dd></div>
+    <div><dt>Updated</dt><dd class="mono"><%= @document.updated_at.strftime("%Y-%m-%d %H:%M") %></dd></div>
+    <div><dt>Upload mode</dt><dd><%= @document.upload_mode %></dd></div>
+    <div><dt>Owner</dt><dd><%= @document.uploaded_by %></dd></div>
+  </dl>
+</section>
+
 <%= form_with model: [ :admin, @document ], class: "form-card" do |f| %>
   <div class="field">
     <%= label_tag "document[tags_text]", "Tags" %>

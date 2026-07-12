@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_11_000001) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_12_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
@@ -85,11 +85,18 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_11_000001) do
     t.datetime "created_at", null: false
     t.bigint "department_id", null: false
     t.string "filename", null: false
+    t.boolean "stored_async", default: false, null: false
     t.jsonb "tags", default: {}, null: false
     t.datetime "updated_at", null: false
+    t.datetime "uploaded_at", null: false
     t.string "uploaded_by", null: false
+    t.index ["created_at"], name: "index_documents_on_created_at"
     t.index ["department_id"], name: "index_documents_on_department_id"
+    t.index ["stored_async"], name: "index_documents_async", where: "stored_async"
     t.index ["tags"], name: "index_documents_on_tags", using: :gin
+    t.index ["updated_at"], name: "index_documents_on_updated_at"
+    t.index ["uploaded_at"], name: "index_documents_on_uploaded_at"
+    t.index ["uploaded_by"], name: "index_documents_on_uploaded_by"
   end
 
   create_table "upload_requests", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|

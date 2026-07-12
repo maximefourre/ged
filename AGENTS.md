@@ -85,6 +85,19 @@ is the source of truth.
   replaced wholesale via `PUT /api/v1/documents/:id/tags`, and filtered with
   `?tag=<key>` / `?tag=<key>&tag_value=<value>`. There are no `/api/v1/tags`
   endpoints and no admin tags section.
+- **Readonly document metadata:** every document also exposes a system-managed,
+  readonly `metadata` block (`uploaded_at`, `updated_at`, `upload_mode`),
+  serialized separately from the client-owned `tags` map so replace-the-whole-map
+  semantics stay intact. `uploaded_at` is a denormalized column (sync = creation
+  time; async = the originating request's `created_at`, passed by
+  `StoreDocumentJob`); the indexation date is the top-level `created_at` and the
+  owner is `uploaded_by` (not duplicated). `stored_async` is a plain boolean flag
+  that drives `upload_mode` — deliberately no `upload_request_id` link, so those
+  rows can be purged later. `Document#metadata_hash` is the single serialized
+  shape, reused by `document_json` and the async callback/polling payloads.
+  Documents are filterable by `?uploaded_by=`, `?upload_mode=sync|async`, and
+  ISO8601 ranges `?uploaded_after/before`, `?indexed_after/before`,
+  `?updated_after/before` (invalid value → 400).
 
 ## How the pieces fit (implementation map)
 
@@ -98,10 +111,10 @@ is the source of truth.
   `StoreDocumentJob` (runs on the dedicated `uploads` queue) builds the
   `Document`, applies `upload_request.tags`, and deletes the staging file →
   `DeliverCallbackJob` POSTs
-  `{ request_id, status, document_id, error_message, tags }` (tags `null` on
-  failure) to the `callback_url` (5 attempts, polynomial backoff, logs on
-  final failure). `GET /api/v1/upload_requests/:id` mirrors the same payload
-  shape for polling.
+  `{ request_id, status, document_id, error_message, tags, metadata }` (tags and
+  metadata `null` until the document exists) to the `callback_url` (5 attempts,
+  polynomial backoff, logs on final failure). `GET /api/v1/upload_requests/:id`
+  mirrors the same payload shape for polling.
 - **Upload queue pause:** `UploadQueue` (facade over Solid Queue's native
   pause) backs the Pause/Resume button on `/admin/upload_requests`. Pausing
   stops claiming new `StoreDocumentJob`s; running jobs finish and their

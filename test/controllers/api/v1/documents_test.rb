@@ -26,6 +26,20 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     assert Document.find(body["id"]).file.attached?
   end
 
+  test "documents expose a readonly metadata block" do
+    post "/api/v1/documents", headers: bearer_header("erp-app"),
+         params: { department_id: @finance.id, file: upload_file }
+    body = JSON.parse(response.body)
+    meta = body["metadata"]
+    assert_equal %w[uploaded_at updated_at upload_mode].sort, meta.keys.sort
+    assert_equal "sync", meta["upload_mode"]
+    assert meta["uploaded_at"].present?
+    assert meta["updated_at"].present?
+    # indexation date stays the top-level created_at; not duplicated in metadata
+    assert body["created_at"].present?
+    assert_not meta.key?("indexed_at")
+  end
+
   test "upload into a subfolder of a granted department is allowed" do
     post "/api/v1/documents", headers: bearer_header("erp-app"),
          params: { department_id: @invoices.id, file: upload_file }
@@ -209,6 +223,43 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
   test "unknown document returns 404" do
     get "/api/v1/documents/#{SecureRandom.uuid}", headers: bearer_header("erp-app")
     assert_response :not_found
+  end
+
+  test "filters documents by owner and upload mode" do
+    create_document(@finance, "sync.pdf")
+    async = create_document(@finance, "async.pdf")
+    async.update_columns(stored_async: true, uploaded_by: "other-app")
+
+    get "/api/v1/documents", headers: bearer_header("erp-app"), params: { upload_mode: "async" }
+    assert_equal [ "async.pdf" ], JSON.parse(response.body).map { |d| d["filename"] }
+
+    get "/api/v1/documents", headers: bearer_header("erp-app"), params: { upload_mode: "sync" }
+    assert_equal [ "sync.pdf" ], JSON.parse(response.body).map { |d| d["filename"] }
+
+    get "/api/v1/documents", headers: bearer_header("erp-app"), params: { uploaded_by: "other-app" }
+    assert_equal [ "async.pdf" ], JSON.parse(response.body).map { |d| d["filename"] }
+
+    get "/api/v1/documents", headers: bearer_header("erp-app"), params: { upload_mode: "sideways" }
+    assert_response :bad_request
+  end
+
+  test "filters documents by uploaded_at, indexed_at and updated_at ranges" do
+    old = create_document(@finance, "old.pdf")
+    old.update_columns(uploaded_at: Time.utc(2020, 1, 1), created_at: Time.utc(2020, 1, 1),
+                       updated_at: Time.utc(2020, 1, 1))
+    recent = create_document(@finance, "recent.pdf")
+    recent.update_columns(uploaded_at: Time.utc(2026, 6, 1), created_at: Time.utc(2026, 6, 1),
+                          updated_at: Time.utc(2026, 6, 1))
+    cutoff = "2025-01-01T00:00:00Z"
+
+    { uploaded_after: "recent.pdf", indexed_after: "recent.pdf", updated_after: "recent.pdf",
+      uploaded_before: "old.pdf", indexed_before: "old.pdf", updated_before: "old.pdf" }.each do |param, expected|
+      get "/api/v1/documents", headers: bearer_header("erp-app"), params: { param => cutoff }
+      assert_equal [ expected ], JSON.parse(response.body).map { |d| d["filename"] }, "filter #{param}"
+    end
+
+    get "/api/v1/documents", headers: bearer_header("erp-app"), params: { uploaded_after: "not-a-date" }
+    assert_response :bad_request
   end
 
   private

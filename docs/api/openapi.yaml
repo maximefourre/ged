@@ -101,6 +101,54 @@ paths:
           schema:
             type: string
           example: facture
+        - name: uploaded_by
+          in: query
+          description: Only documents uploaded by this client (owner)
+          schema:
+            type: string
+          example: erp-app
+        - name: upload_mode
+          in: query
+          description: Filter by how the document was stored (sync vs async)
+          schema:
+            type: string
+            enum: [sync, async]
+        - name: uploaded_after
+          in: query
+          description: Only documents whose upload time is at or after this ISO8601 datetime
+          schema:
+            type: string
+            format: date-time
+        - name: uploaded_before
+          in: query
+          description: Only documents whose upload time is at or before this ISO8601 datetime
+          schema:
+            type: string
+            format: date-time
+        - name: indexed_after
+          in: query
+          description: Only documents whose indexation time (created_at) is at or after this ISO8601 datetime
+          schema:
+            type: string
+            format: date-time
+        - name: indexed_before
+          in: query
+          description: Only documents whose indexation time (created_at) is at or before this ISO8601 datetime
+          schema:
+            type: string
+            format: date-time
+        - name: updated_after
+          in: query
+          description: Only documents last updated at or after this ISO8601 datetime
+          schema:
+            type: string
+            format: date-time
+        - name: updated_before
+          in: query
+          description: Only documents last updated at or before this ISO8601 datetime
+          schema:
+            type: string
+            format: date-time
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Offset"
       responses:
@@ -461,13 +509,16 @@ components:
           type: integer
         uploaded_by:
           type: string
-          description: The client identifier that uploaded the document
+          description: The client identifier that uploaded the document (its owner)
           example: my-app
         tags:
           $ref: "#/components/schemas/Tags"
         created_at:
           type: string
           format: date-time
+          description: Indexation date — when the document was stored/indexed
+        metadata:
+          $ref: "#/components/schemas/DocumentMetadata"
       required:
         - id
         - filename
@@ -476,6 +527,25 @@ components:
         - uploaded_by
         - tags
         - created_at
+        - metadata
+
+    DocumentMetadata:
+      type: object
+      description: Readonly, system-managed document metadata.
+      properties:
+        uploaded_at:
+          type: string
+          format: date-time
+          description: Original upload time (async — request time; sync — creation time)
+        updated_at:
+          type: string
+          format: date-time
+          description: Last modification (currently the last tag edit)
+        upload_mode:
+          type: string
+          enum: [sync, async]
+          description: How the document was stored
+      required: [uploaded_at, updated_at, upload_mode]
 
     Department:
       type: object
@@ -525,7 +595,12 @@ components:
             - $ref: "#/components/schemas/Tags"
             - type: "null"
           description: The stored document's tags once completed, otherwise null
-      required: [request_id, status, document_id, error_message, tags]
+        metadata:
+          oneOf:
+            - $ref: "#/components/schemas/DocumentMetadata"
+            - type: "null"
+          description: The stored document's readonly metadata once completed, otherwise null
+      required: [request_id, status, document_id, error_message, tags, metadata]
 
     Error:
       type: object

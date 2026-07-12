@@ -155,6 +155,40 @@ class Api::V1::AsyncUploadTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "async metadata is null while pending and populated once completed" do
+    stub_request(:post, @callback_url).to_return(status: 200)
+    post "/api/v1/documents", headers: bearer_header("erp-app"),
+         params: { department_id: @finance.id,
+                   file: fixture_file_upload("report.pdf", "application/pdf"),
+                   callback_url: @callback_url }
+    request_id = JSON.parse(response.body)["request_id"]
+
+    get "/api/v1/upload_requests/#{request_id}", headers: bearer_header("erp-app")
+    assert_nil JSON.parse(response.body)["metadata"]
+
+    perform_enqueued_jobs
+
+    get "/api/v1/upload_requests/#{request_id}", headers: bearer_header("erp-app")
+    meta = JSON.parse(response.body)["metadata"]
+    assert_equal "async", meta["upload_mode"]
+    assert meta["uploaded_at"].present?
+    assert meta["updated_at"].present?
+  end
+
+  test "the callback payload carries the document metadata" do
+    stub_request(:post, @callback_url).to_return(status: 200)
+    perform_enqueued_jobs do
+      post "/api/v1/documents", headers: bearer_header("erp-app"),
+           params: { department_id: @finance.id,
+                     file: fixture_file_upload("report.pdf", "application/pdf"),
+                     callback_url: @callback_url }
+    end
+    assert_requested(:post, @callback_url) do |req|
+      meta = JSON.parse(req.body)["metadata"]
+      meta && meta["upload_mode"] == "async" && meta["uploaded_at"].present?
+    end
+  end
+
   test "polling an upload request of a forbidden department returns 403" do
     hr = Department.create!(name: "HR")
     upload_request = UploadRequest.create!(department: hr, filename: "report.pdf",

@@ -11,7 +11,8 @@ module DocumentJson
       department_id: document.department_id,
       uploaded_by: document.uploaded_by,
       tags: document.tags,
-      created_at: document.created_at
+      created_at: document.created_at,
+      metadata: document.metadata_hash
     }
   end
 end

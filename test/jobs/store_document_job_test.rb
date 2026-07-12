@@ -19,6 +19,16 @@ class StoreDocumentJobTest < ActiveJob::TestCase
     assert_enqueued_with(job: DeliverCallbackJob, args: [ @request.id ])
   end
 
+  test "records the original upload time and marks the document async" do
+    StoreDocumentJob.perform_now(@request.id)
+    @request.reload
+    document = Document.find(@request.document_id)
+    assert document.stored_async?
+    assert_equal "async", document.upload_mode
+    assert_equal @request.created_at, document.uploaded_at
+    assert_operator document.created_at, :>=, document.uploaded_at
+  end
+
   test "applies the requested tags to the created document" do
     request = UploadRequest.create!(department: @finance, filename: "report.pdf",
                                     callback_url: "https://caller.test/cb",

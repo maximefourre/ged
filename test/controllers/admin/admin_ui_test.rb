@@ -61,6 +61,19 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert_equal({}, doc.reload.tags)
   end
 
+  test "the tags edit page shows readonly document metadata" do
+    doc = Document.new(department: @finance, filename: "report.pdf", uploaded_by: "seed")
+    doc.file.attach(io: StringIO.new("PDF!"), filename: "report.pdf",
+                    content_type: "application/pdf")
+    doc.save!
+
+    get "/admin/documents/#{doc.id}/edit"
+    assert_response :success
+    assert_includes response.body, "Upload mode"
+    assert_includes response.body, "sync"
+    assert_includes response.body, "Indexed"
+  end
+
   test "filters documents by tag key" do
     doc = Document.new(department: @finance, filename: "tagged.pdf", uploaded_by: "seed",
                        tags: { "type" => "facture" })

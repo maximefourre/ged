@@ -26,6 +26,7 @@ module Api
         elsif scalar_param(:tag_value).present?
           raise BadParameter, "tag_value requires tag"
         end
+        scope = filter_by_metadata(scope)
         scope = paginate(scope.order(created_at: :desc, id: :desc))
         render json: scope.map { |d| document_json(d) }
       end
@@ -91,6 +92,42 @@ module Api
         document = Document.find(params[:id])
         authorize_department!(document.department)
         document
+      end
+
+      # Readonly-metadata filters: owner (uploaded_by), sync/async mode, and
+      # after/before ranges over the uploaded/indexed/updated timestamps.
+      def filter_by_metadata(scope)
+        if (owner = scalar_param(:uploaded_by)).present?
+          scope = scope.where(uploaded_by: owner)
+        end
+        if (mode = scalar_param(:upload_mode)).present?
+          case mode
+          when "sync"  then scope = scope.where(stored_async: false)
+          when "async" then scope = scope.where(stored_async: true)
+          else raise BadParameter, "upload_mode must be sync or async"
+          end
+        end
+        scope = apply_time_range(scope, :uploaded_at, :uploaded_after, :uploaded_before)
+        scope = apply_time_range(scope, :created_at, :indexed_after, :indexed_before)
+        apply_time_range(scope, :updated_at, :updated_after, :updated_before)
+      end
+
+      # Beginless/endless ranges keep the column an identifier (no string
+      # interpolation): where(col => t..) => col >= t, where(col => ..t) => col <= t.
+      def apply_time_range(scope, column, after_key, before_key)
+        if (after = scalar_param(after_key)).present?
+          scope = scope.where(column => parse_time(after_key, after)..)
+        end
+        if (before = scalar_param(before_key)).present?
+          scope = scope.where(column => ..parse_time(before_key, before))
+        end
+        scope
+      end
+
+      def parse_time(key, value)
+        Time.iso8601(value)
+      rescue ArgumentError
+        raise BadParameter, "#{key} must be an ISO8601 datetime"
       end
     end
   end
