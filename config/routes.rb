@@ -11,6 +11,9 @@ Rails.application.routes.draw do
     end
     resources :upload_requests, only: [ :index ]
     resource :upload_queue_pause, only: [ :create, :destroy ]
+    resources :deleted_documents, only: [ :index ] do
+      member { patch :restore }
+    end
   end
   root to: redirect("/admin")
 

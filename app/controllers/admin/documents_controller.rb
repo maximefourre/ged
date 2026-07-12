@@ -60,8 +60,8 @@ class Admin::DocumentsController < Admin::BaseController
   end
 
   def destroy
-    Document.find(params[:id]).destroy
-    redirect_to admin_documents_path, notice: "Document deleted."
+    Document.find(params[:id]).soft_delete!
+    redirect_to admin_documents_path, notice: "Document moved to trash."
   end
 
   private

@@ -109,6 +109,13 @@ is the source of truth.
   Documents are filterable by `?uploaded_by=`, `?upload_mode=sync|async`, and
   ISO8601 ranges `?uploaded_after/before`, `?indexed_after/before`,
   `?updated_after/before` (invalid value → 400).
+- **Deleting a document is logical, with a 30-day purge window:** `DELETE
+  /api/v1/documents/:id` and the admin delete soft-delete (hide the document,
+  keep its file) instead of destroying it, so an admin can restore it from the
+  Trash within the retention window; a scheduled job hard-deletes documents once
+  the window elapses. The parallel async **upload_request** purge already exists
+  (`ReconcileUploadRequestsJob`, 30-day terminal-request cleanup) and is
+  unchanged.
 
 ## How the pieces fit (implementation map)
 
@@ -141,6 +148,19 @@ is the source of truth.
   `Api::V1::DocumentsController`, `Admin::DocumentsController`, and
   `StoreDocumentJob` all create documents through the `DocumentCreator`
   service. Listing/download logic is still per-controller.
+- **Soft delete + purge:** `Document#soft_delete!` sets `deleted_at` +
+  `purge_at` (= `+ Document::RETENTION`, 30 days); a
+  `default_scope { where(deleted_at: nil) }` hides soft-deleted rows on every
+  read path, with `with_deleted` / `deleted` / `purgeable` (`unscope`) as the
+  escape hatches used by the Trash and the purge job. Admin Trash is
+  `Admin::DeletedDocumentsController` (`index` over `Document.deleted`,
+  `restore` → `Document#restore!`), linked in the top-bar nav.
+  `PurgeDeletedDocumentsJob` (`Document.purgeable.find_each(&:destroy!)`,
+  scheduled daily in `config/recurring.yml`) hard-deletes past-due rows;
+  `destroy!` fires Active Storage's default async blob purge. Deleting a
+  department that holds only soft-deleted docs stays safe — the
+  `documents.department_id` FK backstops the (default-scoped)
+  `restrict_with_error`, caught by `Admin::DepartmentsController`.
 - **Admin UI is a hand-rolled design system, no framework:** one plain
   `app/assets/stylesheets/application.css` (CSS custom-property tokens, served
   by Propshaft, no build) styles a top-bar layout via class names on the views.

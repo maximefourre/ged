@@ -67,7 +67,7 @@ module Api
 
       def destroy
         document = find_authorized_document
-        document.destroy!
+        document.soft_delete!
         head :no_content
       end
 

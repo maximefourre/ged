@@ -213,11 +213,23 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     assert_response :forbidden
   end
 
-  test "delete removes the document" do
+  test "delete soft-deletes the document, hiding it but keeping the file for the retention window" do
     doc = create_document(@finance, "report.pdf")
+    blob_id = doc.file.blob.id
+
     delete "/api/v1/documents/#{doc.id}", headers: bearer_header("erp-app")
     assert_response :no_content
+
+    # hidden from the client: reads return 404
     assert_not Document.exists?(doc.id)
+    get "/api/v1/documents/#{doc.id}", headers: bearer_header("erp-app")
+    assert_response :not_found
+
+    # but retained for the retention window: row present, flagged, file kept
+    soft_deleted = Document.with_deleted.find(doc.id)
+    assert soft_deleted.deleted_at.present?
+    assert_equal soft_deleted.deleted_at + 30.days, soft_deleted.purge_at
+    assert ActiveStorage::Blob.exists?(blob_id)
   end
 
   test "unknown document returns 404" do

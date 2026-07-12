@@ -146,8 +146,26 @@ class AdminUiTest < ApplicationSystemTestCase
     # the delete button just submits its form.
     within("tr", text: "report.pdf") { click_button "Delete" }
 
-    assert_text "Document deleted."
+    assert_text "Document moved to trash."
     assert_no_selector "tr", text: "report.pdf"
+  end
+
+  test "2.9b a deleted document can be restored from the trash" do
+    upload_report_into("Finance")
+    visit admin_documents_path
+    within("tr", text: "report.pdf") { click_button "Delete" }
+    assert_text "Document moved to trash."
+    assert_no_selector "tr", text: "report.pdf"
+
+    click_link "Trash"
+    assert_selector "h1", text: "Trash"
+    assert_selector "tr", text: "report.pdf"
+
+    within("tr", text: "report.pdf") { click_button "Restore" }
+    assert_text "Document restored."
+
+    click_link "Documents"
+    assert_selector "tr", text: "report.pdf"
   end
 
   # --- 2.10 Deleting a non-empty department is refused ---------------------

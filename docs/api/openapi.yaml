@@ -252,10 +252,15 @@ paths:
     delete:
       tags: [Documents]
       summary: Delete a document
+      description: >
+        Soft-deletes the document: it is hidden immediately (subsequent reads
+        return 404) and its file is retained for a 30-day window, after which a
+        scheduled job permanently purges it. An admin can restore it from the
+        admin Trash before the purge date.
       operationId: deleteDocument
       responses:
         "204":
-          description: Deleted
+          description: Soft-deleted
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":

@@ -108,6 +108,20 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert Department.exists?(@finance.id)
   end
 
+  test "deleting a department whose only documents are soft-deleted is refused, not a 500" do
+    doc = Document.new(department: @finance, filename: "trashed.pdf", uploaded_by: "seed")
+    doc.file.attach(io: StringIO.new("PDF!"), filename: "trashed.pdf",
+                    content_type: "application/pdf")
+    doc.save!
+    doc.soft_delete!
+
+    delete "/admin/departments/#{@finance.id}"
+    assert_redirected_to "/admin/departments"
+    assert flash[:alert].present?
+    assert Department.exists?(@finance.id)
+    assert Document.with_deleted.exists?(doc.id)
+  end
+
   test "registers an app client with department access" do
     post "/admin/app_clients", params: {
       app_client: { client_identifier: "erp-app", description: "ERP",
@@ -117,7 +131,7 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert_equal [ @finance.id ], client.department_ids
   end
 
-  test "uploads and deletes a document" do
+  test "uploads a document, then soft-deletes it to the trash" do
     post "/admin/documents", params: {
       document: { department_id: @finance.id,
                   file: fixture_file_upload("report.pdf", "application/pdf") }
@@ -131,7 +145,11 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "report.pdf"
 
     delete "/admin/documents/#{doc.id}"
-    assert_not Document.exists?(doc.id)
+    assert_not Document.exists?(doc.id)            # hidden from the index
+    assert Document.with_deleted.exists?(doc.id)   # retained for restore
+
+    get "/admin/documents"
+    assert_not_includes response.body, "report.pdf"
   end
 
   test "uploads a document with tags" do

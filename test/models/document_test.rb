@@ -66,4 +66,54 @@ class DocumentTest < ActiveSupport::TestCase
     assert_equal doc.updated_at, meta[:updated_at]
     assert_equal "sync", meta[:upload_mode]
   end
+
+  test "soft_delete! records deleted_at and a purge_at 30 days later" do
+    doc = build_document
+    doc.save!
+    doc.soft_delete!
+    assert doc.deleted_at.present?
+    assert_equal doc.deleted_at + 30.days, doc.purge_at
+  end
+
+  test "default scope hides soft-deleted documents" do
+    doc = build_document
+    doc.save!
+    doc.soft_delete!
+    assert_equal [], Document.all.to_a
+    assert_not Document.exists?(doc.id)
+    assert_raises(ActiveRecord::RecordNotFound) { Document.find(doc.id) }
+  end
+
+  test "deleted and with_deleted scopes reach soft-deleted documents" do
+    live = build_document
+    live.save!
+    gone = build_document
+    gone.save!
+    gone.soft_delete!
+    assert_equal [ gone.id ], Document.deleted.pluck(:id)
+    assert_equal [ gone.id, live.id ].sort, Document.with_deleted.pluck(:id).sort
+  end
+
+  test "purgeable returns only soft-deleted documents past their purge_at" do
+    due = build_document
+    due.save!
+    due.soft_delete!
+    due.update_columns(purge_at: 1.day.ago)
+    not_due = build_document
+    not_due.save!
+    not_due.soft_delete!
+    live = build_document
+    live.save!
+    assert_equal [ due.id ], Document.purgeable.pluck(:id)
+  end
+
+  test "restore! clears the soft-delete columns and makes the document visible again" do
+    doc = build_document
+    doc.save!
+    doc.soft_delete!
+    doc.restore!
+    assert_nil doc.deleted_at
+    assert_nil doc.purge_at
+    assert Document.exists?(doc.id)
+  end
 end

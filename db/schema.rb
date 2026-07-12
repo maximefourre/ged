@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_12_000001) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_12_120000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
@@ -61,12 +61,15 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_12_000001) do
 
   create_table "client_department_accesses", force: :cascade do |t|
     t.bigint "app_client_id", null: false
+    t.boolean "can_read", default: true, null: false
+    t.boolean "can_write", default: true, null: false
     t.datetime "created_at", null: false
     t.bigint "department_id", null: false
     t.datetime "updated_at", null: false
     t.index ["app_client_id", "department_id"], name: "index_client_department_accesses_uniqueness", unique: true
     t.index ["app_client_id"], name: "index_client_department_accesses_on_app_client_id"
     t.index ["department_id"], name: "index_client_department_accesses_on_department_id"
+    t.check_constraint "can_read OR can_write", name: "at_least_one_permission"
   end
 
   create_table "departments", force: :cascade do |t|
@@ -83,8 +86,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_12_000001) do
     t.bigint "byte_size"
     t.string "content_type"
     t.datetime "created_at", null: false
+    t.datetime "deleted_at"
     t.bigint "department_id", null: false
     t.string "filename", null: false
+    t.datetime "purge_at"
     t.boolean "stored_async", default: false, null: false
     t.jsonb "tags", default: {}, null: false
     t.datetime "updated_at", null: false
@@ -92,6 +97,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_12_000001) do
     t.string "uploaded_by", null: false
     t.index ["created_at"], name: "index_documents_on_created_at"
     t.index ["department_id"], name: "index_documents_on_department_id"
+    t.index ["purge_at"], name: "index_documents_on_purge_at"
     t.index ["stored_async"], name: "index_documents_async", where: "stored_async"
     t.index ["tags"], name: "index_documents_on_tags", using: :gin
     t.index ["updated_at"], name: "index_documents_on_updated_at"

@@ -24,7 +24,8 @@
         <% [["Documents", admin_documents_path, "documents"],
             ["Departments", admin_departments_path, "departments"],
             ["Clients", admin_app_clients_path, "app_clients"],
-            ["Upload requests", admin_upload_requests_path, "upload_requests"]].each do |label, path, ctrl| %>
+            ["Upload requests", admin_upload_requests_path, "upload_requests"],
+            ["Trash", admin_deleted_documents_path, "deleted_documents"]].each do |label, path, ctrl| %>
           <%= link_to label, path,
                 class: class_names("nav-link", "is-active" => controller_name == ctrl) %>
         <% end %>
