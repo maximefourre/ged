@@ -7,12 +7,19 @@
 # Each linked worktree gets:
 #   * its own COMPOSE_PROJECT_NAME  → namespaced containers, network, volumes
 #     (data is isolated: ged-<slug>_pgdata / _oauth_data / _storage)
-#   * distinct host ports           → GED_WEB_PORT / GED_OAUTH_PORT / GED_DB_PORT,
+#   * distinct host ports           → GED_WEB_PORT / GED_OAUTH_PORT / GED_DB_PORT
+#     (plus GED_GRAFANA_PORT / GED_OTLP_PORT for the optional otel profile),
 #     derived deterministically from the worktree directory name so they're stable
 #
 # docker-compose.yml publishes "${GED_WEB_PORT:-3000}:80",
 # "${GED_OAUTH_PORT:-9292}:9292", and "${GED_DB_PORT:-5432}:5432", so run from
 # the primary tree this is just the normal stack on 3000 / 9292 / 5432.
+#
+# Observability: GED_OTEL=1 enables the "otel" compose profile (grafana/otel-lgtm
+# backend) and points the app's OTLP export at it, e.g.
+#   GED_OTEL=1 bin/worktree-stack up
+# Grafana is published on GED_GRAFANA_PORT (base 3300) and the collector's OTLP
+# http port on GED_OTLP_PORT (base 4318, for host-native `bin/dev` exports).
 #
 # The published Postgres port is how host-native `bin/rails test` / `bin/dev`
 # reach this worktree's database — config/database.yml (dev/test) auto-derives it
@@ -49,18 +56,31 @@ if [ "$git_dir" != "$git_common" ]; then
   web_port="${GED_WEB_PORT:-$((3000 + offset))}"
   oauth_port="${GED_OAUTH_PORT:-$((9292 + offset))}"
   db_port="${GED_DB_PORT:-$((5432 + offset))}"
+  grafana_port="${GED_GRAFANA_PORT:-$((3300 + offset))}"
+  otlp_port="${GED_OTLP_PORT:-$((4318 + offset))}"
 else
   # Primary tree: the normal stack on the default ports.
   project="${COMPOSE_PROJECT_NAME:-ged}"
   web_port="${GED_WEB_PORT:-3000}"
   oauth_port="${GED_OAUTH_PORT:-9292}"
   db_port="${GED_DB_PORT:-5432}"
+  grafana_port="${GED_GRAFANA_PORT:-3300}"
+  otlp_port="${GED_OTLP_PORT:-4318}"
 fi
 
 export COMPOSE_PROJECT_NAME="$project"
 export GED_WEB_PORT="$web_port"
 export GED_OAUTH_PORT="$oauth_port"
 export GED_DB_PORT="$db_port"
+export GED_GRAFANA_PORT="$grafana_port"
+export GED_OTLP_PORT="$otlp_port"
+
+# GED_OTEL=1 → activate the otel-lgtm backend and point the app at it.
+# The endpoint is container-to-container (compose network), so no port offset.
+if [ "${GED_OTEL:-0}" = "1" ]; then
+  export COMPOSE_PROFILES="${COMPOSE_PROFILES:+$COMPOSE_PROFILES,}otel"
+  export GED_OTEL_ENDPOINT="${GED_OTEL_ENDPOINT:-http://otel-lgtm:4318}"
+fi
 
 # Compose reads .env from the project dir for SECRET_KEY_BASE / GED_ADMIN_PASSWORD,
 # but .env is gitignored so a fresh worktree has none. Reuse the primary tree's
@@ -86,6 +106,12 @@ urls() {
   OpenAPI    http://localhost:$web_port/api/v1/openapi.yaml
   OAuth      http://localhost:$oauth_port/token
 EOF
+  if [[ ",${COMPOSE_PROFILES:-}," == *",otel,"* ]]; then
+    cat <<EOF
+  Grafana    http://localhost:$grafana_port
+  OTLP http  http://localhost:$otlp_port  (for host-native bin/dev exports)
+EOF
+  fi
 }
 
 cmd="${1:-help}"

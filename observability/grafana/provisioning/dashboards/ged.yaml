@@ -1,0 +1,10 @@
+# Grafana dashboard provisioning for the otel-lgtm compose service: loads every
+# JSON dashboard mounted under /var/lib/grafana/dashboards (see the otel-lgtm
+# volumes in docker-compose.yml) into a "GED" folder.
+apiVersion: 1
+providers:
+  - name: ged
+    folder: GED
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

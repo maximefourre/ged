@@ -44,6 +44,14 @@ services:
       GED_OIDC_JWKS_URL: http://oauth-provider:9292/.well-known/jwks.json
       GED_ADMIN_USERNAME: ${GED_ADMIN_USERNAME:-admin}
       GED_ADMIN_PASSWORD: ${GED_ADMIN_PASSWORD:?set GED_ADMIN_PASSWORD}
+      # OpenTelemetry export. Empty endpoint = OTel entirely disabled (see
+      # config/initializers/opentelemetry.rb), so this is harmless by default.
+      # To enable with the local backend below, set in .env:
+      #   COMPOSE_PROFILES=otel
+      #   GED_OTEL_ENDPOINT=http://otel-lgtm:4318
+      # (or run bin/worktree-stack with GED_OTEL=1, which sets both).
+      OTEL_SERVICE_NAME: ged
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${GED_OTEL_ENDPOINT:-}
     ports:
       # 80 is Thruster (X-Sendfile + compression in front of Puma, see
       # Dockerfile CMD); mapping Puma's 3000 directly would bypass it.
@@ -53,7 +61,27 @@ services:
     volumes:
       - storage:/rails/storage
 
+  # Local observability backend: OTel collector + Prometheus + Tempo + Loki +
+  # Grafana in one container. Dev tooling only — off unless the "otel" compose
+  # profile is active (COMPOSE_PROFILES=otel in .env, or GED_OTEL=1 via
+  # bin/worktree-stack). `web` deliberately has no depends_on on this service:
+  # with GED_OTEL_ENDPOINT empty the app never exports, so ordering is moot.
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.29.0
+    profiles: ["otel"]
+    ports:
+      # Grafana UI. Base 3300, NOT 3000: worktree web ports occupy 3000-3250.
+      - "${GED_GRAFANA_PORT:-3300}:3000"
+      # OTLP http, published so host-native `bin/dev` can export too
+      # (OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:<port>).
+      - "${GED_OTLP_PORT:-4318}:4318"
+    volumes:
+      - ./observability/grafana/provisioning/dashboards:/otel-lgtm/grafana/conf/provisioning/dashboards
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards
+      - lgtm_data:/data
+
 volumes:
   pgdata:
   oauth_data:
   storage:
+  lgtm_data:
