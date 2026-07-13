@@ -98,6 +98,11 @@ services:
       # though the worker never validates tokens.
       GED_OIDC_ISSUER: http://oauth-provider:9292
       GED_OIDC_JWKS_URL: http://oauth-provider:9292/.well-known/jwks.json
+      # Jobs emit most custom metrics (ged.job.duration, uploads, callbacks)
+      # and now run here, not in Puma — same OTel wiring as web (empty
+      # endpoint = disabled).
+      OTEL_SERVICE_NAME: ged
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${GED_OTEL_ENDPOINT:-}
     volumes:
       - storage:/rails/storage
     # Must exceed solid_queue.shutdown_timeout (30s) so a scale-down or
