@@ -243,6 +243,11 @@ pitfalls:
   `assert_requested` rejects the `(stub) { block }` form — use
   `assert_requested(:post, url) { block }`.
 - Lint: RuboCop rails-omakase — `bin/rubocop` must pass before committing.
+- Perf/resilience tooling: `bin/perf-upload` (stdlib-only load driver) runs
+  bulk-upload campaigns and a `--chaos` crash-recovery test against the
+  worktree Docker stack (`--setup` provisions the test client); campaign
+  reports live in `docs/perf/`. Design:
+  `docs/superpowers/specs/2026-07-13-perf-upload-design.md`.
 - Ruby via mise (`.mise.toml`). Dev/test Postgres runs in Docker — **no
   Homebrew Postgres**. Start it with `bin/worktree-stack db` (one container per
   worktree on a slug-derived host port; `config/database.yml` auto-derives that

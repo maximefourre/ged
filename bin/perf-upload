@@ -1,0 +1,591 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# perf-upload — load driver for bulk document uploads against a worktree
+# Docker stack (see docs/superpowers/specs/2026-07-13-perf-upload-design.md).
+#
+#   bin/perf-upload --setup                       provision perf client (once per stack)
+#   bin/perf-upload --profile mix --mode async    run a campaign
+#   bin/perf-upload --profile mix --chaos         kill web mid-load, verify zero loss
+#
+# Stdlib only. Talks to the stack's public HTTP API and, for provisioning and
+# chaos, shells out to bin/worktree-stack (docker compose passthrough).
+
+require "optparse"
+require "net/http"
+require "uri"
+require "json"
+require "securerandom"
+require "tempfile"
+require "tmpdir"
+require "open3"
+
+module PerfUpload
+  PROFILES = {
+    "mix"        => { count: 1_000,  sizes: 50_000..5_000_000 },
+    "many-small" => { count: 10_000, sizes: 4_000..6_000 },
+    "few-large"  => { count: 100,    sizes: 20_000_000..100_000_000 }
+  }.freeze
+
+  CLIENT_ID = ENV.fetch("PERF_CLIENT_ID", "ged-perf")
+  DEPARTMENT_NAME = "perf-test"
+  # Passes the syntactic request-time SSRF check (hostname, no DNS); resolves
+  # to an RFC1918 address inside the container, so DeliverCallbackJob refuses
+  # immediately with no retries — callback noise doesn't skew the measurement.
+  CALLBACK_URL = "http://host.docker.internal:9/perf-hook"
+  ENV_FILE = File.expand_path("../tmp/perf-upload.env", __dir__)
+  FILE_POOL = 20
+
+  Options = Struct.new(:setup, :profile, :mode, :count, :sizes, :threads,
+                       :base_url, :token_url, :chaos, :json_path, :timeout,
+                       keyword_init: true)
+
+  Result = Struct.new(:status, :latency, :request_id, :document_id, :error,
+                      :accepted_at, keyword_init: true)
+
+  module CLI
+    module_function
+
+    def parse(argv)
+      opts = Options.new(mode: "async", threads: 6)
+      parser = OptionParser.new do |o|
+        o.banner = "usage: bin/perf-upload [--setup | --profile NAME [options]]"
+        o.on("--setup", "provision perf department + client on the stack") { opts.setup = true }
+        o.on("--profile NAME", PROFILES.keys, "#{PROFILES.keys.join('|')}") { |v| opts.profile = v }
+        o.on("--mode MODE", %w[sync async both], "sync|async|both (default async)") { |v| opts.mode = v }
+        o.on("--count N", Integer, "override profile document count") { |v| opts.count = v }
+        o.on("--size MIN-MAX", "override sizes, k/m suffixes (e.g. 50k-5m)") { |v| opts.sizes = parse_size_range(v) }
+        o.on("--threads N", Integer, "upload concurrency (default 6)") { |v| opts.threads = v }
+        o.on("--base-url URL", "web base URL (default: from worktree-stack)") { |v| opts.base_url = v }
+        o.on("--token-url URL", "token endpoint (default: from worktree-stack)") { |v| opts.token_url = v }
+        o.on("--chaos", "kill web mid-load, verify recovery (async only)") { opts.chaos = true }
+        o.on("--json FILE", "also write the report as JSON") { |v| opts.json_path = v }
+        o.on("--timeout SECONDS", Integer, "convergence timeout (default 900; chaos 1500)") { |v| opts.timeout = v }
+      end
+      parser.parse!(argv)
+      abort parser.to_s unless opts.setup || opts.profile
+      abort "--chaos requires async mode" if opts.chaos && opts.mode == "sync"
+      profile = PROFILES[opts.profile] if opts.profile
+      opts.count ||= profile && profile[:count]
+      opts.sizes ||= profile && profile[:sizes]
+      opts.timeout ||= opts.chaos ? 1_500 : 900
+      opts
+    end
+
+    def parse_size_range(value)
+      min, max = value.split("-", 2)
+      abort "--size expects MIN-MAX (e.g. 50k-5m)" unless min && max
+      parse_size(min)..parse_size(max)
+    end
+
+    def parse_size(value)
+      match = /\A(\d+)([km]?)\z/i.match(value.strip) or abort "bad size: #{value}"
+      match[1].to_i * { "" => 1, "k" => 1_000, "m" => 1_000_000 }.fetch(match[2].downcase)
+    end
+  end
+
+  # Shells out to bin/worktree-stack so COMPOSE_PROJECT_NAME and ports always
+  # match the current worktree's stack.
+  module Stack
+    module_function
+
+    def script
+      File.expand_path("worktree-stack", __dir__)
+    end
+
+    def urls
+      @urls ||= begin
+        out, status = Open3.capture2(script, "urls")
+        abort "bin/worktree-stack urls failed" unless status.success?
+        web = out[/web=(\d+)/, 1] or abort "cannot parse web port from worktree-stack urls"
+        oauth = out[/oauth=(\d+)/, 1] or abort "cannot parse oauth port"
+        { base: "http://localhost:#{web}", token: "http://localhost:#{oauth}/token" }
+      end
+    end
+
+    def exec(service, *cmd)
+      out, err, status = Open3.capture3(script, "exec", "-T", service, *cmd)
+      abort "stack exec #{service} #{cmd.join(' ')} failed:\n#{out}#{err}" unless status.success?
+      out + err # Rails logs its job lines to stderr — keep them for diagnostics
+    end
+
+    def run(*cmd)
+      system(script, *cmd, exception: true)
+    end
+  end
+
+  module Setup
+    RUNNER = <<~RUBY
+      dept = Department.find_or_create_by!(name: "#{DEPARTMENT_NAME}")
+      client = AppClient.find_or_create_by!(client_identifier: "#{CLIENT_ID}")
+      access = ClientDepartmentAccess.find_or_initialize_by(app_client: client, department: dept)
+      access.can_read = true
+      access.can_write = true
+      access.save!
+      puts "department_id=" + dept.id.to_s
+    RUBY
+
+    module_function
+
+    def run!
+      register = Stack.exec("oauth-provider", "bin/register-client", CLIENT_ID)
+      secret = register[/client_secret:\s+(\h+)/, 1] or abort "cannot parse client secret:\n#{register}"
+      runner = Stack.exec("web", "bin/rails", "runner", RUNNER)
+      department_id = runner[/department_id=(\S+)/, 1] or abort "cannot parse department id:\n#{runner}"
+      File.write(ENV_FILE, <<~ENV_CONTENT)
+        PERF_CLIENT_ID=#{CLIENT_ID}
+        PERF_CLIENT_SECRET=#{secret}
+        PERF_DEPARTMENT_ID=#{department_id}
+      ENV_CONTENT
+      puts "provisioned client=#{CLIENT_ID} department=#{department_id}"
+      puts "credentials saved to #{ENV_FILE} (gitignored) — runs pick them up automatically"
+    end
+
+    def load_env!
+      return unless File.exist?(ENV_FILE)
+      File.readlines(ENV_FILE, chomp: true).each do |line|
+        key, value = line.split("=", 2)
+        ENV[key] ||= value if key && value
+      end
+    end
+  end
+
+  # Fetches and caches the client_credentials bearer token; refreshed on 401.
+  class TokenSource
+    def initialize(token_url)
+      @token_url = URI(token_url)
+      @mutex = Mutex.new
+    end
+
+    def token
+      @mutex.synchronize { @token ||= fetch }
+    end
+
+    def refresh!
+      @mutex.synchronize { @token = fetch }
+    end
+
+    private
+
+    def fetch
+      secret = ENV["PERF_CLIENT_SECRET"] or
+        abort "PERF_CLIENT_SECRET not set — run bin/perf-upload --setup first"
+      response = Net::HTTP.post_form(@token_url,
+                                     "grant_type" => "client_credentials",
+                                     "client_id" => ENV.fetch("PERF_CLIENT_ID", CLIENT_ID),
+                                     "client_secret" => secret)
+      abort "token fetch failed (#{response.code}): #{response.body}" unless response.code == "200"
+      JSON.parse(response.body).fetch("access_token")
+    end
+  end
+
+  module Generator
+    module_function
+
+    # A small pool of reusable payload files spanning the size range; each
+    # upload reuses a pool file under a unique filename, so a 10k-doc run
+    # doesn't need 10k files on disk.
+    def pool(sizes, dir)
+      count = [ FILE_POOL, 1 ].max
+      random = Random.new
+      Array.new(count) do |i|
+        size = sizes.min + ((sizes.max - sizes.min) * i / [ count - 1, 1 ].max)
+        path = File.join(dir, "payload-#{i}.bin")
+        File.open(path, "wb") do |file|
+          remaining = size
+          while remaining.positive?
+            chunk = [ remaining, 1_000_000 ].min
+            file.write(random.bytes(chunk))
+            remaining -= chunk
+          end
+        end
+        path
+      end
+    end
+  end
+
+  # One instance per worker thread: keeps a persistent HTTP connection.
+  class Uploader
+    def initialize(base_url, tokens, department_id, run_id)
+      @base = URI(base_url)
+      @tokens = tokens
+      @department_id = department_id
+      @run_id = run_id
+      @http = Net::HTTP.new(@base.host, @base.port)
+      @http.read_timeout = 300
+      @http.start
+    end
+
+    def post_document(path, index, async:)
+      body, boundary = multipart(path, index, async: async)
+      request = Net::HTTP::Post.new("/api/v1/documents")
+      request["Authorization"] = "Bearer #{@tokens.token}"
+      request["Content-Type"] = "multipart/form-data; boundary=#{boundary}"
+      request["Content-Length"] = body.size.to_s
+      request.body_stream = body
+      started = monotonic
+      response = @http.request(request)
+      if response.code == "401" # token expired mid-run: refresh once and retry
+        @tokens.refresh!
+        body.rewind
+        request["Authorization"] = "Bearer #{@tokens.token}"
+        response = @http.request(request)
+      end
+      build_result(response, monotonic - started)
+    rescue StandardError => e
+      reconnect
+      Result.new(status: 0, error: "#{e.class}: #{e.message}", latency: nil)
+    ensure
+      body&.close!
+    end
+
+    def finish
+      @http.finish if @http.started?
+    rescue IOError
+      nil
+    end
+
+    private
+
+    def build_result(response, latency)
+      payload = JSON.parse(response.body) rescue {}
+      Result.new(status: response.code.to_i, latency: latency,
+                 request_id: payload["request_id"], document_id: payload["id"],
+                 accepted_at: monotonic,
+                 error: response.code.to_i >= 400 ? response.body[0, 200] : nil)
+    end
+
+    # Multipart body assembled in a tempfile so 100 MB payloads never live in
+    # a Ruby string; streamed to the socket via body_stream.
+    def multipart(path, index, async:)
+      boundary = "perf#{SecureRandom.hex(12)}"
+      fields = { "department_id" => @department_id, "tags[perf_run]" => @run_id }
+      fields["callback_url"] = CALLBACK_URL if async
+      body = Tempfile.new("perf-multipart", binmode: true)
+      fields.each do |name, value|
+        body << "--#{boundary}\r\nContent-Disposition: form-data; name=\"#{name}\"\r\n\r\n#{value}\r\n"
+      end
+      body << "--#{boundary}\r\nContent-Disposition: form-data; name=\"file\"; " \
+              "filename=\"#{@run_id}-#{index}.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+      File.open(path, "rb") { |file| IO.copy_stream(file, body) }
+      body << "\r\n--#{boundary}--\r\n"
+      body.rewind
+      [ body, boundary ]
+    end
+
+    def reconnect
+      @http.finish if @http.started?
+      @http.start
+    rescue StandardError
+      nil
+    end
+
+    def monotonic
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    end
+  end
+
+  # Thread pool driving Uploader instances over the payload queue.
+  class Loader
+    attr_reader :results
+
+    def initialize(options, tokens, department_id, run_id, paths)
+      @options = options
+      @tokens = tokens
+      @department_id = department_id
+      @run_id = run_id
+      @paths = paths
+      @results = []
+      @mutex = Mutex.new
+    end
+
+    def accepted_count
+      @mutex.synchronize { @results.count { |r| [ 201, 202 ].include?(r.status) } }
+    end
+
+    def run(async:)
+      queue = Queue.new
+      @options.count.times { |i| queue << i }
+      @options.threads.times { queue << nil }
+      threads = Array.new(@options.threads) do
+        Thread.new do
+          uploader = Uploader.new(@options.base_url, @tokens, @department_id, @run_id)
+          while (index = queue.pop)
+            result = uploader.post_document(@paths[index % @paths.size], index, async: async)
+            @mutex.synchronize { @results << result }
+          end
+          uploader.finish
+        end
+      end
+      threads.each(&:join)
+      @results
+    end
+  end
+
+  module Api
+    module_function
+
+    def get_json(base_url, tokens, path)
+      uri = URI("#{base_url}#{path}")
+      request = Net::HTTP::Get.new(uri)
+      request["Authorization"] = "Bearer #{tokens.token}"
+      response = Net::HTTP.start(uri.host, uri.port) { |http| http.request(request) }
+      [ response.code.to_i, JSON.parse(response.body) ]
+    rescue StandardError => e
+      [ 0, { "error" => e.message } ]
+    end
+
+    def count_documents(base_url, tokens, run_id)
+      count = 0
+      offset = 0
+      loop do
+        code, page = get_json(base_url, tokens,
+                              "/api/v1/documents?tag=perf_run&tag_value=#{run_id}&limit=500&offset=#{offset}")
+        return -1 unless code == 200 && page.is_a?(Array)
+        count += page.size
+        break if page.size < 500
+        offset += 500
+      end
+      count
+    end
+  end
+
+  # Polls upload_requests until every id is terminal or the timeout elapses.
+  class Poller
+    TERMINAL = %w[completed failed].freeze
+
+    def initialize(base_url, tokens, threads: 6)
+      @base_url = base_url
+      @tokens = tokens
+      @threads = threads
+    end
+
+    def converge(request_ids, timeout:, quiet: false)
+      outcomes = {}
+      pending = request_ids.dup
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      until pending.empty? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        pending = sweep(pending, outcomes)
+        unless quiet
+          done = outcomes.count { |_, o| o["status"] == "completed" }
+          warn "  converge: #{done}/#{request_ids.size} completed, #{pending.size} pending"
+        end
+        sleep [ 0.5, pending.size / 100.0 ].max.clamp(0.5, 5) unless pending.empty?
+      end
+      outcomes
+    end
+
+    private
+
+    def sweep(pending, outcomes)
+      queue = Queue.new
+      pending.each { |id| queue << id }
+      @threads.times { queue << nil }
+      still_pending = Queue.new
+      Array.new(@threads) do
+        Thread.new do
+          while (id = queue.pop)
+            code, payload = Api.get_json(@base_url, @tokens, "/api/v1/upload_requests/#{id}")
+            if code == 200 && TERMINAL.include?(payload["status"])
+              outcomes[id] = payload
+            else
+              still_pending << id
+            end
+          end
+        end
+      end.each(&:join)
+      Array.new(still_pending.size) { still_pending.pop }
+    end
+  end
+
+  module Report
+    module_function
+
+    def percentile(sorted, pct)
+      return nil if sorted.empty?
+      sorted[((sorted.size - 1) * pct / 100.0).round]
+    end
+
+    def build(options, run_id, mode, results, outcomes, api_count, wall_seconds, extra = {})
+      ok = results.select { |r| [ 201, 202 ].include?(r.status) }
+      latencies = ok.filter_map(&:latency).sort
+      completed = outcomes.count { |_, o| o["status"] == "completed" }
+      failed = outcomes.count { |_, o| o["status"] == "failed" }
+      accepted = ok.size
+      stored = mode == "sync" ? accepted : completed
+      zero_loss = mode == "sync" ? accepted == api_count : accepted == completed && completed == api_count
+      {
+        run_id: run_id, profile: options.profile, mode: mode,
+        count: options.count, threads: options.threads,
+        posts: results.size, accepted: accepted,
+        post_errors: results.size - accepted,
+        error_samples: results.reject { |r| [ 201, 202 ].include?(r.status) }.first(5).map(&:error),
+        latency_ms: {
+          p50: ms(percentile(latencies, 50)), p95: ms(percentile(latencies, 95)),
+          p99: ms(percentile(latencies, 99)), max: ms(latencies.last)
+        },
+        wall_seconds: wall_seconds.round(1),
+        accepted_per_min: rate(accepted, wall_seconds),
+        stored_per_min: rate(stored, extra[:store_seconds] || wall_seconds),
+        completed: completed, failed_requests: failed,
+        api_document_count: api_count,
+        zero_loss: zero_loss
+      }.merge(extra)
+    end
+
+    def ms(seconds)
+      seconds && (seconds * 1000).round
+    end
+
+    def rate(count, seconds)
+      seconds.to_f.positive? ? (count * 60.0 / seconds).round(1) : nil
+    end
+
+    def render(report)
+      puts
+      puts "== perf-upload #{report[:mode]} run #{report[:run_id]} (profile #{report[:profile]}) =="
+      puts "  POSTs #{report[:posts]}  accepted #{report[:accepted]}  errors #{report[:post_errors]}"
+      lat = report[:latency_ms]
+      puts "  POST latency ms  p50 #{lat[:p50]}  p95 #{lat[:p95]}  p99 #{lat[:p99]}  max #{lat[:max]}"
+      puts "  wall #{report[:wall_seconds]}s  ingest #{report[:accepted_per_min]} docs/min" \
+           "  stored #{report[:stored_per_min]} docs/min"
+      if report[:mode] == "async"
+        puts "  requests completed #{report[:completed]}  failed #{report[:failed_requests]}"
+      end
+      puts "  API document count #{report[:api_document_count]}"
+      puts "  zero-loss: #{report[:zero_loss] ? 'OK' : 'FAILED'}"
+      report[:error_samples].to_a.compact.first(3).each { |e| puts "    error sample: #{e}" }
+      puts
+    end
+  end
+
+  class Runner
+    def initialize(options)
+      @options = options
+      Setup.load_env!
+      @options.base_url ||= ENV["PERF_BASE_URL"] || Stack.urls[:base]
+      @options.token_url ||= ENV["PERF_TOKEN_URL"] || Stack.urls[:token]
+      @tokens = TokenSource.new(@options.token_url)
+      @department_id = ENV["PERF_DEPARTMENT_ID"] or
+        abort "PERF_DEPARTMENT_ID not set — run bin/perf-upload --setup first"
+    end
+
+    def call
+      reports = []
+      Dir.mktmpdir("perf-upload") do |dir|
+        warn "generating payload pool (#{FILE_POOL} files, #{@options.sizes} bytes) ..."
+        paths = Generator.pool(@options.sizes, dir)
+        modes = @options.mode == "both" ? %w[async sync] : [ @options.mode ]
+        modes.each do |mode|
+          reports << (@options.chaos ? chaos_run(paths) : measure(mode, paths))
+        end
+      end
+      reports.each { |r| Report.render(r) }
+      File.write(@options.json_path, JSON.pretty_generate(reports)) if @options.json_path
+      abort "ZERO-LOSS CHECK FAILED" unless reports.all? { |r| r[:zero_loss] }
+    end
+
+    private
+
+    def measure(mode, paths)
+      run_id = new_run_id
+      warn "run #{run_id}: #{mode} x#{@options.count} threads=#{@options.threads}"
+      loader = Loader.new(@options, @tokens, @department_id, run_id, paths)
+      started = monotonic
+      results = loader.run(async: mode == "async")
+      wall = monotonic - started
+      outcomes = {}
+      store_seconds = nil
+      if mode == "async"
+        ids = results.filter_map(&:request_id)
+        outcomes = Poller.new(@options.base_url, @tokens, threads: @options.threads)
+                         .converge(ids, timeout: @options.timeout)
+        store_seconds = monotonic - started
+      end
+      api_count = Api.count_documents(@options.base_url, @tokens, run_id)
+      Report.build(@options, run_id, mode, results, outcomes, api_count, wall,
+                   store_seconds: store_seconds)
+    end
+
+    def chaos_run(paths)
+      run_id = new_run_id
+      warn "CHAOS run #{run_id}: async x#{@options.count}, killing web mid-load"
+      loader = Loader.new(@options, @tokens, @department_id, run_id, paths)
+      started = monotonic
+      load_thread = Thread.new { loader.run(async: true) }
+      kill_at = (@options.count / 2.0).ceil
+      sleep 0.2 until loader.accepted_count >= kill_at || !load_thread.alive?
+      warn "  #{loader.accepted_count} accepted -> docker kill web (SIGKILL)"
+      Stack.run("kill", "web")
+      killed_at = monotonic
+      load_thread.join
+      results = loader.results
+      wall = monotonic - started
+      warn "  restarting web ..."
+      Stack.run("start", "web")
+      wait_for_health
+      warn "  web back up #{(monotonic - killed_at).round}s after kill; waiting for recovery"
+      outcomes = recover(results.filter_map(&:request_id))
+      api_count = Api.count_documents(@options.base_url, @tokens, run_id)
+      Report.build(@options, run_id, "async", results, outcomes, api_count, wall,
+                   store_seconds: monotonic - started,
+                   chaos: { accepted_before_kill: kill_at,
+                            downtime_seconds: nil,
+                            recovery_seconds: (monotonic - killed_at).round(1) })
+    end
+
+    # Alternates convergence polling with manual reconcile runs: Solid Queue
+    # releases the dead process's claimed jobs on its own, and
+    # ReconcileUploadRequestsJob (10 min STUCK_AFTER) catches requests whose
+    # job was lost mid-perform. Whichever wins first.
+    def recover(ids)
+      poller = Poller.new(@options.base_url, @tokens, threads: @options.threads)
+      outcomes = {}
+      deadline = monotonic + @options.timeout
+      pending = ids
+      until pending.empty? || monotonic > deadline
+        outcomes.merge!(poller.converge(pending, timeout: 60))
+        pending = ids - outcomes.keys
+        next if pending.empty?
+        warn "  [#{Time.now.utc.iso8601}] #{pending.size} still pending -> ReconcileUploadRequestsJob.perform_now"
+        out = Stack.exec("web", "bin/rails", "runner", "ReconcileUploadRequestsJob.perform_now")
+        out.each_line do |line|
+          warn "    reconcile: #{line.strip}" if /Enqueued|Error|error/.match?(line)
+        end
+      end
+      outcomes
+    end
+
+    def wait_for_health
+      deadline = monotonic + 120
+      until monotonic > deadline
+        code = Net::HTTP.get_response(URI("#{@options.base_url}/up")).code rescue "000"
+        return if code == "200"
+        sleep 2
+      end
+      abort "web did not come back within 120s"
+    end
+
+    def new_run_id
+      "perf-#{Time.now.strftime('%Y%m%d-%H%M%S')}-#{SecureRandom.hex(3)}"
+    end
+
+    def monotonic
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    end
+  end
+end
+
+# A macOS idle-sleep mid-run freezes both this process and the Docker VM's
+# clock, silently breaking the chaos recovery window (STUCK_AFTER never
+# elapses by the VM's view of time). Re-exec under caffeinate when available.
+if !ENV["PERF_UPLOAD_CAFFEINATED"] && File.executable?("/usr/bin/caffeinate")
+  exec({ "PERF_UPLOAD_CAFFEINATED" => "1" }, "/usr/bin/caffeinate", "-i", $PROGRAM_NAME, *ARGV)
+end
+
+options = PerfUpload::CLI.parse(ARGV)
+if options.setup
+  PerfUpload::Setup.run!
+else
+  PerfUpload::Runner.new(options).call
+end
