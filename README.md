@@ -110,6 +110,34 @@ To test with Bruno:
 5. Upload requests require `file` (path to a real file) and `departmentId` (list from
    **List departments**)
 
+### Observability
+
+Two complementary layers, both optional beyond the built-in status page:
+
+- **Admin status page** — `http://localhost:3000/admin/status` (nav → Status).
+  System health checks (database, job workers, OIDC JWKS, storage disk), upload
+  pipeline counters (requests by status, queue depths, failed jobs) and
+  document/storage stats. Zero dependencies, always available.
+- **OpenTelemetry** — the app exports traces (HTTP requests, SQL, jobs,
+  outgoing callbacks) and custom metrics (`ged.documents.uploaded`,
+  `ged.callbacks.deliveries`, `ged.job.duration`) over OTLP **only when**
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Without it, the SDK is never loaded —
+  no overhead, nothing to configure.
+
+A local backend (Grafana + Tempo + Prometheus via `grafana/otel-lgtm`) ships as
+an optional compose profile with a provisioned **GED overview** dashboard:
+
+    # simplest: let bin/worktree-stack wire everything
+    GED_OTEL=1 bin/worktree-stack up
+
+    # or by hand, in .env:
+    #   COMPOSE_PROFILES=otel
+    #   GED_OTEL_ENDPOINT=http://otel-lgtm:4318
+
+Grafana: `http://localhost:3300` (anonymous admin, dev only). For host-native
+`bin/dev` against the same backend:
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 bin/dev`.
+
 ### Cutover to production IdP
 
 When migrating from the temporary OAuth provider to a real IdP, update the `web`

@@ -60,6 +60,9 @@ is the source of truth.
 - **Active Storage** (local disk service) — document file storage
 - **Devise** — admin UI username/password session login
 - **`jwt` gem** — validates bearer tokens from app clients against a JWKS endpoint
+- **OpenTelemetry** — traces + custom metrics over OTLP, entirely disabled
+  unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set (see the implementation map);
+  optional `grafana/otel-lgtm` backend under the `otel` compose profile
 - **Docker Compose** — `web` (Rails/Puma), `postgres`, `oauth-provider`;
   `bin/worktree-stack up` boots an isolated per-worktree copy for testing (see
   the Workflow section). `postgres` also publishes a host port
@@ -214,6 +217,27 @@ is the source of truth.
   `GET /api/docs`. The spec is written by hand; `test/integration/api_docs_test.rb`
   fails if a routed `/api/v1` path is missing from it (structure only, not
   params/shapes) — update the YAML when adding or renaming an endpoint.
+- **Observability is two independent layers.** (1) Admin status page
+  `/admin/status` (`Admin::StatusController` + `SystemHealth`/`DiskSpace`
+  services): system health checks (DB, Solid Queue worker heartbeats, JWKS via
+  the read-only `Auth::JwksCache#health` — never fetches, so no HTTP on page
+  load; storage disk via `df -Pk`), pipeline and document counts — all local,
+  zero dependencies. (2) OpenTelemetry: traces (Rails/PG-obfuscated/Net::HTTP
+  auto-instrumentation) + custom metrics behind the `Telemetry` facade
+  (`lib/telemetry.rb` — `ged.documents.uploaded`, `ged.callbacks.deliveries`,
+  `ged.job.duration`; attribute values must stay closed-set, never
+  filenames/tags/departments). `config/initializers/opentelemetry.rb` loads
+  the SDK **only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set** — the facade's
+  instruments are no-ops otherwise (only `opentelemetry-metrics-api` is loaded
+  at boot; the metrics SDK/exporter are experimental 0.x, minor-pinned).
+  Tests: `test/lib/telemetry_test.rb` guards the SDK stays dormant in test;
+  `TelemetryTestHelpers#capture_telemetry` records emissions. Local backend:
+  `grafana/otel-lgtm` compose service under the `otel` profile
+  (`GED_OTEL=1 bin/worktree-stack up`; Grafana on `GED_GRAFANA_PORT` base
+  3300, OTLP on `GED_OTLP_PORT` base 4318), provisioned "GED overview"
+  dashboard in `observability/grafana/` (Prometheus mangles metric names:
+  `ged_documents_uploaded_total` etc.; HTTP panels use Tempo span metrics —
+  Ruby emits traces only).
 
 ## Known gaps / pitfalls
 
@@ -257,7 +281,9 @@ pitfalls:
 - Env vars: `GED_OIDC_ISSUER`, `GED_OIDC_JWKS_URL`, `GED_CLIENT_ID_CLAIM`
   (default `sub`), `GED_OIDC_AUDIENCE` (optional; when set, `aud` is
   verified — required at real-IdP cutover), `GED_ADMIN_USERNAME`,
-  `GED_ADMIN_PASSWORD`.
+  `GED_ADMIN_PASSWORD`, `OTEL_EXPORTER_OTLP_ENDPOINT` (empty = OTel fully
+  disabled; compose feeds it from `GED_OTEL_ENDPOINT`), `OTEL_SERVICE_NAME`
+  (default `ged`).
 - API error contract: 401 invalid/missing token, 403 unregistered client or
   forbidden department, 404 not found, 400 missing param, 422 validation.
 - API list endpoints paginate via `limit`/`offset` (default 100, max 500).
