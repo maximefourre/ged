@@ -4,6 +4,7 @@ Rails.application.routes.draw do
 
   namespace :admin do
     root to: "dashboard#index"
+    get "status", to: "status#index"
     resources :departments, only: [ :index, :new, :create, :edit, :update, :destroy ]
     resources :app_clients, except: [ :show ]
     resources :documents, only: [ :index, :new, :create, :edit, :update, :destroy ] do

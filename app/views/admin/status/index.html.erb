@@ -1,0 +1,126 @@
+<header class="page-head">
+  <h1>Status</h1>
+</header>
+
+<h2 class="section-title">System health</h2>
+<div class="card">
+  <ul class="health-list">
+    <% @health_checks.each do |check| %>
+      <li class="health-row">
+        <span class="badge <%= health_badge_class(check.state) %>"><%= check.state %></span>
+        <span class="strong"><%= check.name %></span>
+        <span class="muted"><%= check.detail %></span>
+      </li>
+    <% end %>
+  </ul>
+</div>
+
+<h2 class="section-title">Upload pipeline</h2>
+<div class="queue <%= "is-paused" if @queue_paused %>">
+  <span class="badge <%= @queue_paused ? "warn" : "ok" %>"><%= @queue_paused ? "paused" : "active" %></span>
+  <span>uploads queue</span>
+  <span class="spacer"></span>
+  <%= link_to "Manage on Upload requests", admin_upload_requests_path, class: "btn btn-sm" %>
+</div>
+<div class="stat-grid">
+  <% UploadRequest::STATUSES.each do |status| %>
+    <div class="stat">
+      <span class="num"><%= @requests_by_status.fetch(status, 0) %></span>
+      <span class="lbl"><%= status %> requests</span>
+    </div>
+  <% end %>
+  <% @queue_depths.each do |queue, depth| %>
+    <div class="stat">
+      <span class="num"><%= depth %></span>
+      <span class="lbl"><%= queue %> queue depth</span>
+    </div>
+  <% end %>
+  <div class="stat">
+    <span class="num"><%= @scheduled_jobs %></span>
+    <span class="lbl">scheduled jobs</span>
+  </div>
+  <div class="stat">
+    <span class="num"><%= @in_flight_jobs %></span>
+    <span class="lbl">jobs in flight</span>
+  </div>
+  <div class="stat">
+    <span class="num"><%= @failed_jobs %></span>
+    <span class="lbl">failed jobs</span>
+  </div>
+</div>
+<% if @recent_failures.any? %>
+  <div class="card">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Job</th><th>Error</th><th>Failed at</th></tr>
+        </thead>
+        <tbody>
+          <% @recent_failures.each do |failure| %>
+            <tr>
+              <td class="strong"><%= failure.job&.class_name %></td>
+              <td class="muted">
+                <% error = failure.error || {} %>
+                <%= error["exception_class"] %>
+                <%= truncate(error["message"], length: 120) %>
+              </td>
+              <td class="date"><%= failure.created_at.strftime("%Y-%m-%d %H:%M") %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+<% end %>
+
+<h2 class="section-title">Documents &amp; storage</h2>
+<div class="stat-grid">
+  <div class="stat">
+    <span class="num"><%= @live_documents %></span>
+    <span class="lbl">documents</span>
+  </div>
+  <div class="stat">
+    <span class="num"><%= @deleted_documents %></span>
+    <span class="lbl">in trash</span>
+  </div>
+  <div class="stat">
+    <span class="num"><%= @purgeable_documents %></span>
+    <span class="lbl">awaiting purge</span>
+  </div>
+  <div class="stat">
+    <span class="num"><%= number_to_human_size(@total_bytes) %></span>
+    <span class="lbl">stored volume</span>
+  </div>
+  <div class="stat">
+    <span class="num"><%= @sync_documents %> / <%= @async_documents %></span>
+    <span class="lbl">sync / async uploads</span>
+  </div>
+  <div class="stat">
+    <span class="num"><%= @uploads_24h %></span>
+    <span class="lbl">uploads last 24h</span>
+  </div>
+  <div class="stat">
+    <span class="num"><%= @uploads_7d %></span>
+    <span class="lbl">uploads last 7 days</span>
+  </div>
+</div>
+<% if @top_departments.any? %>
+  <div class="card">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Department</th><th>Stored volume</th><th>Documents</th></tr>
+        </thead>
+        <tbody>
+          <% @top_departments.each do |name, bytes, count| %>
+            <tr>
+              <td class="strong"><%= name %></td>
+              <td><%= number_to_human_size(bytes) %></td>
+              <td><%= count %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+<% end %>

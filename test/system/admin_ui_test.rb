@@ -194,6 +194,19 @@ class AdminUiTest < ApplicationSystemTestCase
     assert_no_button "Log out"
   end
 
+  # --- Status page ---------------------------------------------------------
+
+  test "the status page shows health checks and key metrics" do
+    sign_in_admin
+    click_link "Status"
+
+    assert_selector "h1", text: "Status"
+    assert_selector ".health-row", count: 4
+    assert_text "Database"
+    assert_text "Storage disk"
+    assert_selector ".stat", minimum: 5
+  end
+
   # --- Theme toggle --------------------------------------------------------
 
   test "the light/dark toggle switches the theme and persists across reloads" do

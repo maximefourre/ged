@@ -49,6 +49,17 @@ module Auth
       @key_set || raise(FetchError, "no JWKS available")
     end
 
+    # Read-only snapshot for the admin status page — never triggers a fetch.
+    # `failing` is set by a failed refresh and cleared by the next success,
+    # so fetched+failing means "serving stale keys".
+    def health
+      {
+        fetched: !@key_set.nil?,
+        age_seconds: @fetched_at && (now - @fetched_at),
+        failing: !@failed_at.nil?
+      }
+    end
+
     def force_expire_for_tests!
       @fetched_at = now - TTL - 1
     end

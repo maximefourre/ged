@@ -25,4 +25,34 @@ class Auth::JwksCacheTest < ActiveSupport::TestCase
     end
     assert_requested(:get, ENV.fetch("GED_OIDC_JWKS_URL"), times: 1)
   end
+
+  test "health reports a never-fetched cache without triggering a fetch" do
+    health = Auth::JwksCache.instance.health
+    assert_equal false, health[:fetched]
+    assert_nil health[:age_seconds]
+    assert_equal false, health[:failing]
+    assert_not_requested(:get, ENV.fetch("GED_OIDC_JWKS_URL"))
+  end
+
+  test "health reports a healthy cache after a successful fetch" do
+    stub_jwks!
+    cache = Auth::JwksCache.instance
+    cache.key_set
+    health = cache.health
+    assert_equal true, health[:fetched]
+    assert_operator health[:age_seconds], :>=, 0
+    assert_equal false, health[:failing]
+  end
+
+  test "health flags a cache serving stale keys after a failed refresh" do
+    stub_jwks!
+    cache = Auth::JwksCache.instance
+    cache.key_set
+    cache.force_expire_for_tests!
+    stub_request(:get, ENV.fetch("GED_OIDC_JWKS_URL")).to_return(status: 500)
+    cache.key_set # refresh fails; stale keys keep being served
+    health = cache.health
+    assert_equal true, health[:fetched]
+    assert_equal true, health[:failing]
+  end
 end

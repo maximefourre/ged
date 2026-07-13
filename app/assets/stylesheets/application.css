@@ -474,6 +474,16 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .auth-card .field { margin-bottom: 14px; }
 .auth-card .btn-primary { width: 100%; justify-content: center; margin-top: 6px; padding: 11px; }
 
+/* ============================ Status page ============================ */
+.section-title { font-size: 14px; font-weight: 600; margin: 22px 0 10px; color: var(--muted); }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; }
+.stat .num { display: block; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat .lbl { font-size: 12px; color: var(--muted); }
+.health-list { list-style: none; margin: 0; padding: 0; }
+.health-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.health-row:last-child { border-bottom: 0; }
+
 /* ============================ Motion / responsive ============================ */
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
