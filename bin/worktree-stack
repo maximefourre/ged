@@ -7,22 +7,30 @@
 # Each linked worktree gets:
 #   * its own COMPOSE_PROJECT_NAME  → namespaced containers, network, volumes
 #     (data is isolated: ged-<slug>_pgdata / _oauth_data / _storage)
-#   * distinct host ports           → GED_WEB_PORT / GED_OAUTH_PORT, derived
-#     deterministically from the worktree directory name so the URLs are stable
+#   * distinct host ports           → GED_WEB_PORT / GED_OAUTH_PORT / GED_DB_PORT,
+#     derived deterministically from the worktree directory name so they're stable
 #
-# docker-compose.yml publishes "${GED_WEB_PORT:-3000}:80" and
-# "${GED_OAUTH_PORT:-9292}:9292", so run from the primary tree this is just the
-# normal stack on 3000 / 9292.
+# docker-compose.yml publishes "${GED_WEB_PORT:-3000}:80",
+# "${GED_OAUTH_PORT:-9292}:9292", and "${GED_DB_PORT:-5432}:5432", so run from
+# the primary tree this is just the normal stack on 3000 / 9292 / 5432.
+#
+# The published Postgres port is how host-native `bin/rails test` / `bin/dev`
+# reach this worktree's database — config/database.yml (dev/test) auto-derives it
+# by calling `bin/worktree-stack db-port`, so each worktree runs against its own
+# isolated Postgres (no shared Homebrew PG, no cross-worktree migration clashes).
 #
 # Usage:
-#   bin/worktree-stack up           build + start the stack (detached)
+#   bin/worktree-stack up           build + start the full stack (detached)
+#   bin/worktree-stack db           start ONLY Postgres, wait until healthy
+#                                   (the dev/test loop — Rails runs natively)
+#   bin/worktree-stack db-port      print this worktree's host Postgres port
 #   bin/worktree-stack seed         create the admin user (first boot only)
 #   bin/worktree-stack down [-v]    stop + remove containers (-v also volumes)
 #   bin/worktree-stack clean        full ménage: down -v + remove built images
 #   bin/worktree-stack <cmd> ...    passthrough to `docker compose` (ps, logs…)
 #
 # Ports collide only if two worktree slugs hash to the same offset; override
-# with GED_WEB_PORT / GED_OAUTH_PORT if that ever happens.
+# with GED_WEB_PORT / GED_OAUTH_PORT / GED_DB_PORT if that ever happens.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -40,16 +48,19 @@ if [ "$git_dir" != "$git_common" ]; then
   offset=$(( ( $(printf '%s' "$slug" | cksum | cut -d' ' -f1) % 250 ) + 1 ))
   web_port="${GED_WEB_PORT:-$((3000 + offset))}"
   oauth_port="${GED_OAUTH_PORT:-$((9292 + offset))}"
+  db_port="${GED_DB_PORT:-$((5432 + offset))}"
 else
   # Primary tree: the normal stack on the default ports.
   project="${COMPOSE_PROJECT_NAME:-ged}"
   web_port="${GED_WEB_PORT:-3000}"
   oauth_port="${GED_OAUTH_PORT:-9292}"
+  db_port="${GED_DB_PORT:-5432}"
 fi
 
 export COMPOSE_PROJECT_NAME="$project"
 export GED_WEB_PORT="$web_port"
 export GED_OAUTH_PORT="$oauth_port"
+export GED_DB_PORT="$db_port"
 
 # Compose reads .env from the project dir for SECRET_KEY_BASE / GED_ADMIN_PASSWORD,
 # but .env is gitignored so a fresh worktree has none. Reuse the primary tree's
@@ -83,12 +94,30 @@ shift || true
 case "$cmd" in
   up)
     ensure_env
-    echo "▶ project=$COMPOSE_PROJECT_NAME  web=$web_port  oauth=$oauth_port"
+    echo "▶ project=$COMPOSE_PROJECT_NAME  web=$web_port  oauth=$oauth_port  db=$db_port"
     docker compose up --build -d "$@"
     urls
     echo
     echo "  First boot only — create the admin user:"
     echo "    bin/worktree-stack seed"
+    ;;
+  db)
+    # Start only Postgres for the host-native dev/test loop and wait until it
+    # accepts connections (`up -d` returns before the healthcheck passes).
+    # ensure_env is required: Compose interpolates the whole file even for a
+    # single service, so web's ${SECRET_KEY_BASE:?} aborts a .env-less start.
+    ensure_env
+    docker compose up -d postgres
+    printf '▶ postgres on host port %s — waiting' "$db_port"
+    until docker compose exec -T postgres pg_isready -U "${GED_DB_USER:-postgres}" >/dev/null 2>&1; do
+      printf '.'
+      sleep 1
+    done
+    echo ' ready'
+    ;;
+  db-port)
+    # Print only the host Postgres port; consumed by config/database.yml ERB.
+    echo "$db_port"
     ;;
   seed)
     docker compose exec web bin/rails db:seed
@@ -100,7 +129,7 @@ case "$cmd" in
     docker compose down -v --rmi local "$@"
     ;;
   urls|url)
-    echo "▶ project=$COMPOSE_PROJECT_NAME  web=$web_port  oauth=$oauth_port"
+    echo "▶ project=$COMPOSE_PROJECT_NAME  web=$web_port  oauth=$oauth_port  db=$db_port"
     urls
     ;;
   help|-h|--help)

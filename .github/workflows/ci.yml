@@ -100,6 +100,9 @@ jobs:
         env:
           RAILS_ENV: test
           DATABASE_URL: postgres://postgres:postgres@localhost:5432
+          # Short-circuit config/database.yml's worktree port lookup: CI's
+          # Postgres service container is always on 5432, no bin/worktree-stack.
+          GED_DB_PORT: 5432
           # RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
           # REDIS_URL: redis://localhost:6379/0
         run: bin/rails db:test:prepare test
@@ -139,6 +142,9 @@ jobs:
         env:
           RAILS_ENV: test
           DATABASE_URL: postgres://postgres:postgres@localhost:5432
+          # Short-circuit config/database.yml's worktree port lookup: CI's
+          # Postgres service container is always on 5432, no bin/worktree-stack.
+          GED_DB_PORT: 5432
           # RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
           # REDIS_URL: redis://localhost:6379/0
         run: bin/rails db:test:prepare test:system

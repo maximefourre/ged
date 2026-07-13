@@ -19,22 +19,35 @@ default: &default
   # https://guides.rubyonrails.org/configuring.html#database-pooling
   max_connections: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
 
+# Dev/test connect to the Dockerised Postgres started by `bin/worktree-stack db`
+# (one container per worktree — no Homebrew Postgres). The host port is
+# auto-derived from the worktree by calling `bin/worktree-stack db-port`, so
+# `bin/rails test` "just works" from any worktree; every failure path falls back
+# to 5432 (the primary tree / a plain `docker compose up postgres`). GED_DB_PORT
+# short-circuits the lookup (set by bin/worktree-stack, and settable in CI).
+# Kept OFF the `default` anchor so production stays driven by DATABASE_URL alone.
+local_pg: &local_pg
+  <<: *default
+  host: <%= ENV.fetch("GED_DB_HOST", "localhost") %>
+  port: <%= ENV.fetch("GED_DB_PORT") { script = File.expand_path("../bin/worktree-stack", __dir__); (`#{script} db-port 2>/dev/null`.to_i.nonzero? || 5432) rescue 5432 } %>
+  username: <%= ENV.fetch("GED_DB_USER", "postgres") %>
+  password: <%= ENV.fetch("GED_DB_PASSWORD", "postgres") %>
 
 development:
   primary:
-    <<: *default
+    <<: *local_pg
     database: ged_development
   queue:
-    <<: *default
+    <<: *local_pg
     database: ged_development_queue
     migrations_paths: db/queue_migrate
 
 test:
   primary:
-    <<: *default
+    <<: *local_pg
     database: ged_test
   queue:
-    <<: *default
+    <<: *local_pg
     database: ged_test_queue
     migrations_paths: db/queue_migrate
 

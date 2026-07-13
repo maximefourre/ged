@@ -13,7 +13,11 @@ is the source of truth.
 
 - **Always work in a dedicated git worktree and branch** — never edit directly
   on `main` or in the primary working tree. Create an isolated worktree +
-  feature branch for every task before making changes.
+  feature branch for every task before making changes. Each worktree runs its
+  own Dockerised dev/test Postgres — `bin/worktree-stack db` once per session,
+  then `bin/rails test`/`bin/dev` natively — so concurrent worktrees never
+  collide on a shared database (that's separate from the full integrated
+  `bin/worktree-stack up` stack used for pre-merge validation).
 - **Keep history linear — rebase over merge whenever possible** — update a
   feature branch from `main` with `git rebase main` (never `git merge main`
   into it), and land finished work with a rebase + fast-forward
@@ -58,7 +62,11 @@ is the source of truth.
 - **`jwt` gem** — validates bearer tokens from app clients against a JWKS endpoint
 - **Docker Compose** — `web` (Rails/Puma), `postgres`, `oauth-provider`;
   `bin/worktree-stack up` boots an isolated per-worktree copy for testing (see
-  the Workflow section)
+  the Workflow section). `postgres` also publishes a host port
+  (`${GED_DB_PORT:-5432}`), so the **dev/test database always runs in Docker**
+  (no Homebrew Postgres): `bin/worktree-stack db` starts just Postgres for the
+  native `bin/rails test`/`bin/dev` loop, and `db-port` prints the port
+  `config/database.yml` auto-derives.
 
 ## Repo layout
 
@@ -235,7 +243,12 @@ pitfalls:
   `assert_requested` rejects the `(stub) { block }` form — use
   `assert_requested(:post, url) { block }`.
 - Lint: RuboCop rails-omakase — `bin/rubocop` must pass before committing.
-- Ruby via mise (`.mise.toml`); dev Postgres via Homebrew (`postgresql@17`).
+- Ruby via mise (`.mise.toml`). Dev/test Postgres runs in Docker — **no
+  Homebrew Postgres**. Start it with `bin/worktree-stack db` (one container per
+  worktree on a slug-derived host port; `config/database.yml` auto-derives that
+  port via `bin/worktree-stack db-port`, so `bin/rails test`/`bin/dev` connect
+  natively to the right container). Stop any leftover `brew services
+  postgresql@17` first — it would hold port 5432 for the primary tree.
 - Env vars: `GED_OIDC_ISSUER`, `GED_OIDC_JWKS_URL`, `GED_CLIENT_ID_CLAIM`
   (default `sub`), `GED_OIDC_AUDIENCE` (optional; when set, `aud` is
   verified — required at real-IdP cutover), `GED_ADMIN_USERNAME`,

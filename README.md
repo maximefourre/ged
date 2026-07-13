@@ -31,15 +31,24 @@ Full specification: `docs/superpowers/specs/2026-07-08-ged-design.md`
 
 ## Installation (local development)
 
-For quick local development without Docker overhead:
+Rails runs natively (mise); only **Postgres runs in Docker** — one isolated
+container per git worktree, so concurrent worktrees never share a database.
+There is **no Homebrew Postgres**. If you still run one, **stop it first** so it
+doesn't hold port 5432: `brew services stop postgresql@17`.
 
-    brew install mise postgresql@17 && brew services start postgresql@17
+    brew install mise           # (or install Ruby yourself) — no Postgres needed
     mise install                # ruby from .mise.toml
     bundle install
+    bin/worktree-stack db       # start the Dockerised Postgres, wait until ready
     bin/rails db:setup          # create + migrate + seed (admin/changeme)
     bin/rails test              # main app tests
     (cd oauth-provider && bundle install && bundle exec rake)  # provider tests
     bin/dev                     # http://localhost:3000 → admin UI
+
+`config/database.yml` auto-derives the host Postgres port from the current
+worktree (via `bin/worktree-stack db-port`), so `bin/rails test` / `bin/dev`
+connect to the right container automatically. Shortcut: `bin/setup` runs
+bundle + starts Postgres + prepares the database in one step.
 
 ## Deployment (Docker)
 
