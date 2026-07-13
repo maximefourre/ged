@@ -1,6 +1,8 @@
 require "test_helper"
 
 class DeliverCallbackJobTest < ActiveJob::TestCase
+  include TelemetryTestHelpers
+
   setup do
     finance = Department.create!(name: "Finance")
     @request = UploadRequest.create!(department: finance, filename: "report.pdf",
@@ -92,5 +94,52 @@ class DeliverCallbackJobTest < ActiveJob::TestCase
       DeliverCallbackJob.new.perform(@request.id)
     end
     assert_requested(:post, "https://caller.test/cb")
+  end
+
+  test "emits outcome=success on delivery" do
+    stub_request(:post, "https://caller.test/cb").to_return(status: 200)
+    calls = capture_telemetry(:callback_deliveries) do
+      DeliverCallbackJob.new.perform(@request.id)
+    end
+    assert_equal [ [ 1, { "outcome" => "success" } ] ], calls
+  end
+
+  test "emits outcome=failure on a failed attempt" do
+    stub_request(:post, "https://caller.test/cb").to_return(status: 500)
+    calls = capture_telemetry(:callback_deliveries) do
+      assert_raises(DeliverCallbackJob::DeliveryFailed) do
+        DeliverCallbackJob.new.perform(@request.id)
+      end
+    end
+    assert_equal [ [ 1, { "outcome" => "failure" } ] ], calls
+  end
+
+  test "emits outcome=failure on a connection error" do
+    stub_request(:post, "https://caller.test/cb").to_raise(Errno::ECONNREFUSED)
+    calls = capture_telemetry(:callback_deliveries) do
+      assert_raises(DeliverCallbackJob::DeliveryFailed) do
+        DeliverCallbackJob.new.perform(@request.id)
+      end
+    end
+    assert_equal [ [ 1, { "outcome" => "failure" } ] ], calls
+  end
+
+  test "emits outcome=refused for a blocked callback target" do
+    stub_request(:post, "https://caller.test/cb")
+    calls = capture_telemetry(:callback_deliveries) do
+      stub_dns([ "10.0.0.5" ]) { DeliverCallbackJob.new.perform(@request.id) }
+    end
+    assert_equal [ [ 1, { "outcome" => "refused" } ] ], calls
+  end
+
+  test "emits outcome=exhausted once retries run out" do
+    stub_request(:post, "https://caller.test/cb").to_return(status: 500)
+    calls = capture_telemetry(:callback_deliveries) do
+      perform_enqueued_jobs do
+        DeliverCallbackJob.perform_later(@request.id)
+      end
+    end
+    assert_equal 5, calls.count { |_value, attrs| attrs["outcome"] == "failure" }
+    assert_equal 1, calls.count { |_value, attrs| attrs["outcome"] == "exhausted" }
   end
 end

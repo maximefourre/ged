@@ -17,6 +17,9 @@ class DocumentCreator
     )
     document.file.attach(io: io, filename: filename, content_type: content_type)
     document.save!
+    Telemetry.documents_uploaded.add(
+      1, attributes: { "upload_mode" => stored_async ? "async" : "sync" }
+    )
     document
   end
 end

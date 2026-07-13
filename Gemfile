@@ -33,6 +33,20 @@ gem "image_processing", "~> 1.2"
 gem "devise"
 gem "jwt"
 
+# OpenTelemetry. Only the metrics API loads at boot — its instruments are free
+# no-ops without an SDK, so lib/telemetry.rb call sites are unconditional.
+# Everything else is required by config/initializers/opentelemetry.rb only
+# when OTEL_EXPORTER_OTLP_ENDPOINT is set; dev/test and deployments without a
+# backend pay nothing. Metrics SDK/exporter are experimental 0.x — minor pins.
+gem "opentelemetry-metrics-api", "~> 0.6"
+gem "opentelemetry-sdk", "~> 1.12", require: false
+gem "opentelemetry-exporter-otlp", "~> 0.34", require: false
+gem "opentelemetry-metrics-sdk", "~> 0.15.0", require: false
+gem "opentelemetry-exporter-otlp-metrics", "~> 0.10.0", require: false
+gem "opentelemetry-instrumentation-rails", "~> 0.42", require: false
+gem "opentelemetry-instrumentation-pg", "~> 0.36", require: false
+gem "opentelemetry-instrumentation-net_http", "~> 0.29", require: false
+
 group :development, :test do
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"

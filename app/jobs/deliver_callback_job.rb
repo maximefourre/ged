@@ -9,6 +9,7 @@ class DeliverCallbackJob < ApplicationJob
   queue_as :default
 
   retry_on DeliveryFailed, wait: :polynomially_longer, attempts: 5 do |job, error|
+    Telemetry.callback_deliveries.add(1, attributes: { "outcome" => "exhausted" })
     Rails.logger.error(
       "Callback delivery permanently failed for upload_request #{job.arguments.first}: #{error.message}"
     )
@@ -19,6 +20,7 @@ class DeliverCallbackJob < ApplicationJob
     # SSRF barrier: refuse blocked targets outright (no DeliveryFailed — a
     # forbidden destination must not be retried).
     if (reason = CallbackUrlPolicy.reject_reason(upload_request.callback_url, resolve: true))
+      Telemetry.callback_deliveries.add(1, attributes: { "outcome" => "refused" })
       Rails.logger.error(
         "Callback refused for upload_request #{upload_request.id}: callback_url #{reason}"
       )
@@ -40,9 +42,19 @@ class DeliverCallbackJob < ApplicationJob
       http.post(uri.request_uri, payload.to_json, "Content-Type" => "application/json")
     end
     unless response.is_a?(Net::HTTPSuccess)
-      raise DeliveryFailed, "callback returned HTTP #{response.code}"
+      fail_delivery("callback returned HTTP #{response.code}")
     end
+    Telemetry.callback_deliveries.add(1, attributes: { "outcome" => "success" })
   rescue SystemCallError, SocketError, IOError, OpenSSL::SSL::SSLError, Timeout::Error => e
-    raise DeliveryFailed, "#{e.class}: #{e.message}"
+    fail_delivery("#{e.class}: #{e.message}")
+  end
+
+  private
+
+  # Failures are counted per attempt; the final attempt additionally emits
+  # "exhausted" via the retry_on block above.
+  def fail_delivery(message)
+    Telemetry.callback_deliveries.add(1, attributes: { "outcome" => "failure" })
+    raise DeliveryFailed, message
   end
 end
