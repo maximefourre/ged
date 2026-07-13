@@ -3,10 +3,19 @@ default: &default
     - polling_interval: 1
       batch_size: 500
   workers:
-    - queues: "*"
-      threads: 3
+    # No "*" pool: Solid Queue claims a list containing "*" as ONE global
+    # FIFO ordered by (priority, job_id), so a deep uploads backlog would
+    # starve default (callbacks, reconcile). Explicit queues keep the pools
+    # isolated — and any new `queue_as` MUST be listed here, enforced by
+    # test/jobs/queue_coverage_test.rb.
+    - queues: uploads
+      threads: <%= ENV.fetch("JOB_THREADS", 3) %>
       processes: <%= ENV.fetch("JOB_CONCURRENCY", 1) %>
       polling_interval: 0.1
+    - queues: default
+      threads: 2
+      processes: 1
+      polling_interval: 0.5
 
 development:
   <<: *default

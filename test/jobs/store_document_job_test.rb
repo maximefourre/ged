@@ -66,6 +66,31 @@ class StoreDocumentJobTest < ActiveJob::TestCase
     assert_equal "completed", @request.reload.status
   end
 
+  test "leaves no document behind when the request cannot be marked completed" do
+    # Simulates a crash landing between the document INSERT and the request's
+    # completed UPDATE — the at-least-once duplicate window: reconcile would
+    # re-enqueue the still-processing request and store a second copy. The two
+    # writes must commit atomically so a re-run stores the document once.
+    crash = Class.new(StandardError)
+    victim = UploadRequest.find(@request.id)
+    victim.define_singleton_method(:update!) do |attrs = {}|
+      raise crash, "crashed before completion" if attrs[:status] == "completed"
+      super(attrs)
+    end
+    UploadRequest.define_singleton_method(:find) { |_id| victim }
+    begin
+      StoreDocumentJob.perform_now(@request.id)
+    ensure
+      UploadRequest.singleton_class.remove_method(:find)
+    end
+
+    assert_equal 0, Document.count, "a rolled-back run must not leave a document"
+    assert_equal 0, ActiveStorage::Blob.count, "nor an orphaned blob row"
+    @request.reload
+    assert_equal "failed", @request.status
+    assert_nil @request.document_id
+  end
+
   test "marks the request failed on error and still enqueues the callback" do
     StagingStore.delete(@request.id) # provoke a failure: staged file missing
     StoreDocumentJob.perform_now(@request.id)

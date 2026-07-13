@@ -51,6 +51,11 @@ Rails.application.configure do
   # Replace the default in-process and non-durable queuing backend for Active Job.
   config.active_job.queue_adapter = :solid_queue
 
+  # Give in-flight jobs time to finish on SIGTERM (a large StoreDocumentJob
+  # under disk contention outlives the gem's 5s default). Must stay below the
+  # worker service's stop_grace_period in docker-compose.yml (40s).
+  config.solid_queue.shutdown_timeout = ENV.fetch("SOLID_QUEUE_SHUTDOWN_TIMEOUT", 30).to_i.seconds
+
   # Ignore bad email addresses and do not raise email delivery errors.
   # Set this to true and configure the email server for immediate delivery to raise delivery errors.
   # config.action_mailer.raise_delivery_errors = false

@@ -1,6 +1,9 @@
 services:
   postgres:
     image: postgres:17
+    # Default max_connections (100) fits ~3 worker replicas (~19 connections
+    # each at JOB_THREADS=3, see the worker-scaling spec); 200 covers ~9.
+    command: ["postgres", "-c", "max_connections=200"]
     environment:
       POSTGRES_PASSWORD: postgres
     ports:
@@ -39,7 +42,6 @@ services:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/ged_production
       SECRET_KEY_BASE: ${SECRET_KEY_BASE:?run with SECRET_KEY_BASE=$(bin/rails secret)}
       RAILS_ENV: production
-      SOLID_QUEUE_IN_PUMA: "true"
       GED_OIDC_ISSUER: http://oauth-provider:9292
       GED_OIDC_JWKS_URL: http://oauth-provider:9292/.well-known/jwks.json
       GED_ADMIN_USERNAME: ${GED_ADMIN_USERNAME:-admin}
@@ -60,6 +62,47 @@ services:
       - "${GED_WEB_PORT:-3000}:80"
     volumes:
       - storage:/rails/storage
+    healthcheck:
+      # Workers depend on web being healthy: bin/docker-entrypoint runs
+      # db:prepare only for `rails server`, so web must have prepared the
+      # schemas before a worker boots. start_period covers that first boot.
+      test: ["CMD", "curl", "-f", "http://localhost/up"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 60s
+
+  # Solid Queue supervisor (dispatcher + scheduler + worker pools from
+  # config/queue.yml). Scale on the same host, hot, without touching web:
+  #   docker compose up -d --scale worker=N   (bin/worktree-stack up --scale worker=N)
+  # Replicas coordinate via Postgres (FOR UPDATE SKIP LOCKED); recurring
+  # tasks are deduped by the unique [task_key, run_at] index. Shares the
+  # storage volume with web: staging files (storage/staging/) are written by
+  # web and read here; Active Storage blobs are written here and served by
+  # web — same-host scaling only (see the worker-scaling spec).
+  worker:
+    build: .
+    command: ["./bin/jobs"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/ged_production
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?run with SECRET_KEY_BASE=$(bin/rails secret)}
+      RAILS_ENV: production
+      JOB_THREADS: ${JOB_THREADS:-3}
+      JOB_CONCURRENCY: ${JOB_CONCURRENCY:-1}
+      # oidc_config.rb raises at boot in production without these, even
+      # though the worker never validates tokens.
+      GED_OIDC_ISSUER: http://oauth-provider:9292
+      GED_OIDC_JWKS_URL: http://oauth-provider:9292/.well-known/jwks.json
+    volumes:
+      - storage:/rails/storage
+    # Must exceed solid_queue.shutdown_timeout (30s) so a scale-down or
+    # `compose stop` lets in-flight StoreDocumentJobs drain cleanly.
+    stop_grace_period: 40s
 
   # Local observability backend: OTel collector + Prometheus + Tempo + Loki +
   # Grafana in one container. Dev tooling only — off unless the "otel" compose

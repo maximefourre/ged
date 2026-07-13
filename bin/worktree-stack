@@ -27,7 +27,14 @@
 # isolated Postgres (no shared Homebrew PG, no cross-worktree migration clashes).
 #
 # Usage:
-#   bin/worktree-stack up           build + start the full stack (detached)
+#   bin/worktree-stack up [--scale worker=N]
+#                                   build + start the full stack (detached);
+#                                   --build may recreate containers when the
+#                                   build context changed — for a pure hot
+#                                   scale use `scale` below
+#   bin/worktree-stack scale N      hot-scale to N worker replicas (no build,
+#                                   no recreate: web + existing workers stay
+#                                   untouched; surplus replicas drain + stop)
 #   bin/worktree-stack db           start ONLY Postgres, wait until healthy
 #                                   (the dev/test loop — Rails runs natively)
 #   bin/worktree-stack db-port      print this worktree's host Postgres port
@@ -126,6 +133,15 @@ case "$cmd" in
     echo
     echo "  First boot only — create the admin user:"
     echo "    bin/worktree-stack seed"
+    ;;
+  scale)
+    # Hot-scale worker replicas: adds/removes ONLY worker containers, never
+    # rebuilds nor recreates anything (unlike `up --scale`, whose --build
+    # recreates web whenever the build context changed). Surplus replicas
+    # get SIGTERM and drain in-flight jobs (stop_grace_period).
+    ensure_env
+    docker compose up -d --no-build --no-recreate \
+      --scale "worker=${1:?usage: bin/worktree-stack scale N}" worker
     ;;
   db)
     # Start only Postgres for the host-native dev/test loop and wait until it

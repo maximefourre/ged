@@ -63,7 +63,8 @@ is the source of truth.
 - **OpenTelemetry** — traces + custom metrics over OTLP, entirely disabled
   unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set (see the implementation map);
   optional `grafana/otel-lgtm` backend under the `otel` compose profile
-- **Docker Compose** — `web` (Rails/Puma), `postgres`, `oauth-provider`;
+- **Docker Compose** — `web` (Rails/Puma), `worker` (Solid Queue, scalable
+  via `--scale worker=N`), `postgres`, `oauth-provider`;
   `bin/worktree-stack up` boots an isolated per-worktree copy for testing (see
   the Workflow section). `postgres` also publishes a host port
   (`${GED_DB_PORT:-5432}`), so the **dev/test database always runs in Docker**
@@ -159,7 +160,11 @@ is the source of truth.
 - **Async upload flow:** controller creates an `UploadRequest` (uuid pk) +
   writes raw bytes to `StagingStore` (`storage/staging/<id>`) → 202 →
   `StoreDocumentJob` (runs on the dedicated `uploads` queue) builds the
-  `Document`, applies `upload_request.tags`, and deletes the staging file →
+  `Document` and marks the request completed **in one transaction** (a crash
+  in between would otherwise let reconcile re-store the document —
+  crash-recovery is exactly-once for documents, at-least-once for job runs
+  and callbacks), applies `upload_request.tags`, and deletes the staging
+  file →
   `DeliverCallbackJob` POSTs
   `{ request_id, status, document_id, error_message, tags, metadata }` (tags and
   metadata `null` until the document exists) to the `callback_url` (5 attempts,
@@ -176,10 +181,23 @@ is the source of truth.
   callbacks (on `default`) still deliver. `ReconcileUploadRequestsJob` skips
   pending re-enqueues while paused. Solid Queue runs in every environment
   (dev: inside Puma via `bin/dev`, queue database `ged_development_queue`).
-- **Jobs in production run inside Puma** (Solid Queue via
-  `SOLID_QUEUE_IN_PUMA=true` in docker-compose); dev uses Solid Queue in Puma
-  too; the test env keeps the `:test` adapter but has the queue schema loaded
-  (`ged_test_queue`). There is no separate worker container.
+- **Jobs in production run in a dedicated `worker` compose service**
+  (`./bin/jobs`, same image as web), hot-scalable on the same host with
+  `bin/worktree-stack scale N` (= `docker compose up -d --no-build
+  --no-recreate --scale worker=N worker`) — no rebuild, web and existing
+  workers untouched; replicas coordinate via Postgres. (`up --scale
+  worker=N` also works but its `--build` recreates containers whenever the
+  build context changed.) `config/
+  queue.yml` splits two pools: `uploads` (env knobs `JOB_THREADS` ×
+  `JOB_CONCURRENCY`) and a small fixed `default` — **no `"*"` pool** (would
+  let an uploads backlog starve callbacks/reconcile); every `queue_as` must
+  be listed there, enforced by `test/jobs/queue_coverage_test.rb`. Web and
+  worker share the `storage` volume (staging + Active Storage blobs), so
+  scaling is same-host only — multi-host needs object storage first (see
+  `docs/superpowers/specs/2026-07-13-worker-scaling-design.md`). Dev still
+  runs Solid Queue inside Puma (`bin/dev` sets `SOLID_QUEUE_IN_PUMA`); the
+  test env keeps the `:test` adapter but has the queue schema loaded
+  (`ged_test_queue`).
 - **Document creation is shared, controllers are not:** the admin UI does not
   reuse the API controllers (despite a spec sentence suggesting it) — instead
   `Api::V1::DocumentsController`, `Admin::DocumentsController`, and
@@ -283,7 +301,11 @@ pitfalls:
   verified — required at real-IdP cutover), `GED_ADMIN_USERNAME`,
   `GED_ADMIN_PASSWORD`, `OTEL_EXPORTER_OTLP_ENDPOINT` (empty = OTel fully
   disabled; compose feeds it from `GED_OTEL_ENDPOINT`), `OTEL_SERVICE_NAME`
-  (default `ged`).
+  (default `ged`). Worker scaling: `JOB_THREADS` (default 3, uploads
+  pool threads; also raises the DB pool via `config/database.yml`),
+  `JOB_CONCURRENCY` (default 1, uploads worker processes per container),
+  `SOLID_QUEUE_SHUTDOWN_TIMEOUT` (default 30s, must stay under the worker's
+  `stop_grace_period` 40s).
 - API error contract: 401 invalid/missing token, 403 unregistered client or
   forbidden department, 404 not found, 400 missing param, 422 validation.
 - API list endpoints paginate via `limit`/`offset` (default 100, max 500).

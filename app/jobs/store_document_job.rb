@@ -7,20 +7,29 @@ class StoreDocumentJob < ApplicationJob
 
     begin
       path = StagingStore.path(upload_request.id)
-      document = File.open(path, "rb") do |file|
-        DocumentCreator.call(
-          department_id: upload_request.department_id,
-          io: file,
-          filename: upload_request.filename,
-          content_type: upload_request.content_type,
-          byte_size: File.size(path),
-          uploaded_by: upload_request.uploaded_by,
-          tags: upload_request.tags,
-          uploaded_at: upload_request.created_at,
-          stored_async: true
-        )
+      # One transaction: a crash between the document INSERT and the completed
+      # UPDATE would leave a committed document on a still-"processing" request,
+      # which reconcile re-enqueues -> duplicate document (at-least-once). With
+      # both writes atomic, an aborted run persists nothing and the re-run
+      # stores the document exactly once. Active Storage defers the blob's disk
+      # write to commit time, so the staging file must stay open until then —
+      # the transaction nests inside File.open, not the other way around.
+      File.open(path, "rb") do |file|
+        ApplicationRecord.transaction do
+          document = DocumentCreator.call(
+            department_id: upload_request.department_id,
+            io: file,
+            filename: upload_request.filename,
+            content_type: upload_request.content_type,
+            byte_size: File.size(path),
+            uploaded_by: upload_request.uploaded_by,
+            tags: upload_request.tags,
+            uploaded_at: upload_request.created_at,
+            stored_async: true
+          )
+          upload_request.update!(status: "completed", document_id: document.id)
+        end
       end
-      upload_request.update!(status: "completed", document_id: document.id)
     rescue StandardError => e
       Rails.logger.error("Async upload #{upload_request.id} failed: #{e.class}: #{e.message}")
       upload_request.update!(status: "failed", error_message: e.message)

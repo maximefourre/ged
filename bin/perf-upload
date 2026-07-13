@@ -7,6 +7,8 @@
 #   bin/perf-upload --setup                       provision perf client (once per stack)
 #   bin/perf-upload --profile mix --mode async    run a campaign
 #   bin/perf-upload --profile mix --chaos         kill web mid-load, verify zero loss
+#   ... --chaos --chaos-target worker             kill the worker(s) instead — with
+#                                                 --scale worker=N, kills ALL replicas
 #
 # Stdlib only. Talks to the stack's public HTTP API and, for provisioning and
 # chaos, shells out to bin/worktree-stack (docker compose passthrough).
@@ -37,8 +39,8 @@ module PerfUpload
   FILE_POOL = 20
 
   Options = Struct.new(:setup, :profile, :mode, :count, :sizes, :threads,
-                       :base_url, :token_url, :chaos, :json_path, :timeout,
-                       keyword_init: true)
+                       :base_url, :token_url, :chaos, :chaos_target,
+                       :json_path, :timeout, keyword_init: true)
 
   Result = Struct.new(:status, :latency, :request_id, :document_id, :error,
                       :accepted_at, keyword_init: true)
@@ -59,12 +61,15 @@ module PerfUpload
         o.on("--base-url URL", "web base URL (default: from worktree-stack)") { |v| opts.base_url = v }
         o.on("--token-url URL", "token endpoint (default: from worktree-stack)") { |v| opts.token_url = v }
         o.on("--chaos", "kill web mid-load, verify recovery (async only)") { opts.chaos = true }
+        o.on("--chaos-target SERVICE", %w[web worker], "chaos kill target: web|worker (default web)") { |v| opts.chaos_target = v }
         o.on("--json FILE", "also write the report as JSON") { |v| opts.json_path = v }
         o.on("--timeout SECONDS", Integer, "convergence timeout (default 900; chaos 1500)") { |v| opts.timeout = v }
       end
       parser.parse!(argv)
       abort parser.to_s unless opts.setup || opts.profile
       abort "--chaos requires async mode" if opts.chaos && opts.mode == "sync"
+      abort "--chaos-target requires --chaos" if opts.chaos_target && !opts.chaos
+      opts.chaos_target ||= "web"
       profile = PROFILES[opts.profile] if opts.profile
       opts.count ||= profile && profile[:count]
       opts.sizes ||= profile && profile[:sizes]
@@ -509,22 +514,23 @@ module PerfUpload
 
     def chaos_run(paths)
       run_id = new_run_id
-      warn "CHAOS run #{run_id}: async x#{@options.count}, killing web mid-load"
+      target = @options.chaos_target
+      warn "CHAOS run #{run_id}: async x#{@options.count}, killing #{target} mid-load"
       loader = Loader.new(@options, @tokens, @department_id, run_id, paths)
       started = monotonic
       load_thread = Thread.new { loader.run(async: true) }
       kill_at = (@options.count / 2.0).ceil
       sleep 0.2 until loader.accepted_count >= kill_at || !load_thread.alive?
-      warn "  #{loader.accepted_count} accepted -> docker kill web (SIGKILL)"
-      Stack.run("kill", "web")
+      warn "  #{loader.accepted_count} accepted -> docker kill #{target} (SIGKILL)"
+      Stack.run("kill", target)
       killed_at = monotonic
       load_thread.join
       results = loader.results
       wall = monotonic - started
-      warn "  restarting web ..."
-      Stack.run("start", "web")
-      wait_for_health
-      warn "  web back up #{(monotonic - killed_at).round}s after kill; waiting for recovery"
+      warn "  restarting #{target} ..."
+      Stack.run("start", target)
+      wait_for_health if target == "web" # killing workers leaves web serving
+      warn "  #{target} back up #{(monotonic - killed_at).round}s after kill; waiting for recovery"
       outcomes = recover(results.filter_map(&:request_id))
       api_count = Api.count_documents(@options.base_url, @tokens, run_id)
       Report.build(@options, run_id, "async", results, outcomes, api_count, wall,
