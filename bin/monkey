@@ -1,0 +1,1134 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# monkey — black-box security pentest driver for the GED Rails app
+# (see docs/security/pentest-2026-07-15.md).
+#
+#   bin/monkey --setup                           provision test clients + departments
+#   bin/monkey --dry-run                         print the probe plan without hitting the network
+#   bin/monkey --only auth,ssrf                  run only specified modules
+#   bin/monkey --json FILE                       write machine-readable report
+#
+# Stdlib only. Talks to the stack's public HTTP API and shells out to
+# bin/worktree-stack for provisioning. Probes never modify app behavior —
+# findings are logged to stderr as they occur.
+
+require "optparse"
+require "net/http"
+require "uri"
+require "json"
+require "securerandom"
+require "tempfile"
+require "tmpdir"
+require "open3"
+require "base64"
+require "openssl"
+require "stringio"
+
+module Monkey
+  # GED-SEC mapping: probe name -> security id
+  GED_SEC_MAP = {
+    "aud_unverified" => "01",
+    "oversized_upload" => "02",
+    "filename_null_byte" => "03",
+    "spoofed_content_type" => "04",
+    "malformed_json" => "05",
+    "admin_filename_array" => "06",
+    "alt_ip_encoding" => "08",
+    "decimal_ip_127.0.0.1" => "08",
+    "hex_ip_127.0.0.1" => "08",
+    "octal_ip_127.0.0.1" => "08",
+    "unresolvable_callback" => "10",
+    "huge_offset" => "11"
+  }.freeze
+
+  Options = Struct.new(:setup, :base_url, :token_url, :json_path, :dry_run,
+                       :only_modules, keyword_init: true)
+
+  Probe = Struct.new(:module_name, :name, :expected, :actual_status,
+                     :verdict, :detail, :repro, keyword_init: true)
+
+  module CLI
+    module_function
+
+    def parse(argv)
+      opts = Options.new(only_modules: [])
+      parser = OptionParser.new do |o|
+        o.banner = "usage: bin/monkey [--setup | [--only MODULE,...] [options]]"
+        o.on("--setup", "provision test clients and departments") { opts.setup = true }
+        o.on("--base-url URL", "web base URL (default: from worktree-stack)") { |v| opts.base_url = v }
+        o.on("--token-url URL", "token endpoint (default: from worktree-stack)") { |v| opts.token_url = v }
+        o.on("--dry-run", "print probe plan without hitting network") { opts.dry_run = true }
+        o.on("--only MODULES", "run only: auth,authz,ssrf,fuzz-api,fuzz-admin") do |v|
+          opts.only_modules = v.split(",").map(&:strip)
+        end
+        o.on("--json FILE", "write machine-readable report") { |v| opts.json_path = v }
+      end
+      parser.parse!(argv)
+      opts
+    end
+  end
+
+  # Shells out to bin/worktree-stack so COMPOSE_PROJECT_NAME and ports always
+  # match the current worktree's stack.
+  module Stack
+    module_function
+
+    def script
+      File.expand_path("worktree-stack", __dir__)
+    end
+
+    def urls
+      @urls ||= begin
+        out, status = Open3.capture2(script, "urls")
+        abort "bin/worktree-stack urls failed" unless status.success?
+        web = out[/web=(\d+)/, 1] or abort "cannot parse web port from worktree-stack urls"
+        oauth = out[/oauth=(\d+)/, 1] or abort "cannot parse oauth port"
+        { base: "http://localhost:#{web}", token: "http://localhost:#{oauth}/token" }
+      end
+    end
+
+    def exec(service, *cmd)
+      out, err, status = Open3.capture3(script, "exec", "-T", service, *cmd)
+      abort "stack exec #{service} #{cmd.join(' ')} failed:\n#{out}#{err}" unless status.success?
+      out + err
+    end
+  end
+
+  module Setup
+    RUNNER = <<~RUBY
+      # Create departments
+      dept_a = Department.find_or_create_by!(name: "monkey-dept-a", parent: nil)
+      dept_a_child = Department.find_or_create_by!(name: "monkey-dept-a-child", parent: dept_a)
+      dept_b = Department.find_or_create_by!(name: "monkey-dept-b", parent: nil)
+
+      # Create clients
+      client_ro = AppClient.find_or_create_by!(client_identifier: "monkey-readonly")
+      client_wo = AppClient.find_or_create_by!(client_identifier: "monkey-writeonly")
+      client_none = AppClient.find_or_create_by!(client_identifier: "monkey-noaccess")
+      client_full = AppClient.find_or_create_by!(client_identifier: "monkey-deptA")
+
+      # Grant access
+      ro_access = ClientDepartmentAccess.find_or_initialize_by(app_client: client_ro, department: dept_a)
+      ro_access.can_read = true
+      ro_access.can_write = false
+      ro_access.save!
+
+      wo_access = ClientDepartmentAccess.find_or_initialize_by(app_client: client_wo, department: dept_a)
+      wo_access.can_read = false
+      wo_access.can_write = true
+      wo_access.save!
+
+      full_access = ClientDepartmentAccess.find_or_initialize_by(app_client: client_full, department: dept_a)
+      full_access.can_read = true
+      full_access.can_write = true
+      full_access.save!
+
+      # Create seed document in dept-B (for IDOR tests)
+      doc_b = Document.new(
+        department: dept_b,
+        filename: "seed-dept-b.txt",
+        content_type: "text/plain",
+        byte_size: 11,
+        uploaded_by: "setup"
+      )
+      doc_b.file.attach(io: StringIO.new("dept-B seed"), filename: "seed-dept-b.txt", content_type: "text/plain")
+      doc_b.save!
+
+      # Create seed document in dept-A (for write-only test)
+      doc_a = Document.new(
+        department: dept_a,
+        filename: "seed-dept-a.txt",
+        content_type: "text/plain",
+        byte_size: 11,
+        uploaded_by: "setup"
+      )
+      doc_a.file.attach(io: StringIO.new("dept-A seed"), filename: "seed-dept-a.txt", content_type: "text/plain")
+      doc_a.save!
+
+      puts "deptA_id=" + dept_a.id.to_s
+      puts "deptA_child_id=" + dept_a_child.id.to_s
+      puts "deptB_id=" + dept_b.id.to_s
+      puts "deptB_doc_id=" + doc_b.id.to_s
+      puts "deptA_doc_id=" + doc_a.id.to_s
+    RUBY
+
+    ENV_FILE = File.expand_path("../tmp/monkey.env", __dir__)
+
+    module_function
+
+    def run!
+      clients = %w[monkey-readonly monkey-writeonly monkey-noaccess monkey-deptA]
+      client_secrets = {}
+
+      # Register clients in oauth-provider
+      clients.each do |client_id|
+        register = Stack.exec("oauth-provider", "bin/register-client", client_id)
+        secret = register[/client_secret:\s+(\h+)/, 1] or
+          abort "cannot parse client secret for #{client_id}:\n#{register}"
+        client_secrets[client_id] = secret
+      end
+
+      # Provision departments and access via rails runner
+      runner = Stack.exec("web", "bin/rails", "runner", RUNNER)
+      deptA_id = runner[/deptA_id=(\S+)/, 1] or abort "cannot parse deptA_id:\n#{runner}"
+      deptA_child_id = runner[/deptA_child_id=(\S+)/, 1] or abort "cannot parse deptA_child_id:\n#{runner}"
+      deptB_id = runner[/deptB_id=(\S+)/, 1] or abort "cannot parse deptB_id:\n#{runner}"
+      deptB_doc_id = runner[/deptB_doc_id=(\S+)/, 1] or abort "cannot parse deptB_doc_id:\n#{runner}"
+      deptA_doc_id = runner[/deptA_doc_id=(\S+)/, 1] or abort "cannot parse deptA_doc_id:\n#{runner}"
+
+      # Write env file
+      env_content = "MONKEY_READONLY_SECRET=#{client_secrets['monkey-readonly']}\n"
+      env_content += "MONKEY_WRITEONLY_SECRET=#{client_secrets['monkey-writeonly']}\n"
+      env_content += "MONKEY_NOACCESS_SECRET=#{client_secrets['monkey-noaccess']}\n"
+      env_content += "MONKEY_DEPTA_SECRET=#{client_secrets['monkey-deptA']}\n"
+      env_content += "MONKEY_DEPTA_ID=#{deptA_id}\n"
+      env_content += "MONKEY_DEPTA_CHILD_ID=#{deptA_child_id}\n"
+      env_content += "MONKEY_DEPTB_ID=#{deptB_id}\n"
+      env_content += "MONKEY_DEPTB_DOC_ID=#{deptB_doc_id}\n"
+      env_content += "MONKEY_DEPTA_DOC_ID=#{deptA_doc_id}\n"
+
+      File.write(ENV_FILE, env_content)
+      puts "provisioned 4 clients and 2 departments"
+      puts "credentials saved to #{ENV_FILE} (gitignored)"
+    end
+
+    def load_env!
+      return unless File.exist?(ENV_FILE)
+      File.readlines(ENV_FILE, chomp: true).each do |line|
+        key, value = line.split("=", 2)
+        ENV[key] ||= value if key && value
+      end
+    end
+  end
+
+  # Fetches and caches client_credentials bearer tokens; refreshed on 401.
+  class TokenSource
+    def initialize(token_url, client_id, client_secret)
+      @token_url = URI(token_url)
+      @client_id = client_id
+      @client_secret = client_secret
+      @mutex = Mutex.new
+    end
+
+    def token
+      @mutex.synchronize { @token ||= fetch }
+    end
+
+    def refresh!
+      @mutex.synchronize { @token = fetch }
+    end
+
+    private
+
+    def fetch
+      response = Net::HTTP.post_form(@token_url,
+                                     "grant_type" => "client_credentials",
+                                     "client_id" => @client_id,
+                                     "client_secret" => @client_secret)
+      abort "token fetch failed (#{response.code}): #{response.body}" unless response.code == "200"
+      JSON.parse(response.body).fetch("access_token")
+    end
+  end
+
+  module Api
+    module_function
+
+    def get(base_url, token, path, headers: {})
+      uri = URI("#{base_url}#{path}")
+      request = Net::HTTP::Get.new(uri)
+      request["Authorization"] = "Bearer #{token}" if token
+      headers.each { |k, v| request[k] = v }
+      response = Net::HTTP.start(uri.host, uri.port) { |http| http.request(request) }
+      [ response.code.to_i, response.body, response ]
+    rescue StandardError => e
+      [ 0, e.message, nil ]
+    end
+
+    def delete(base_url, token, path)
+      uri = URI("#{base_url}#{path}")
+      request = Net::HTTP::Delete.new(uri)
+      request["Authorization"] = "Bearer #{token}" if token
+      response = Net::HTTP.start(uri.host, uri.port) { |http| http.request(request) }
+      [ response.code.to_i, response.body ]
+    rescue StandardError => e
+      [ 0, e.message ]
+    end
+
+    def put(base_url, token, path, body, content_type: "application/x-www-form-urlencoded")
+      uri = URI("#{base_url}#{path}")
+      request = Net::HTTP::Put.new(uri)
+      request["Authorization"] = "Bearer #{token}" if token
+      request["Content-Type"] = content_type
+      request.body = body
+      response = Net::HTTP.start(uri.host, uri.port) { |http| http.request(request) }
+      [ response.code.to_i, response.body ]
+    rescue StandardError => e
+      [ 0, e.message ]
+    end
+
+    def post_form(base_url, token, path, params)
+      uri = URI("#{base_url}#{path}")
+      request = Net::HTTP::Post.new(uri)
+      request["Authorization"] = "Bearer #{token}" if token
+      request.set_form_data(params)
+      response = Net::HTTP.start(uri.host, uri.port) { |http| http.request(request) }
+      [ response.code.to_i, response.body ]
+    rescue StandardError => e
+      [ 0, e.message ]
+    end
+
+    def post_multipart(base_url, token, path, fields, files)
+      uri = URI("#{base_url}#{path}")
+      boundary = "monkey#{SecureRandom.hex(12)}"
+      body = Tempfile.new("monkey-multipart", binmode: true)
+      fields.each do |name, value|
+        body << "--#{boundary}\r\nContent-Disposition: form-data; name=\"#{name}\"\r\n\r\n#{value}\r\n"
+      end
+      files.each do |name, file_obj, filename, content_type|
+        body << "--#{boundary}\r\nContent-Disposition: form-data; name=\"#{name}\"; " \
+                "filename=\"#{filename}\"\r\nContent-Type: #{content_type}\r\n\r\n"
+        IO.copy_stream(file_obj, body)
+        body << "\r\n"
+      end
+      body << "--#{boundary}--\r\n"
+      body.rewind
+
+      request = Net::HTTP::Post.new(uri)
+      request["Authorization"] = "Bearer #{token}" if token
+      request["Content-Type"] = "multipart/form-data; boundary=#{boundary}"
+      request["Content-Length"] = body.size.to_s
+      request.body_stream = body
+
+      response = Net::HTTP.start(uri.host, uri.port) { |http| http.request(request) }
+      [ response.code.to_i, response.body ]
+    rescue StandardError => e
+      [ 0, e.message ]
+    ensure
+      body&.close!
+    end
+  end
+
+  module Modules
+    # Forge hostile tokens and test auth boundaries
+    module Auth
+      module_function
+
+      def run(base_url, token_source, _probes_out, dry_run: false)
+        probes = []
+
+        # Real token for payload forgery
+        real_token = token_source.token
+        payload_b64 = real_token.split(".")[1]
+        payload_b64 += "=" * (4 - payload_b64.length % 4) # pad to multiple of 4
+        real_payload = JSON.parse(Base64.urlsafe_decode64(payload_b64))
+
+        # Probe: no Authorization header
+        code, _body = Api.get(base_url, nil, "/api/v1/ping")
+        probes << Probe.new(
+          module_name: "auth", name: "no_auth_header", expected: "401",
+          actual_status: code, verdict: (code == 401 ? :defended : :gap),
+          detail: "missing auth should reject", repro: "curl #{base_url}/api/v1/ping"
+        )
+
+        # Probe: garbage token
+        code, _body = Api.get(base_url, "garbage", "/api/v1/ping")
+        probes << Probe.new(
+          module_name: "auth", name: "garbage_token", expected: "401",
+          actual_status: code, verdict: (code == 401 ? :defended : :gap),
+          detail: "malformed token should reject",
+          repro: "curl -H 'Authorization: Bearer garbage' #{base_url}/api/v1/ping"
+        )
+
+        # Probe: alg:none forged token
+        unless dry_run
+          forged_none = forge_token(real_payload, alg: "none")
+          code, _body = Api.get(base_url, forged_none, "/api/v1/ping")
+          probes << Probe.new(
+            module_name: "auth", name: "alg_none_token", expected: "401",
+            actual_status: code, verdict: (code == 401 ? :defended : :gap),
+            detail: "alg:none should reject (RS256 pinned)",
+            repro: "curl -H 'Authorization: Bearer <forged-alg-none>' #{base_url}/api/v1/ping"
+          )
+        end
+
+        # Probe: HS256 forged token (signed with random key)
+        unless dry_run
+          forged_hs = forge_token(real_payload, alg: "HS256", key: SecureRandom.random_bytes(32))
+          code, _body = Api.get(base_url, forged_hs, "/api/v1/ping")
+          probes << Probe.new(
+            module_name: "auth", name: "hs256_forged_token", expected: "401",
+            actual_status: code, verdict: (code == 401 ? :defended : :gap),
+            detail: "HS256 with wrong key should reject",
+            repro: "curl -H 'Authorization: Bearer <hs256-forged>' #{base_url}/api/v1/ping"
+          )
+        end
+
+        # Probe: tampered payload (flip a char in real token)
+        unless dry_run
+          parts = real_token.split(".")
+          tampered_payload = parts[1].tr("a-z", "b-za")
+          tampered = "#{parts[0]}.#{tampered_payload}.#{parts[2]}"
+          code, _body = Api.get(base_url, tampered, "/api/v1/ping")
+          probes << Probe.new(
+            module_name: "auth", name: "tampered_payload", expected: "401",
+            actual_status: code, verdict: (code == 401 ? :defended : :gap),
+            detail: "tampered token signature should reject",
+            repro: "curl -H 'Authorization: Bearer <tampered>' #{base_url}/api/v1/ping"
+          )
+        end
+
+        # Probe: stripped signature
+        unless dry_run
+          parts = real_token.split(".")
+          stripped = "#{parts[0]}.#{parts[1]}."
+          code, _body = Api.get(base_url, stripped, "/api/v1/ping")
+          probes << Probe.new(
+            module_name: "auth", name: "stripped_signature", expected: "401",
+            actual_status: code, verdict: (code == 401 ? :defended : :gap),
+            detail: "missing signature should reject",
+            repro: "curl -H 'Authorization: Bearer <no-sig>' #{base_url}/api/v1/ping"
+          )
+        end
+
+        # Probe: aud claim unverified (GED-SEC-01) — real, valid token should auth
+        # when aud is not enforced (known gap)
+        unless dry_run
+          code, _body = Api.get(base_url, real_token, "/api/v1/ping")
+          if code == 200
+            probes << Probe.new(
+              module_name: "auth", name: "aud_unverified", expected: "200",
+              actual_status: code, verdict: :gap, detail: "GED-SEC-01: aud unverified",
+              repro: "curl -H 'Authorization: Bearer <real-token>' #{base_url}/api/v1/ping"
+            )
+          end
+        end
+
+        probes
+      end
+
+      def forge_token(payload, alg:, key: nil)
+        header = { "alg" => alg, "typ" => "JWT" }
+        payload_copy = payload.dup
+        payload_copy.delete("exp") # Remove exp if present
+        payload_copy["exp"] = Time.now.to_i + 3600
+
+        header_b64 = Base64.urlsafe_encode64(JSON.generate(header)).delete("=")
+        payload_b64 = Base64.urlsafe_encode64(JSON.generate(payload_copy)).delete("=")
+
+        if alg == "none"
+          signature = ""
+        elsif alg == "HS256" && key
+          message = "#{header_b64}.#{payload_b64}"
+          signature_bin = OpenSSL::HMAC.digest("SHA256", key, message)
+          signature = Base64.urlsafe_encode64(signature_bin).delete("=")
+        else
+          signature = ""
+        end
+
+        "#{header_b64}.#{payload_b64}.#{signature}"
+      end
+    end
+
+    # Authorization + IDOR tests
+    module Authz
+      module_function
+
+      def run(base_url, token_sources, probes_out, dry_run: false)
+        probes = []
+
+        deptB_id = ENV["MONKEY_DEPTB_ID"] or return probes << Probe.new(
+          module_name: "authz", name: "setup_missing", expected: "n/a",
+          actual_status: 0, verdict: :info, detail: "setup not run",
+          repro: "bin/monkey --setup"
+        )
+        deptB_doc_id = ENV["MONKEY_DEPTB_DOC_ID"] or return probes
+        deptA_id = ENV["MONKEY_DEPTA_ID"] or return probes
+        deptA_child_id = ENV["MONKEY_DEPTA_CHILD_ID"] or return probes
+        deptA_doc_id = ENV["MONKEY_DEPTA_DOC_ID"] or return probes
+
+        depta_token = token_sources["monkey-deptA"]&.token
+        readonly_token = token_sources["monkey-readonly"]&.token
+        writeonly_token = token_sources["monkey-writeonly"]&.token
+        noaccess_token = token_sources["monkey-noaccess"]&.token
+
+        # Probe: full-access client cannot read across department boundary
+        unless dry_run
+          code, body = Api.get(base_url, depta_token, "/api/v1/documents/#{deptB_doc_id}")
+          probes << Probe.new(
+            module_name: "authz", name: "cross_dept_forbidden_read", expected: "403",
+            actual_status: code, verdict: (code == 403 ? :defended : :gap),
+            detail: "dept-A client reading dept-B doc",
+            repro: "curl -H 'Authorization: Bearer <deptA-token>' #{base_url}/api/v1/documents/#{deptB_doc_id}"
+          )
+        end
+
+        # Probe: cross-dept download forbidden
+        unless dry_run
+          code, _body = Api.get(base_url, depta_token, "/api/v1/documents/#{deptB_doc_id}/download")
+          probes << Probe.new(
+            module_name: "authz", name: "cross_dept_forbidden_download", expected: "403",
+            actual_status: code, verdict: (code == 403 ? :defended : :gap),
+            detail: "dept-A client downloading dept-B doc",
+            repro: "curl -H 'Authorization: Bearer <deptA-token>' #{base_url}/api/v1/documents/#{deptB_doc_id}/download"
+          )
+        end
+
+        # Probe: cross-dept delete forbidden
+        unless dry_run
+          code, _body = Api.delete(base_url, depta_token, "/api/v1/documents/#{deptB_doc_id}")
+          probes << Probe.new(
+            module_name: "authz", name: "cross_dept_forbidden_delete", expected: "403",
+            actual_status: code, verdict: (code == 403 ? :defended : :gap),
+            detail: "dept-A client deleting dept-B doc",
+            repro: "curl -X DELETE -H 'Authorization: Bearer <deptA-token>' #{base_url}/api/v1/documents/#{deptB_doc_id}"
+          )
+        end
+
+        # Probe: cross-dept tag update forbidden
+        unless dry_run
+          code, _body = Api.put(base_url, depta_token, "/api/v1/documents/#{deptB_doc_id}/tags",
+                                "tags[key]=value")
+          probes << Probe.new(
+            module_name: "authz", name: "cross_dept_forbidden_tags", expected: "403",
+            actual_status: code, verdict: (code == 403 ? :defended : :gap),
+            detail: "dept-A client updating dept-B doc tags",
+            repro: "curl -X PUT -H 'Authorization: Bearer <deptA-token>' -d 'tags[key]=value' #{base_url}/api/v1/documents/#{deptB_doc_id}/tags"
+          )
+        end
+
+        # Probe: cross-dept list forbidden
+        unless dry_run
+          code, body = Api.get(base_url, depta_token, "/api/v1/documents?department_id=#{deptB_id}")
+          probes << Probe.new(
+            module_name: "authz", name: "cross_dept_forbidden_list", expected: "403",
+            actual_status: code, verdict: (code == 403 ? :defended : :gap),
+            detail: "dept-A client listing dept-B documents",
+            repro: "curl -H 'Authorization: Bearer <deptA-token>' '#{base_url}/api/v1/documents?department_id=#{deptB_id}'"
+          )
+        end
+
+        # Probe: list does not leak cross-dept doc
+        unless dry_run
+          code, body = Api.get(base_url, depta_token, "/api/v1/documents")
+          leak = body.include?(deptB_doc_id)
+          probes << Probe.new(
+            module_name: "authz", name: "list_no_cross_dept_leak", expected: "not in response",
+            actual_status: code, verdict: (!leak && code == 200 ? :defended : :gap),
+            detail: "dept-B doc UUID appears in dept-A list",
+            repro: "curl -H 'Authorization: Bearer <deptA-token>' #{base_url}/api/v1/documents"
+          )
+        end
+
+        # Probe: write-only client cannot read
+        unless dry_run
+          code, _body = Api.get(base_url, writeonly_token, "/api/v1/documents/#{deptA_doc_id}")
+          probes << Probe.new(
+            module_name: "authz", name: "write_only_forbidden_read", expected: "403",
+            actual_status: code, verdict: (code == 403 ? :defended : :gap),
+            detail: "write-only client reading dept-A doc",
+            repro: "curl -H 'Authorization: Bearer <writeonly-token>' #{base_url}/api/v1/documents/#{deptA_doc_id}"
+          )
+        end
+
+        # Probe: no-access client rejected when showing a document
+        unless dry_run
+          code, _body = Api.get(base_url, noaccess_token, "/api/v1/documents/#{deptA_doc_id}")
+          probes << Probe.new(
+            module_name: "authz", name: "noaccess_forbidden_show", expected: "403",
+            actual_status: code, verdict: (code == 403 ? :defended : :gap),
+            detail: "no-access client cannot show dept-A document",
+            repro: "curl -H 'Authorization: Bearer <noaccess-token>' #{base_url}/api/v1/documents/#{deptA_doc_id}"
+          )
+        end
+
+        # Probe: random UUID returns 404 or 403 (never 200/500)
+        unless dry_run
+          random_id = SecureRandom.uuid
+          code, _body = Api.get(base_url, depta_token, "/api/v1/documents/#{random_id}")
+          verdict = (code == 404 || code == 403) ? :defended : :gap
+          probes << Probe.new(
+            module_name: "authz", name: "random_uuid_not_found", expected: "403 or 404",
+            actual_status: code, verdict: verdict, detail: "random UUID should not exist",
+            repro: "curl -H 'Authorization: Bearer <deptA-token>' #{base_url}/api/v1/documents/#{random_id}"
+          )
+        end
+
+        # Probe: subtree cascade — upload to child dept via parent grant
+        unless dry_run
+          file = StringIO.new("cascade test")
+          fields = { "department_id" => deptA_child_id }
+          code, _body = Api.post_multipart(base_url, depta_token, "/api/v1/documents",
+                                           fields, [ [ "file", file, "cascade.txt", "text/plain" ] ])
+          probes << Probe.new(
+            module_name: "authz", name: "subtree_cascade_upload", expected: "201",
+            actual_status: code, verdict: (code == 201 ? :defended : :gap),
+            detail: "upload to child dept via parent grant succeeds",
+            repro: "POST /api/v1/documents with department_id=#{deptA_child_id} and parent grant only"
+          )
+        end
+
+        probes
+      end
+    end
+
+    # SSRF callback URL validation
+    module Ssrf
+      module_function
+
+      def run(base_url, token_sources, probes_out, dry_run: false)
+        probes = []
+
+        depta_token = token_sources["monkey-deptA"]&.token
+        deptA_id = ENV["MONKEY_DEPTA_ID"] or return probes
+
+        ssrf_tests = [
+          { url: "http://127.0.0.1/x", name: "loopback_decimal", expected: 422 },
+          { url: "http://10.0.0.5/x", name: "private_10", expected: 422 },
+          { url: "http://169.254.169.254/latest/meta-data", name: "link_local", expected: 422 },
+          { url: "http://192.168.1.1/x", name: "private_192", expected: 422 },
+          { url: "http://100.64.0.1/x", name: "cgnat", expected: 422 },
+          { url: "http://[::1]/x", name: "ipv6_loopback", expected: 422 },
+          { url: "http://[::ffff:127.0.0.1]/x", name: "ipv4_mapped_ipv6", expected: 422 },
+          { url: "ftp://evil/x", name: "non_http_scheme", expected: 422 },
+          { url: "http://", name: "hostless", expected: 422 },
+          { url: "http://2130706433/x", name: "decimal_ip_127.0.0.1", expected: 422 },
+          { url: "http://0x7f000001/x", name: "hex_ip_127.0.0.1", expected: 422 },
+          { url: "http://0177.0.0.1/x", name: "octal_ip_127.0.0.1", expected: 422 },
+          { url: "http://this-host-does-not-exist.invalid/x", name: "unresolvable_host", expected: 202 },
+          { url: "http://example.com/x", name: "public_host", expected: 202 }
+        ]
+
+        ssrf_tests.each do |test|
+          unless dry_run
+            fields = { "department_id" => deptA_id, "callback_url" => test[:url] }
+            file = StringIO.new("test")
+            code, _body = Api.post_multipart(base_url, depta_token, "/api/v1/documents",
+                                             fields, [ [ "file", file, "test.txt", "text/plain" ] ])
+            verdict = (code == test[:expected] ? :defended : :gap)
+            if code == 202 && test[:name] == "unresolvable_host"
+              verdict = :info
+            end
+            probes << Probe.new(
+              module_name: "ssrf", name: test[:name], expected: test[:expected].to_s,
+              actual_status: code, verdict: verdict,
+              detail: "callback_url=#{test[:url]}",
+              repro: "curl -F 'department_id=#{deptA_id}' -F 'callback_url=#{test[:url]}' -F 'file=@test.txt' -H 'Authorization: Bearer <deptA-token>' #{base_url}/api/v1/documents"
+            )
+          end
+        end
+
+        probes
+      end
+    end
+
+    # Fuzz the API for uncontracted responses
+    module FuzzApi
+      module_function
+
+      def run(base_url, token_sources, probes_out, dry_run: false)
+        probes = []
+
+        depta_token = token_sources["monkey-deptA"]&.token
+        deptA_id = ENV["MONKEY_DEPTA_ID"] or return probes
+
+        # Non-scalar query params
+        unless dry_run
+          code, _body = Api.get(base_url, depta_token, "/api/v1/documents?department_id[a]=b")
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "department_id_array", expected: "400",
+            actual_status: code, verdict: (code == 400 ? :defended : :gap),
+            detail: "non-scalar department_id should 400", repro: "?department_id[a]=b"
+          )
+        end
+
+        unless dry_run
+          code, _body = Api.get(base_url, depta_token, "/api/v1/documents?filename[]=x")
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "filename_array", expected: "400",
+            actual_status: code, verdict: (code == 400 ? :defended : :gap),
+            detail: "non-scalar filename should 400", repro: "?filename[]=x"
+          )
+        end
+
+        # tag_value without tag
+        unless dry_run
+          code, _body = Api.get(base_url, depta_token, "/api/v1/documents?tag_value=x")
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "tag_value_without_tag", expected: "400",
+            actual_status: code, verdict: (code == 400 ? :defended : :gap),
+            detail: "tag_value without tag should 400", repro: "?tag_value=x"
+          )
+        end
+
+        # Bad ISO8601 dates
+        unless dry_run
+          code, _body = Api.get(base_url, depta_token, "/api/v1/documents?uploaded_after=notadate")
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "bad_iso8601_after", expected: "400",
+            actual_status: code, verdict: (code == 400 ? :defended : :gap),
+            detail: "malformed date should 400", repro: "?uploaded_after=notadate"
+          )
+        end
+
+        unless dry_run
+          code, _body = Api.get(base_url, depta_token, "/api/v1/documents?indexed_before=2026-13-40")
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "bad_iso8601_before", expected: "400",
+            actual_status: code, verdict: (code == 400 ? :defended : :gap),
+            detail: "invalid ISO8601 should 400", repro: "?indexed_before=2026-13-40"
+          )
+        end
+
+        # Invalid upload_mode
+        unless dry_run
+          code, _body = Api.get(base_url, depta_token, "/api/v1/documents?upload_mode=bogus")
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "invalid_upload_mode", expected: "400",
+            actual_status: code, verdict: (code == 400 ? :defended : :gap),
+            detail: "invalid upload_mode should 400", repro: "?upload_mode=bogus"
+          )
+        end
+
+        # Extreme pagination
+        unless dry_run
+          code, _body = Api.get(base_url, depta_token, "/api/v1/documents?limit=-5")
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "negative_limit", expected: "200",
+            actual_status: code, verdict: (code == 200 ? :defended : :gap),
+            detail: "negative limit should clamp to 200", repro: "?limit=-5"
+          )
+        end
+
+        unless dry_run
+          code, _body = Api.get(base_url, depta_token, "/api/v1/documents?limit=999999")
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "huge_limit", expected: "200",
+            actual_status: code, verdict: (code == 200 ? :defended : :gap),
+            detail: "huge limit should clamp to 200", repro: "?limit=999999"
+          )
+        end
+
+        unless dry_run
+          code, _body = Api.get(base_url, depta_token, "/api/v1/documents?offset=-1")
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "negative_offset", expected: "200",
+            actual_status: code, verdict: (code == 200 ? :defended : :gap),
+            detail: "negative offset should clamp to 200", repro: "?offset=-1"
+          )
+        end
+
+        unless dry_run
+          code, _body = Api.get(base_url, depta_token, "/api/v1/documents?offset=99999999999999999999")
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "huge_offset", expected: "200",
+            actual_status: code, verdict: (code == 200 ? :defended : :gap),
+            detail: "huge offset should clamp to 200", repro: "?offset=99999999999999999999"
+          )
+        end
+
+        # Oversized upload (GED-SEC-02)
+        unless dry_run
+          file = StringIO.new("x" * (40 * 1_000_000))
+          fields = { "department_id" => deptA_id }
+          code, _body = Api.post_multipart(base_url, depta_token, "/api/v1/documents",
+                                           fields, [ [ "file", file, "huge.bin", "application/octet-stream" ] ])
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "oversized_upload", expected: "413 or 422",
+            actual_status: code, verdict: (code == 413 || code == 422 ? :defended : :gap),
+            detail: "GED-SEC-02: 40MB upload should reject",
+            repro: "POST with 40MB file body"
+          )
+        end
+
+        # Filename with null byte (GED-SEC-03)
+        unless dry_run
+          file = StringIO.new("content")
+          fields = { "department_id" => deptA_id }
+          code, body = Api.post_multipart(base_url, depta_token, "/api/v1/documents",
+                                          fields, [ [ "file", file, "a\x00b.pdf", "application/pdf" ] ])
+          verdict = :defended
+          detail = "null byte in filename sanitized"
+          if code == 201
+            parsed = JSON.parse(body) rescue {}
+            if parsed["filename"]&.include?("\x00")
+              verdict = :gap
+              detail = "GED-SEC-03: null byte preserved in filename"
+            end
+          end
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "filename_null_byte", expected: "4xx or sanitized",
+            actual_status: code, verdict: verdict, detail: detail,
+            repro: "POST with filename containing null byte"
+          )
+        end
+
+        # Filename with path traversal (GED-SEC-03)
+        unless dry_run
+          file = StringIO.new("content")
+          fields = { "department_id" => deptA_id }
+          code, body = Api.post_multipart(base_url, depta_token, "/api/v1/documents",
+                                          fields, [ [ "file", file, "../../etc/passwd", "text/plain" ] ])
+          verdict = :defended
+          detail = "path traversal in filename rejected"
+          if code == 201
+            parsed = JSON.parse(body) rescue {}
+            if parsed["filename"]&.include?("/")
+              verdict = :gap
+              detail = "GED-SEC-03: path traversal preserved in filename"
+            end
+          end
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "filename_path_traversal", expected: "4xx or sanitized",
+            actual_status: code, verdict: verdict, detail: detail,
+            repro: "POST with filename containing path separators"
+          )
+        end
+
+        # Spoofed content_type (GED-SEC-04)
+        unless dry_run
+          file = StringIO.new("plain text body")
+          fields = { "department_id" => deptA_id }
+          code, body = Api.post_multipart(base_url, depta_token, "/api/v1/documents",
+                                          fields, [ [ "file", file, "data.pdf", "application/pdf" ] ])
+          verdict = :info
+          detail = "content_type accepted as-is"
+          if code == 201
+            parsed = JSON.parse(body) rescue {}
+            if parsed["content_type"] == "application/pdf"
+              detail = "GED-SEC-04: spoofed content_type stored verbatim"
+            end
+          end
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "spoofed_content_type", expected: "varies",
+            actual_status: code, verdict: verdict, detail: detail,
+            repro: "POST with mismatched content_type header"
+          )
+        end
+
+        # Malformed JSON (GED-SEC-05)
+        unless dry_run
+          uri = URI("#{base_url}/api/v1/documents/#{SecureRandom.uuid}/tags")
+          request = Net::HTTP::Put.new(uri)
+          request["Authorization"] = "Bearer #{depta_token}"
+          request["Content-Type"] = "application/json"
+          request.body = "{\"tags\":"
+          code = 0
+          body = ""
+          content_type = ""
+          Net::HTTP.start(uri.host, uri.port) do |http|
+            response = http.request(request)
+            code = response.code.to_i
+            body = response.body
+            content_type = response["Content-Type"] || ""
+          end
+
+          verdict = :gap
+          detail = "malformed JSON validation failed"
+
+          if code == 400
+            # Defended: 400 with application/json Content-Type and JSON body with "error" key
+            if content_type.include?("application/json")
+              begin
+                parsed = JSON.parse(body)
+                if parsed.is_a?(Hash) && parsed.key?("error")
+                  verdict = :defended
+                  detail = "malformed JSON handled gracefully with JSON error contract"
+                else
+                  detail = "GED-SEC-05: malformed JSON returns 400 but response body missing 'error' key"
+                end
+              rescue JSON::ParserError
+                detail = "GED-SEC-05: malformed JSON returns 400 with application/json but unparseable body"
+              end
+            else
+              detail = "GED-SEC-05: malformed JSON returns a non-JSON (#{content_type}) error body, not the API JSON error contract"
+            end
+          else
+            detail = "malformed JSON returns #{code}, not 400"
+          end
+
+          probes << Probe.new(
+            module_name: "fuzz-api", name: "malformed_json", expected: "400 with JSON",
+            actual_status: code, verdict: verdict, detail: detail,
+            repro: "PUT /api/v1/documents/<id>/tags with broken JSON body"
+          )
+        end
+
+        probes
+      end
+    end
+
+    # Admin UI basic fuzz
+    module FuzzAdmin
+      module_function
+
+      def parse_cookies(response_headers)
+        cookies = {}
+        Array(response_headers).each do |header|
+          if header =~ /^Set-Cookie:\s*([^;=]+)=([^;]+)/i
+            cookies[Regexp.last_match(1)] = Regexp.last_match(2)
+          end
+        end
+        cookies
+      end
+
+      def cookie_string(cookies)
+        cookies.map { |k, v| "#{k}=#{v}" }.join("; ")
+      end
+
+      def run(base_url, token_sources, probes_out, dry_run: false)
+        probes = []
+
+        username = ENV.fetch("GED_ADMIN_USERNAME", "admin")
+        password = ENV.fetch("GED_ADMIN_PASSWORD", "changeme")
+
+        unless dry_run
+          uri = URI(base_url)
+          http = Net::HTTP.new(uri.host, uri.port)
+          cookies = {}
+
+          # GET /admins/sign_in to capture CSRF token and session cookie
+          request = Net::HTTP::Get.new("/admins/sign_in")
+          response = http.request(request)
+          signin_page = response.body
+          new_cookies = parse_cookies(response.get_fields("set-cookie"))
+          cookies.merge!(new_cookies)
+
+          if response.code.to_i == 200
+            token_match = signin_page[/name="authenticity_token" value="([^"]+)"/, 1]
+
+            if token_match
+              # POST /admins/sign_in with credentials and session cookie
+              post_request = Net::HTTP::Post.new("/admins/sign_in")
+              post_request["Cookie"] = cookie_string(cookies)
+              post_request.set_form_data({
+                                           "admin[username]" => username,
+                                           "admin[password]" => password,
+                                           "authenticity_token" => token_match
+                                         })
+              post_response = http.request(post_request)
+              post_cookies = parse_cookies(post_response.get_fields("set-cookie"))
+              cookies.merge!(post_cookies) if post_cookies.any?
+
+              if [ 302, 303 ].include?(post_response.code.to_i)
+                # Successful login redirect; now try to access the admin documents page
+                get_request = Net::HTTP::Get.new("/admin/documents?filename[]=x")
+                get_request["Cookie"] = cookie_string(cookies)
+                get_response = http.request(get_request)
+                code = get_response.code.to_i
+
+                verdict = (code >= 400 && code < 500 ? :defended : :gap)
+                detail = "admin index filename[] array guard"
+                if code == 500
+                  detail = "GED-SEC-06: admin index filename[] array reaches sanitize_sql_like → 500"
+                end
+
+                probes << Probe.new(
+                  module_name: "fuzz-admin", name: "admin_filename_array", expected: "4xx",
+                  actual_status: code, verdict: verdict, detail: detail,
+                  repro: "GET /admin/documents?filename[]=x (with authenticated session cookie)"
+                )
+              else
+                probes << Probe.new(
+                  module_name: "fuzz-admin", name: "admin_login", expected: "302/303",
+                  actual_status: post_response.code.to_i, verdict: :info,
+                  detail: "admin module skipped: login failed (wrong credentials or csrf mismatch)",
+                  repro: "POST /admins/sign_in"
+                )
+              end
+            else
+              probes << Probe.new(
+                module_name: "fuzz-admin", name: "admin_login", expected: "csrf token present",
+                actual_status: response.code.to_i, verdict: :info,
+                detail: "admin module skipped: cannot parse CSRF token from sign_in page",
+                repro: "GET /admins/sign_in"
+              )
+            end
+          else
+            probes << Probe.new(
+              module_name: "fuzz-admin", name: "admin_login", expected: "200",
+              actual_status: response.code.to_i, verdict: :info,
+              detail: "admin module skipped: sign_in page not accessible",
+              repro: "GET /admins/sign_in"
+            )
+          end
+
+          http.finish rescue nil
+        end
+
+        probes
+      end
+    end
+  end
+
+  module Report
+    module_function
+
+    def print_findings(probes, json_path: nil)
+      anomalies = probes.reject { |p| p.verdict == :defended }
+
+      # Print to stderr for immediate visibility
+      anomalies.each do |p|
+        ged_sec = GED_SEC_MAP[p.name] ? "GED-SEC-#{GED_SEC_MAP[p.name]}" : "uncategorized"
+        $stderr.puts "anomaly: #{p.module_name}/#{p.name} (#{ged_sec}) — #{p.verdict.upcase}"
+        $stderr.puts "  expected: #{p.expected}"
+        $stderr.puts "  actual: #{p.actual_status}"
+        $stderr.puts "  detail: #{p.detail}"
+        $stderr.puts "  repro: #{p.repro}"
+        $stderr.puts
+      end
+
+      # Summarize to stdout
+      by_module = probes.group_by(&:module_name)
+      puts
+      puts "== MONKEY PENTEST REPORT =="
+      by_module.each do |mod, mod_probes|
+        defended = mod_probes.count { |p| p.verdict == :defended }
+        gaps = mod_probes.count { |p| p.verdict == :gap }
+        info = mod_probes.count { |p| p.verdict == :info }
+        puts "  #{mod}: #{mod_probes.size} probes  #{defended} defended  #{gaps} gaps  #{info} info"
+      end
+      puts
+
+      total = probes.size
+      defended = probes.count { |p| p.verdict == :defended }
+      gaps = probes.count { |p| p.verdict == :gap }
+      info = probes.count { |p| p.verdict == :info }
+      puts "PROBES #{total}  DEFENDED #{defended}  GAPS #{gaps}  INFO #{info}"
+      puts
+
+      # JSON output if requested
+      if json_path
+        report = {
+          timestamp: Time.now.iso8601,
+          total_probes: total,
+          defended: defended,
+          gaps: gaps,
+          info: info,
+          anomalies: anomalies.map do |p|
+            {
+              module: p.module_name,
+              name: p.name,
+              ged_sec: GED_SEC_MAP[p.name] ? "GED-SEC-#{GED_SEC_MAP[p.name]}" : nil,
+              verdict: p.verdict.to_s,
+              expected: p.expected,
+              actual: p.actual_status,
+              detail: p.detail,
+              repro: p.repro
+            }
+          end
+        }
+        File.write(json_path, JSON.pretty_generate(report))
+        puts "JSON report written to #{json_path}"
+      end
+    end
+  end
+
+  class Runner
+    def initialize(options)
+      @options = options
+      Setup.load_env!
+      @options.base_url ||= ENV["MONKEY_BASE_URL"] || Stack.urls[:base]
+      @options.token_url ||= ENV["MONKEY_TOKEN_URL"] || Stack.urls[:token]
+    end
+
+    def call
+      if @options.setup
+        Setup.run!
+        return
+      end
+
+      if @options.dry_run
+        print_dry_run
+        return
+      end
+
+      # Load token sources for all test clients
+      token_sources = {
+        "monkey-readonly" => TokenSource.new(@options.token_url, "monkey-readonly",
+                                             ENV["MONKEY_READONLY_SECRET"] || ""),
+        "monkey-writeonly" => TokenSource.new(@options.token_url, "monkey-writeonly",
+                                              ENV["MONKEY_WRITEONLY_SECRET"] || ""),
+        "monkey-noaccess" => TokenSource.new(@options.token_url, "monkey-noaccess",
+                                             ENV["MONKEY_NOACCESS_SECRET"] || ""),
+        "monkey-deptA" => TokenSource.new(@options.token_url, "monkey-deptA",
+                                          ENV["MONKEY_DEPTA_SECRET"] || "")
+      }
+
+      probes = []
+      dry_run = false
+
+      modules = @options.only_modules.empty? ? %w[auth authz ssrf fuzz-api fuzz-admin] : @options.only_modules
+
+      probes += Modules::Auth.run(@options.base_url, token_sources["monkey-readonly"], probes,
+                                  dry_run: dry_run) if modules.include?("auth")
+      probes += Modules::Authz.run(@options.base_url, token_sources, probes,
+                                   dry_run: dry_run) if modules.include?("authz")
+      probes += Modules::Ssrf.run(@options.base_url, token_sources, probes,
+                                  dry_run: dry_run) if modules.include?("ssrf")
+      probes += Modules::FuzzApi.run(@options.base_url, token_sources, probes,
+                                     dry_run: dry_run) if modules.include?("fuzz-api")
+      probes += Modules::FuzzAdmin.run(@options.base_url, token_sources, probes,
+                                       dry_run: dry_run) if modules.include?("fuzz-admin")
+
+      Report.print_findings(probes, json_path: @options.json_path)
+    end
+
+    private
+
+    def print_dry_run
+      modules = @options.only_modules.empty? ? %w[auth authz ssrf fuzz-api fuzz-admin] : @options.only_modules
+      puts "== MONKEY DRY RUN ==\n\n"
+      modules.each do |mod|
+        case mod
+        when "auth"
+          puts "AUTH module:"
+          puts "  - no_auth_header: GET /api/v1/ping without Authorization → 401"
+          puts "  - garbage_token: GET /api/v1/ping with garbage token → 401"
+          puts "  - alg_none_token: forged alg:none token → 401"
+          puts "  - hs256_forged_token: HS256 with random key → 401"
+          puts "  - tampered_payload: flip char in token → 401"
+          puts "  - stripped_signature: remove signature → 401"
+          puts "  - aud_unverified: real token with no aud claim (GED-SEC-01)"
+        when "authz"
+          puts "AUTHZ module:"
+          puts "  - cross_dept_forbidden_read/download/delete/tags/list"
+          puts "  - list_no_cross_dept_leak: dept-B doc not in dept-A list"
+          puts "  - write_only_forbidden_read: write-only client can't read"
+          puts "  - noaccess_forbidden: unregistered client rejected"
+          puts "  - random_uuid_not_found: unknown doc returns 403/404"
+          puts "  - subtree_cascade_readable: child dept via parent grant"
+        when "ssrf"
+          puts "SSRF module (callback_url validation):"
+          puts "  - 14 probes: loopback, private IPs, alt encodings (decimal/hex/octal)"
+          puts "  - unresolvable_host: should accept 202 (GED-SEC-10)"
+          puts "  - public_host: should accept 202"
+        when "fuzz-api"
+          puts "FUZZ-API module:"
+          puts "  - non-scalar query params (department_id[a], filename[])"
+          puts "  - tag_value without tag, bad ISO8601 dates, invalid upload_mode"
+          puts "  - extreme pagination (negative, huge limit/offset)"
+          puts "  - oversized_upload 40MB (GED-SEC-02)"
+          puts "  - filename_null_byte, filename_path_traversal (GED-SEC-03)"
+          puts "  - spoofed_content_type (GED-SEC-04)"
+          puts "  - malformed_json (GED-SEC-05)"
+        when "fuzz-admin"
+          puts "FUZZ-ADMIN module:"
+          puts "  - admin login + CSRF token extraction"
+          puts "  - admin_filename_array: GET /admin/documents?filename[]=x (GED-SEC-06)"
+        end
+        puts
+      end
+      puts "Run without --dry-run to execute probes against the stack."
+    end
+  end
+end
+
+# macOS idle-sleep mid-run freezes the Docker VM's clock, breaking timeouts.
+# Re-exec under caffeinate when available.
+if !ENV["MONKEY_CAFFEINATED"] && File.executable?("/usr/bin/caffeinate")
+  exec({ "MONKEY_CAFFEINATED" => "1" }, "/usr/bin/caffeinate", "-i", $PROGRAM_NAME, *ARGV)
+end
+
+options = Monkey::CLI.parse(ARGV)
+Monkey::Runner.new(options).call
