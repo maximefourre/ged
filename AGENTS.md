@@ -170,11 +170,20 @@ is the source of truth.
   metadata `null` until the document exists) to the `callback_url` (5 attempts,
   polynomial backoff, logs on final failure). `GET /api/v1/upload_requests/:id`
   mirrors the same payload shape for polling. **SSRF guard:**
-  `CallbackUrlPolicy.reject_reason(url, resolve:)` blocks non-routable
-  `callback_url` targets (loopback, RFC1918, link-local incl. cloud metadata,
-  CGNAT, IPv4-mapped IPv6) — syntactically at request time in `UploadRequest`
-  (422, no DNS) and after DNS resolution in `DeliverCallbackJob` (refuse + log,
-  no retry). Security audit findings live in `docs/security/`.
+  `CallbackUrlPolicy` blocks non-routable `callback_url` targets (loopback,
+  RFC1918, link-local incl. cloud metadata, CGNAT, IPv4-mapped IPv6) —
+  syntactically at request time in `UploadRequest` (422, no DNS) and with DNS
+  resolution in `DeliverCallbackJob` (refuse + log, no retry). Request-time
+  parsing also normalizes numeric IPv4 encodings itself via an `inet_aton`
+  helper (decimal `2130706433`, hex `0x7f000001`, octal `0177.0.0.1`, short
+  `127.1`), so numeric-loopback forms are caught before any resolver — and
+  identically on Darwin and glibc, which disagree on octal. At delivery,
+  `decide(url, resolve: true)` resolves **once** via `Addrinfo.getaddrinfo`
+  (the same libc path `Net::HTTP` uses) and the job **pins** the approved
+  address (`http.ipaddr=`, keeping the hostname for Host/SNI/cert), so there is
+  no resolve/connect rebinding window; an unresolvable host is refused (nothing
+  to pin). Design: `docs/superpowers/specs/2026-07-15-callback-ssrf-pinning-design.md`;
+  security audit findings live in `docs/security/`.
 - **Upload queue pause:** `UploadQueue` (facade over Solid Queue's native
   pause) backs the Pause/Resume button on `/admin/upload_requests`. Pausing
   stops claiming new `StoreDocumentJob`s; running jobs finish and their

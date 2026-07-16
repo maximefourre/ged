@@ -9,7 +9,12 @@ class Api::V1::AsyncUploadTest < ActionDispatch::IntegrationTest
     @client = AppClient.create!(client_identifier: "erp-app")
     @client.departments << @finance
     @callback_url = "https://caller.test/ged-callback"
+    # The callback host must resolve to a public address, otherwise the SSRF
+    # policy's "unresolvable => refuse" rule blocks delivery before the POST.
+    stub_dns!([ "93.184.216.34" ])
   end
+
+  teardown { unstub_dns! }
 
   test "upload with a callback_url targeting an internal address returns 422" do
     post "/api/v1/documents", headers: bearer_header("erp-app"),

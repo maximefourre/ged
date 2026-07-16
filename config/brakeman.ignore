@@ -9,6 +9,16 @@
       "file": "app/jobs/store_document_job.rb",
       "line": 10,
       "note": "StagingStore.path(upload_request.id) — the id is a server-generated uuid primary key, never user input"
+    },
+    {
+      "warning_type": "File Access",
+      "warning_code": 16,
+      "fingerprint": "2d5bfe8d3e8e6bc38cd73b419c8d85106a703c654eefd6617b8cf99c527a38ff",
+      "check_name": "FileAccess",
+      "message": "Model attribute used in file name",
+      "file": "app/jobs/deliver_callback_job.rb",
+      "line": 43,
+      "note": "False positive: this is Net::HTTP.new opening a network connection to the callback host, not a filesystem path. The host is SSRF-vetted by CallbackUrlPolicy and the connect is pinned to the vetted address (http.ipaddr)."
     }
   ],
   "brakeman_version": "8.0.5"

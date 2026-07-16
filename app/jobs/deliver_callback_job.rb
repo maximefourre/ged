@@ -17,9 +17,13 @@ class DeliverCallbackJob < ApplicationJob
 
   def perform(upload_request_id)
     upload_request = UploadRequest.find(upload_request_id)
-    # SSRF barrier: refuse blocked targets outright (no DeliveryFailed — a
-    # forbidden destination must not be retried).
-    if (reason = CallbackUrlPolicy.reject_reason(upload_request.callback_url, resolve: true))
+    uri = URI(upload_request.callback_url)
+    # SSRF barrier: resolve + vet once, then PIN the approved address so the
+    # socket connects to exactly what we checked (no re-resolution — closes the
+    # rebinding TOCTOU). A blocked or unresolvable target is refused outright
+    # (no DeliveryFailed — a forbidden destination must not be retried).
+    decision = CallbackUrlPolicy.decide(upload_request.callback_url, resolve: true)
+    if (reason = decision.reason)
       Telemetry.callback_deliveries.add(1, attributes: { "outcome" => "refused" })
       Rails.logger.error(
         "Callback refused for upload_request #{upload_request.id}: callback_url #{reason}"
@@ -35,11 +39,14 @@ class DeliverCallbackJob < ApplicationJob
       tags: upload_request.document&.tags,
       metadata: upload_request.document&.metadata_hash
     }
-    uri = URI(upload_request.callback_url)
-    response = Net::HTTP.start(uri.host, uri.port,
-                               use_ssl: uri.scheme == "https",
-                               open_timeout: OPEN_TIMEOUT, read_timeout: READ_TIMEOUT) do |http|
-      http.post(uri.request_uri, payload.to_json, "Content-Type" => "application/json")
+
+    http = Net::HTTP.new(uri.hostname, uri.port)
+    http.ipaddr = decision.ipaddr # pin the vetted address; keeps hostname for Host/SNI/cert
+    http.use_ssl = uri.scheme == "https"
+    http.open_timeout = OPEN_TIMEOUT
+    http.read_timeout = READ_TIMEOUT
+    response = http.start do |conn|
+      conn.post(uri.request_uri, payload.to_json, "Content-Type" => "application/json")
     end
     unless response.is_a?(Net::HTTPSuccess)
       fail_delivery("callback returned HTTP #{response.code}")

@@ -60,9 +60,10 @@ class CallbackUrlPolicyTest < ActiveSupport::TestCase
     end
   end
 
-  test "resolve: true tolerates an unresolvable host (delivery will fail on its own)" do
+  test "resolve: true refuses an unresolvable host (nothing to pin)" do
     stub_dns([]) do
-      assert_nil CallbackUrlPolicy.reject_reason("http://nowhere.test/cb", resolve: true)
+      assert_equal CallbackUrlPolicy::UNRESOLVABLE_MESSAGE,
+                   CallbackUrlPolicy.reject_reason("http://nowhere.test/cb", resolve: true)
     end
   end
 end

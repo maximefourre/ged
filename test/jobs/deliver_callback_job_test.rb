@@ -8,7 +8,13 @@ class DeliverCallbackJobTest < ActiveJob::TestCase
     @request = UploadRequest.create!(department: finance, filename: "report.pdf",
                                      callback_url: "https://caller.test/cb",
                                      uploaded_by: "erp-app", status: "completed")
+    # Default: the callback host resolves to a public address so delivery
+    # proceeds. Tests needing a blocked/unresolvable target override with the
+    # block form of stub_dns, which nests over this default and restores it.
+    stub_dns!([ "93.184.216.34" ])
   end
+
+  teardown { unstub_dns! }
 
   test "posts the payload to the callback url" do
     stub_request(:post, "https://caller.test/cb").to_return(status: 200)
