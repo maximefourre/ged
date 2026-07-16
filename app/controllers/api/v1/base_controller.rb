@@ -75,14 +75,19 @@ module Api
 
       DEFAULT_PAGE_SIZE = 100
       MAX_PAGE_SIZE = 500
+      # Cap offset well below Postgres bigint range: an unbounded offset passed
+      # straight to .offset(...) overflows int64 (PG::NumericValueOutOfRange ->
+      # uncontracted 500) and is a hostile query-planner input long before that.
+      MAX_OFFSET = 1_000_000
 
       # limit/offset pagination for list endpoints: non-positive, non-numeric
-      # or non-scalar values fall back to the default, oversized limits are
-      # clamped.
+      # or non-scalar values fall back to the default, oversized limits and
+      # offsets are clamped.
       def paginate(scope)
         requested = int_param(:limit)
         limit = requested.positive? ? [ requested, MAX_PAGE_SIZE ].min : DEFAULT_PAGE_SIZE
-        scope.limit(limit).offset([ int_param(:offset), 0 ].max)
+        offset = int_param(:offset).clamp(0, MAX_OFFSET)
+        scope.limit(limit).offset(offset)
       end
 
       def int_param(key)

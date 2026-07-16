@@ -77,8 +77,6 @@ class InputFuzzTest < ActionDispatch::IntegrationTest
   end
 
   test "a pagination offset beyond bigint range is handled, not a 500" do
-    skip "documented finding GED-SEC-11 — see docs/security/pentest-2026-07-15.md"
-
     # Desired behavior: offset should be capped/clamped like limit already
     # is, so it never reaches Postgres as an out-of-range bigint. Currently
     # `paginate` clamps limit to MAX_PAGE_SIZE but passes offset straight

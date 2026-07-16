@@ -317,4 +317,6 @@ pitfalls:
   `stop_grace_period` 40s).
 - API error contract: 401 invalid/missing token, 403 unregistered client or
   forbidden department, 404 not found, 400 missing param, 422 validation.
-- API list endpoints paginate via `limit`/`offset` (default 100, max 500).
+- API list endpoints paginate via `limit`/`offset` (default 100, max 500;
+  `offset` is clamped to `MAX_OFFSET` = 1,000,000 so a hostile value cannot
+  overflow the Postgres bigint offset into a 500).

@@ -488,11 +488,12 @@ components:
     Offset:
       name: offset
       in: query
-      description: Rows to skip (default 0)
+      description: Rows to skip (default 0, max 1000000)
       schema:
         type: integer
         default: 0
         minimum: 0
+        maximum: 1000000
     DocumentId:
       name: id
       in: path

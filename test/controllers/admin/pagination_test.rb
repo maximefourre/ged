@@ -45,4 +45,15 @@ class Admin::PaginationTest < ActionDispatch::IntegrationTest
       assert_select "table tr", 2
     end
   end
+
+  test "a page far beyond bigint offset range is clamped, not a 500" do
+    Document.create!(department: @finance, filename: "doc.pdf", uploaded_by: "seed")
+    # (@page - 1) * PER_PAGE for an unbounded page overflows the Postgres bigint
+    # offset -> raw 500 (the admin analog of GED-SEC-11). MAX_PAGE clamps it.
+    # NB: "2e17" is a red herring here — Ruby's String#to_i stops at 'e' and
+    # yields 2, so it never overflows; a fully-written huge integer does.
+    get admin_documents_path(page: "200000000000000000")
+    assert_response :success
+    assert_select "table tr", minimum: 1
+  end
 end

@@ -3,14 +3,16 @@ class Admin::DocumentsController < Admin::BaseController
 
   def index
     scope = Document.includes(:department).order(created_at: :desc, id: :desc)
-    if params[:filename].present?
+    if (filename = scalar_param(:filename)).present?
       scope = scope.where("filename ILIKE ?",
-                          "%#{Document.sanitize_sql_like(params[:filename])}%")
+                          "%#{Document.sanitize_sql_like(filename)}%")
     end
-    scope = scope.where(department_id: params[:department_id]) if params[:department_id].present?
-    if params[:tag].present? && params[:tag].is_a?(String)
+    if (department_id = scalar_param(:department_id)).present?
+      scope = scope.where(department_id: department_id)
+    end
+    if (tag = scalar_param(:tag)).present?
       # ? is the jsonb key-exists operator, not a bind marker
-      scope = scope.where("documents.tags ? :key", key: params[:tag].strip.downcase)
+      scope = scope.where("documents.tags ? :key", key: tag.strip.downcase)
     end
     @documents = paginate(scope)
   end
