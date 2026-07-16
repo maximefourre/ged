@@ -121,4 +121,66 @@ class Auth::TokenValidatorTest < ActiveSupport::TestCase
     result = Auth::TokenValidator.call(issue_token(client_id: "erp-app"))
     assert_equal "erp-app", result.client_identifier
   end
+
+  test "scope binding accepts a token whose scope claim string contains the required scope" do
+    with_scope_binding do
+      stub_jwks!
+      token = issue_token(client_id: "erp-app", scope: "openid urn:test:ged profile")
+      result = Auth::TokenValidator.call(token)
+      assert_equal "erp-app", result.client_identifier
+    end
+  end
+
+  test "scope binding accepts a token whose scp claim array contains the required scope" do
+    with_scope_binding do
+      stub_jwks!
+      token = issue_token(client_id: "erp-app", scp: [ "openid", "urn:test:ged" ])
+      result = Auth::TokenValidator.call(token)
+      assert_equal "erp-app", result.client_identifier
+    end
+  end
+
+  test "scope binding rejects a token missing the required scope" do
+    with_scope_binding do
+      stub_jwks!
+      token = issue_token(client_id: "erp-app", scope: "openid profile")
+      assert_raises(Auth::TokenValidator::InvalidToken) { Auth::TokenValidator.call(token) }
+
+      token = issue_token(client_id: "erp-app")
+      assert_raises(Auth::TokenValidator::InvalidToken) { Auth::TokenValidator.call(token) }
+    end
+  end
+
+  test "scope binding does not verify aud" do
+    with_scope_binding do
+      stub_jwks!
+      token = issue_token(client_id: "erp-app", aud: "https://some-other-api.internal",
+                          scope: "urn:test:ged")
+      result = Auth::TokenValidator.call(token)
+      assert_equal "erp-app", result.client_identifier
+    end
+  end
+
+  private
+
+  # Save/restore the scope-binding env vars around the block — they are unset
+  # by default (audience mode is the default binding for every other test).
+  def with_scope_binding(required = "urn:test:ged")
+    original_binding = ENV["GED_OIDC_TOKEN_BINDING"]
+    original_scope = ENV["GED_OIDC_REQUIRED_SCOPE"]
+    ENV["GED_OIDC_TOKEN_BINDING"] = "scope"
+    ENV["GED_OIDC_REQUIRED_SCOPE"] = required
+    yield
+  ensure
+    if original_binding.nil?
+      ENV.delete("GED_OIDC_TOKEN_BINDING")
+    else
+      ENV["GED_OIDC_TOKEN_BINDING"] = original_binding
+    end
+    if original_scope.nil?
+      ENV.delete("GED_OIDC_REQUIRED_SCOPE")
+    else
+      ENV["GED_OIDC_REQUIRED_SCOPE"] = original_scope
+    end
+  end
 end

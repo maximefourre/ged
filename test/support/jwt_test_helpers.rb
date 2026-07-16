@@ -9,9 +9,11 @@ module JwtTestHelpers
   end
 
   def issue_token(client_id:, iss: ENV.fetch("GED_OIDC_ISSUER"), exp: 1.hour.from_now.to_i,
-                  aud: ENV.fetch("GED_OIDC_AUDIENCE"))
+                  aud: ENV.fetch("GED_OIDC_AUDIENCE"), scope: nil, scp: nil)
     payload = { sub: client_id, iss: iss, exp: exp, iat: Time.now.to_i }
     payload[:aud] = aud if aud
+    payload[:scope] = scope unless scope.nil?
+    payload[:scp] = scp unless scp.nil?
     JWT.encode(payload, SIGNING_KEY, "RS256", kid: SIGNING_JWK.kid)
   end
 

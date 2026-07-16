@@ -276,10 +276,16 @@ pitfalls:
 
 - **Real-IdP cutover checklist:** point `GED_OIDC_ISSUER`/`GED_OIDC_JWKS_URL`
   at the real IdP, set `GED_CLIENT_ID_CLAIM` to the claim carrying the client
-  id, and set `GED_OIDC_AUDIENCE` (now **required** — the app refuses to boot
-  without it, and `aud` is always verified). A shared company IdP issues tokens
-  for every internal API under the same `iss`, so without `aud` verification any
-  app's token would be accepted by GED; fail-closed verification prevents that.
+  id, and configure token binding isolation:
+  - If the IdP issues a separate audience per service: set `GED_OIDC_TOKEN_BINDING=audience`
+    (default) and `GED_OIDC_AUDIENCE` to GED's audience value; the app verifies
+    `aud` claim against it (required — app refuses to boot without it in production).
+  - If the IdP issues a shared audience for all services: set `GED_OIDC_TOKEN_BINDING=scope`
+    and `GED_OIDC_REQUIRED_SCOPE` to GED's URN scope; the app verifies the token's
+    `scope`/`scp` claim carries this scope (required — app refuses to boot without it
+    in production). A shared company IdP issues tokens for every internal API under
+    the same `iss`, so without per-service isolation any app's token would be accepted
+    by GED; fail-closed verification (whether via `aud` or `scope`) prevents that.
 - `active_storage_attachments.record_id` was converted to uuid by a
   corrective migration — Document/UploadRequest use uuid pks, everything else
   bigint. Keep this in mind for any new attachable model.
@@ -307,18 +313,22 @@ pitfalls:
   natively to the right container). Stop any leftover `brew services
   postgresql@17` first — it would hold port 5432 for the primary tree.
 - Env vars: `GED_OIDC_ISSUER`, `GED_OIDC_JWKS_URL`, `GED_CLIENT_ID_CLAIM`
-  (default `sub`), `GED_OIDC_AUDIENCE` (**required** — `aud` is always
-  verified fail-closed; the app refuses to boot without it in production, and
-  every token must carry a matching `aud`), `GED_ADMIN_USERNAME`,
-  `GED_ADMIN_PASSWORD`, `GED_MAX_UPLOAD_BYTES` (default 52428800 = 50 MiB;
-  caps upload size — enforced at the edge via Thruster `MAX_REQUEST_BODY`,
-  and by `Document::MAX_BYTE_SIZE` model validation + the async staging guard),
-  `OTEL_EXPORTER_OTLP_ENDPOINT` (empty = OTel fully disabled; compose feeds
-  it from `GED_OTEL_ENDPOINT`), `OTEL_SERVICE_NAME` (default `ged`). Worker
-  scaling: `JOB_THREADS` (default 3, uploads pool threads; also raises the DB
-  pool via `config/database.yml`), `JOB_CONCURRENCY` (default 1, uploads
-  worker processes per container), `SOLID_QUEUE_SHUTDOWN_TIMEOUT` (default
-  30s, must stay under the worker's `stop_grace_period` 40s).
+  (default `sub`), `GED_OIDC_TOKEN_BINDING` (`audience` default | `scope`),
+  `GED_OIDC_AUDIENCE` (required when binding=audience — `aud` is verified
+  fail-closed in this mode; the app refuses to boot without it in production,
+  and every token must carry a matching `aud`), `GED_OIDC_REQUIRED_SCOPE`
+  (required when binding=scope — the app refuses to boot without it in
+  production, and every token's `scope` or `scp` claim must contain this scope),
+  `GED_ADMIN_USERNAME`, `GED_ADMIN_PASSWORD`, `GED_MAX_UPLOAD_BYTES` (default
+  52428800 = 50 MiB; caps upload size — enforced at the edge via Thruster
+  `MAX_REQUEST_BODY`, and by `Document::MAX_BYTE_SIZE` model validation + the
+  async staging guard), `OTEL_EXPORTER_OTLP_ENDPOINT` (empty = OTel fully
+  disabled; compose feeds it from `GED_OTEL_ENDPOINT`), `OTEL_SERVICE_NAME`
+  (default `ged`). Worker scaling: `JOB_THREADS` (default 3, uploads pool
+  threads; also raises the DB pool via `config/database.yml`), `JOB_CONCURRENCY`
+  (default 1, uploads worker processes per container),
+  `SOLID_QUEUE_SHUTDOWN_TIMEOUT` (default 30s, must stay under the worker's
+  `stop_grace_period` 40s).
 - API error contract: 401 invalid/missing token, 403 unregistered client or
   forbidden department, 404 not found, 400 missing param or malformed JSON body,
   422 validation. A malformed JSON body raises before any controller, so it is

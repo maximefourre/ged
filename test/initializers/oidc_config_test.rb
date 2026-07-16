@@ -29,6 +29,27 @@ class OidcConfigTest < ActiveSupport::TestCase
     end
   end
 
+  test "verify! raises in production when scope binding lacks GED_OIDC_REQUIRED_SCOPE" do
+    with_env("GED_OIDC_TOKEN_BINDING" => "scope", "GED_OIDC_REQUIRED_SCOPE" => nil) do
+      error = assert_raises(RuntimeError) { OidcConfig.verify!(env: production_env) }
+      assert_match(/GED_OIDC_REQUIRED_SCOPE/, error.message)
+    end
+  end
+
+  test "verify! passes in production when scope binding has GED_OIDC_REQUIRED_SCOPE" do
+    with_env("GED_OIDC_TOKEN_BINDING" => "scope",
+             "GED_OIDC_REQUIRED_SCOPE" => "urn:test:ged") do
+      assert_nothing_raised { OidcConfig.verify!(env: production_env) }
+    end
+  end
+
+  test "verify! raises in production for an unknown GED_OIDC_TOKEN_BINDING value" do
+    with_env("GED_OIDC_TOKEN_BINDING" => "garbage") do
+      error = assert_raises(RuntimeError) { OidcConfig.verify!(env: production_env) }
+      assert_match(/GED_OIDC_TOKEN_BINDING/, error.message)
+    end
+  end
+
   private
 
   # Save/restore ENV around the block so a nil override deletes-and-restores.

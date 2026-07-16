@@ -4,18 +4,35 @@
 # SECRET_KEY_BASE_DUMMY guard covers the assets:precompile step of the Docker
 # build, which boots the app without the runtime environment.
 #
-# GED_OIDC_AUDIENCE is required (not optional): TokenValidator fails closed and
-# always verifies aud, so the app must refuse to boot without it in production.
+# Token binding (GED_OIDC_TOKEN_BINDING) selects the isolation mechanism:
+# - "audience" (default): require GED_OIDC_AUDIENCE; TokenValidator verifies aud.
+# - "scope": require GED_OIDC_REQUIRED_SCOPE; TokenValidator checks for required scope.
+# The app must refuse to boot in production if the binding mode's requirements aren't met.
 module OidcConfig
-  REQUIRED_VARS = %w[GED_OIDC_ISSUER GED_OIDC_JWKS_URL GED_OIDC_AUDIENCE].freeze
-
   def self.verify!(env: Rails.env, logger: Rails.logger)
     return if env.test? || ENV["SECRET_KEY_BASE_DUMMY"]
 
-    missing = REQUIRED_VARS.reject { |var| ENV[var].present? }
-    return if missing.empty?
+    base_required = %w[GED_OIDC_ISSUER GED_OIDC_JWKS_URL]
+    binding = ENV.fetch("GED_OIDC_TOKEN_BINDING", "audience")
 
-    message = "Missing OIDC config: #{missing.join(', ')} — API bearer auth cannot work"
+    required = base_required.dup
+    error_messages = []
+
+    case binding
+    when "audience"
+      required << "GED_OIDC_AUDIENCE"
+    when "scope"
+      required << "GED_OIDC_REQUIRED_SCOPE"
+    else
+      error_messages << "Invalid GED_OIDC_TOKEN_BINDING=#{binding} (must be 'audience' or 'scope')"
+    end
+
+    missing = required.reject { |var| ENV[var].present? }
+    error_messages << "Missing OIDC config: #{missing.join(', ')}" if missing.present?
+
+    return if error_messages.empty?
+
+    message = error_messages.join("; ") + " — API bearer auth cannot work"
     raise message if env.production?
 
     logger.warn(message)
