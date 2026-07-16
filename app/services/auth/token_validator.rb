@@ -14,12 +14,13 @@ module Auth
         # the token's kid is absent from the cached set (IdP key rotation).
         jwks: ->(opts) { JwksCache.instance.key_set(force: opts[:kid_not_found]) }
       }
-      # Optional until the real-IdP cutover: a shared company IdP issues tokens
-      # for every internal API under the same iss, so aud must then be enforced.
-      if (audience = ENV["GED_OIDC_AUDIENCE"]).present?
-        options[:aud] = audience
-        options[:verify_aud] = true
-      end
+      # Fail-closed: a shared company IdP issues tokens for every internal API
+      # under the same iss, so aud must always be enforced. Boot refuses to
+      # start without GED_OIDC_AUDIENCE (config/initializers/oidc_config.rb), so
+      # ENV.fetch here is safe and a missing/foreign aud raises JWT::InvalidAudError
+      # (→ rescued into InvalidToken → 401).
+      options[:aud] = ENV.fetch("GED_OIDC_AUDIENCE")
+      options[:verify_aud] = true
       payload, = JWT.decode(token, nil, true, options)
       claim = ENV.fetch("GED_CLIENT_ID_CLAIM", "sub")
       identifier = payload[claim]

@@ -276,9 +276,10 @@ pitfalls:
 
 - **Real-IdP cutover checklist:** point `GED_OIDC_ISSUER`/`GED_OIDC_JWKS_URL`
   at the real IdP, set `GED_CLIENT_ID_CLAIM` to the claim carrying the client
-  id, and **set `GED_OIDC_AUDIENCE`** — a shared company IdP issues tokens for
-  every internal API under the same `iss`, so without `aud` verification any
-  app's token would be accepted by GED.
+  id, and set `GED_OIDC_AUDIENCE` (now **required** — the app refuses to boot
+  without it, and `aud` is always verified). A shared company IdP issues tokens
+  for every internal API under the same `iss`, so without `aud` verification any
+  app's token would be accepted by GED; fail-closed verification prevents that.
 - `active_storage_attachments.record_id` was converted to uuid by a
   corrective migration — Document/UploadRequest use uuid pks, everything else
   bigint. Keep this in mind for any new attachable model.
@@ -306,8 +307,9 @@ pitfalls:
   natively to the right container). Stop any leftover `brew services
   postgresql@17` first — it would hold port 5432 for the primary tree.
 - Env vars: `GED_OIDC_ISSUER`, `GED_OIDC_JWKS_URL`, `GED_CLIENT_ID_CLAIM`
-  (default `sub`), `GED_OIDC_AUDIENCE` (optional; when set, `aud` is
-  verified — required at real-IdP cutover), `GED_ADMIN_USERNAME`,
+  (default `sub`), `GED_OIDC_AUDIENCE` (**required** — `aud` is always
+  verified fail-closed; the app refuses to boot without it in production, and
+  every token must carry a matching `aud`), `GED_ADMIN_USERNAME`,
   `GED_ADMIN_PASSWORD`, `GED_MAX_UPLOAD_BYTES` (default 52428800 = 50 MiB;
   caps upload size — enforced at the edge via Thruster `MAX_REQUEST_BODY`,
   and by `Document::MAX_BYTE_SIZE` model validation + the async staging guard),

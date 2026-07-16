@@ -43,7 +43,8 @@ class Auth::TokenValidatorTest < ActiveSupport::TestCase
       .to_return(status: 200, body: { keys: [ rotated_jwk.export ] }.to_json,
                  headers: { "Content-Type" => "application/json" })
     token = JWT.encode({ sub: "erp-app", iss: ENV["GED_OIDC_ISSUER"],
-                         exp: 1.hour.from_now.to_i }, rotated_key, "RS256",
+                         exp: 1.hour.from_now.to_i, aud: ENV.fetch("GED_OIDC_AUDIENCE") },
+                       rotated_key, "RS256",
                        kid: rotated_jwk.kid)
     result = Auth::TokenValidator.call(token)
     assert_equal "erp-app", result.client_identifier
@@ -68,7 +69,8 @@ class Auth::TokenValidatorTest < ActiveSupport::TestCase
     ENV["GED_CLIENT_ID_CLAIM"] = "client_id"
 
     payload = { sub: "ignored", client_id: "erp-app",
-                iss: ENV["GED_OIDC_ISSUER"], exp: 1.hour.from_now.to_i }
+                iss: ENV["GED_OIDC_ISSUER"], exp: 1.hour.from_now.to_i,
+                aud: ENV.fetch("GED_OIDC_AUDIENCE") }
     token = JWT.encode(payload, JwtTestHelpers::SIGNING_KEY, "RS256",
                        kid: JwtTestHelpers::SIGNING_JWK.kid)
     assert_equal "erp-app", Auth::TokenValidator.call(token).client_identifier
@@ -81,14 +83,9 @@ class Auth::TokenValidatorTest < ActiveSupport::TestCase
     ENV.delete("GED_CLIENT_ID_CLAIM")
   end
 
-  test "accepts any aud when GED_OIDC_AUDIENCE is unset" do
-    stub_jwks!
-    result = Auth::TokenValidator.call(issue_token(client_id: "erp-app", aud: "some-other-api"))
-    assert_equal "erp-app", result.client_identifier
-  end
-
   test "verifies the aud claim when GED_OIDC_AUDIENCE is set" do
     stub_jwks!
+    original_aud = ENV["GED_OIDC_AUDIENCE"]
     ENV["GED_OIDC_AUDIENCE"] = "https://ged.internal"
 
     result = Auth::TokenValidator.call(
@@ -109,7 +106,11 @@ class Auth::TokenValidatorTest < ActiveSupport::TestCase
       end
     end
   ensure
-    ENV.delete("GED_OIDC_AUDIENCE")
+    if original_aud.nil?
+      ENV.delete("GED_OIDC_AUDIENCE")
+    else
+      ENV["GED_OIDC_AUDIENCE"] = original_aud
+    end
   end
 
   test "keeps serving stale keys when a refresh fails" do

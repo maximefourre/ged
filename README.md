@@ -146,7 +146,8 @@ service environment variables:
 - `GED_OIDC_ISSUER` — the real IdP's issuer URL
 - `GED_OIDC_JWKS_URL` — the real IdP's JWKS endpoint
 - `GED_CLIENT_ID_CLAIM` — the claim containing the client ID (default: `sub`)
-- `GED_OIDC_AUDIENCE` — **required** with a shared IdP to prevent token reuse
-  across services
+- `GED_OIDC_AUDIENCE` — **required** (fail-closed): `aud` is always verified and
+  the app refuses to boot without it, preventing token reuse across services
+  under a shared IdP
 
 Then remove the `oauth-provider` service from `docker-compose.yml`.

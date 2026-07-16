@@ -98,19 +98,20 @@ class AuthMatrixTest < ActionDispatch::IntegrationTest
     assert_response :forbidden
   end
 
-  test "token with a foreign audience is rejected when GED_OIDC_AUDIENCE is unset" do
-    skip "documented finding GED-SEC-01 — see docs/security/pentest-2026-07-15.md"
+  test "token with a foreign audience is rejected when GED_OIDC_AUDIENCE is set" do
+    # GED-SEC-01 (docs/security/pentest-2026-07-15.md), now fixed: aud is
+    # verified unconditionally (fail-closed). A token minted for a different
+    # internal API (foreign aud), and a token with no aud at all, are both
+    # rejected here — a shared company IdP can no longer let one app's token
+    # authenticate as another app's GED client.
+    assert ENV["GED_OIDC_AUDIENCE"].present?, "test env must set GED_OIDC_AUDIENCE"
 
-    # Desired behavior: even though GED_OIDC_AUDIENCE is unset (today's
-    # deployed default), a token minted for a completely different internal
-    # API (foreign aud, otherwise valid sub/iss/exp) should be rejected here.
-    # Currently TokenValidator only verifies aud when GED_OIDC_AUDIENCE is
-    # set, so this token is accepted (200) instead of rejected (401) — a
-    # shared company IdP would let any app's token authenticate as any other
-    # app's client until GED_OIDC_AUDIENCE is configured at cutover.
-    assert_nil ENV["GED_OIDC_AUDIENCE"]
-    token = issue_token(client_id: "erp-app", aud: "https://some-other-api.internal")
-    get "/api/v1/ping", headers: { "Authorization" => "Bearer #{token}" }
+    foreign = issue_token(client_id: "erp-app", aud: "https://some-other-api.internal")
+    get "/api/v1/ping", headers: { "Authorization" => "Bearer #{foreign}" }
+    assert_response :unauthorized
+
+    audless = issue_token(client_id: "erp-app", aud: nil)
+    get "/api/v1/ping", headers: { "Authorization" => "Bearer #{audless}" }
     assert_response :unauthorized
   end
 end

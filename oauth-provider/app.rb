@@ -12,6 +12,10 @@ module OauthProvider
       ENV.fetch("OAUTH_ISSUER", "http://localhost:9292")
     end
 
+    def audience
+      ENV.fetch("OAUTH_AUDIENCE", "http://localhost:3000")
+    end
+
     post "/token" do
       content_type :json
       unless params["grant_type"] == "client_credentials"
@@ -25,6 +29,7 @@ module OauthProvider
       payload = {
         iss: issuer,
         sub: params["client_id"],
+        aud: audience,
         iat: now,
         exp: now + TOKEN_TTL,
         jti: SecureRandom.uuid

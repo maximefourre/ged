@@ -24,6 +24,7 @@ services:
     build: ./oauth-provider
     environment:
       OAUTH_ISSUER: http://oauth-provider:9292
+      OAUTH_AUDIENCE: ${GED_OIDC_AUDIENCE:-http://web:80}
     ports:
       # GED_OAUTH_PORT lets bin/worktree-stack publish an isolated host port per
       # worktree; defaults to 9292 for the primary-tree stack.
@@ -44,6 +45,7 @@ services:
       RAILS_ENV: production
       GED_OIDC_ISSUER: http://oauth-provider:9292
       GED_OIDC_JWKS_URL: http://oauth-provider:9292/.well-known/jwks.json
+      GED_OIDC_AUDIENCE: ${GED_OIDC_AUDIENCE:-http://web:80}
       GED_ADMIN_USERNAME: ${GED_ADMIN_USERNAME:-admin}
       GED_ADMIN_PASSWORD: ${GED_ADMIN_PASSWORD:?set GED_ADMIN_PASSWORD}
       # OpenTelemetry export. Empty endpoint = OTel entirely disabled (see
@@ -101,6 +103,7 @@ services:
       # though the worker never validates tokens.
       GED_OIDC_ISSUER: http://oauth-provider:9292
       GED_OIDC_JWKS_URL: http://oauth-provider:9292/.well-known/jwks.json
+      GED_OIDC_AUDIENCE: ${GED_OIDC_AUDIENCE:-http://web:80}
       # Jobs emit most custom metrics (ged.job.duration, uploads, callbacks)
       # and now run here, not in Puma — same OTel wiring as web (empty
       # endpoint = disabled).

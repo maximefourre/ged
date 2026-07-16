@@ -6,6 +6,7 @@ require "webmock/minitest"
 
 ENV["GED_OIDC_ISSUER"] ||= "https://idp.test"
 ENV["GED_OIDC_JWKS_URL"] ||= "https://idp.test/.well-known/jwks.json"
+ENV["GED_OIDC_AUDIENCE"] ||= "https://ged.test"
 
 Dir[Rails.root.join("test/support/**/*.rb")].sort.each { |f| require f }
 

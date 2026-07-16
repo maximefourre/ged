@@ -1,5 +1,6 @@
 ENV["APP_ENV"] = "test"
 ENV["OAUTH_ISSUER"] = "http://oauth-provider.test"
+ENV["OAUTH_AUDIENCE"] = "http://ged.test"
 ENV["OAUTH_DATA_DIR"] = File.expand_path("../tmp_test_data", __dir__)
 
 require "fileutils"
@@ -37,6 +38,7 @@ class AppTest < Minitest::Test
                                  algorithms: [ "RS256" ], jwks: jwks)
     assert_equal "erp-app", payload["sub"]
     assert_equal "http://oauth-provider.test", payload["iss"]
+    assert_equal "http://ged.test", payload["aud"]
     assert payload["exp"] > Time.now.to_i
     assert header["kid"]
   end
