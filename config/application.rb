@@ -40,5 +40,10 @@ module Ged
     # so the uploads-queue pause is testable locally); its schema lives in
     # the dedicated queue database.
     config.solid_queue.connects_to = { database: { writing: :queue } }
+
+    # Render the API's JSON error contract for exceptions raised before any
+    # controller (e.g. malformed-JSON ParseError). Only /api/v1 paths get JSON;
+    # everything else keeps the default static HTML pages. See JsonApiExceptions.
+    config.exceptions_app = ->(env) { JsonApiExceptions.new(Rails.public_path).call(env) }
   end
 end

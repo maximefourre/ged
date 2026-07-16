@@ -36,7 +36,7 @@ info:
 
     Errors share the shape `{ "error": "<message>" }`:
 
-    - `400` — missing or non-scalar parameter
+    - `400` — missing or non-scalar parameter, or a malformed JSON request body
     - `401` — missing or invalid token
     - `403` — client not registered, or no read (resp. write) access to the department
     - `404` — resource not found

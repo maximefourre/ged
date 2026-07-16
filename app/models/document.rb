@@ -8,6 +8,14 @@ class Document < ApplicationRecord
   belongs_to :department
   has_one_attached :file
 
+  # Defense-in-depth: strip path separators / traversal / control bytes from any
+  # filename before it is persisted (and before DocumentCreator attaches the blob
+  # with this normalized value). Rack already basenames multipart uploads, so the
+  # HTTP API never hits this, but internal callers (DocumentCreator, jobs) could.
+  def filename=(value)
+    super(self.class.normalize_filename(value))
+  end
+
   validates :filename, :uploaded_by, presence: true
 
   # Sync uploads and the admin UI leave uploaded_at unset; it then coincides
@@ -46,5 +54,19 @@ class Document < ApplicationRecord
 
   def ensure_uploaded_at
     self.uploaded_at ||= Time.current
+  end
+
+  # Reduce an arbitrary string to a safe basename: normalize backslashes to
+  # slashes, drop control bytes (incl. NUL, so File.basename can't raise), take
+  # the basename, strip leading dots, and fall back to "unnamed" if nothing
+  # legitimate remains. Spaces are preserved on purpose ("mon rapport.pdf").
+  def self.normalize_filename(value)
+    return value if value.nil?
+
+    name = value.to_s.tr("\\", "/")
+    name = name.delete("\u0000-\u001F\u007F")
+    name = File.basename(name)
+    name = name.sub(/\A\.+/, "")
+    name.presence || "unnamed"
   end
 end

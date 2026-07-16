@@ -116,25 +116,27 @@ class InputFuzzTest < ActionDispatch::IntegrationTest
   # --- confirmed gaps ---
 
   test "malformed JSON body returns an app-level JSON 400 error" do
-    skip "documented finding GED-SEC-05 — see docs/security/pentest-2026-07-15.md"
+    # In production (consider_all_requests_local = false) a ParseError raised in
+    # the params middleware is re-raised by DebugExceptions and handed to
+    # config.exceptions_app (JsonApiExceptions), which renders the JSON contract.
+    # The test env's detailed-exceptions debug page would otherwise intercept it,
+    # so we emulate production error handling for this one request only (NOT via
+    # show_exceptions=:all, which would also route non-rescuable errors).
+    env_config = Rails.application.env_config
+    original = env_config["action_dispatch.show_detailed_exceptions"]
+    env_config["action_dispatch.show_detailed_exceptions"] = false
 
-    # Desired behavior: a malformed JSON request body against /api/v1 should
-    # be caught and rendered as a JSON { "error" => ... } body with status
-    # 400, matching every other error path in BaseController. Currently Rails
-    # itself returns 400 for unparsable JSON, but with its own default
-    # (non-JSON / empty) body, not the app's JSON error contract — so a
-    # caller parsing the error as JSON gets a parse error instead of a
-    # meaningful message.
     post "/api/v1/documents", params: '{"tags":',
          headers: { "Content-Type" => "application/json" }.merge(bearer_header("deptA"))
+
     assert_response :bad_request
     body = JSON.parse(response.body)
     assert body.key?("error")
+  ensure
+    env_config["action_dispatch.show_detailed_exceptions"] = original
   end
 
   test "a hostile filename is sanitized before being persisted" do
-    skip "documented finding GED-SEC-03 — see docs/security/pentest-2026-07-15.md"
-
     # Desired behavior: a filename containing path separators or "../"
     # segments must not survive verbatim into the persisted Document record
     # or its Active Storage blob (both eventually flow into a
@@ -180,5 +182,44 @@ class InputFuzzTest < ActionDispatch::IntegrationTest
                          content_type: "application/pdf")
     assert document.invalid?
     assert document.errors[:byte_size].present?
+  end
+
+  test "a legitimate filename with a space survives sanitization unchanged" do
+    document = DocumentCreator.call(
+      department_id: @department.id,
+      io: StringIO.new("PDF!"),
+      filename: "mon rapport.pdf",
+      content_type: "application/pdf",
+      byte_size: 4,
+      uploaded_by: "deptA"
+    )
+    assert_equal "mon rapport.pdf", document.filename
+    assert_equal "mon rapport.pdf", document.file.filename.to_s
+  end
+
+  test "a backslash path filename is reduced to its basename" do
+    document = DocumentCreator.call(
+      department_id: @department.id,
+      io: StringIO.new("PDF!"),
+      filename: "..\\..\\windows\\system32\\evil.exe",
+      content_type: "application/octet-stream",
+      byte_size: 4,
+      uploaded_by: "deptA"
+    )
+    assert_equal "evil.exe", document.filename
+    assert_equal "evil.exe", document.file.filename.to_s
+  end
+
+  test "a filename that sanitizes to empty falls back to unnamed" do
+    document = DocumentCreator.call(
+      department_id: @department.id,
+      io: StringIO.new("PDF!"),
+      filename: "../../",
+      content_type: "application/pdf",
+      byte_size: 4,
+      uploaded_by: "deptA"
+    )
+    assert_equal "unnamed", document.filename
+    assert_equal "unnamed", document.file.filename.to_s
   end
 end
