@@ -190,6 +190,9 @@ paths:
         private, loopback and link-local targets are rejected with `422` at
         upload time, and refused again (after DNS resolution) at delivery time.
 
+        Uploads larger than the configured maximum (default 50 MiB) are
+        rejected with `422`.
+
         Tags are passed as nested params, e.g. `tags[type]=facture&tags[urgent]=`
         (a blank value stores `null`).
       operationId: createDocument

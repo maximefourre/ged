@@ -54,6 +54,9 @@ services:
       # (or run bin/worktree-stack with GED_OTEL=1, which sets both).
       OTEL_SERVICE_NAME: ged
       OTEL_EXPORTER_OTLP_ENDPOINT: ${GED_OTEL_ENDPOINT:-}
+      # Thruster body cap — the only layer that stops an oversized upload
+      # before it reaches Rack (no tempfile written). Mirrors Document::MAX_BYTE_SIZE.
+      MAX_REQUEST_BODY: ${GED_MAX_UPLOAD_BYTES:-52428800}
     ports:
       # 80 is Thruster (X-Sendfile + compression in front of Puma, see
       # Dockerfile CMD); mapping Puma's 3000 directly would bypass it.

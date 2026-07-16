@@ -308,13 +308,15 @@ pitfalls:
 - Env vars: `GED_OIDC_ISSUER`, `GED_OIDC_JWKS_URL`, `GED_CLIENT_ID_CLAIM`
   (default `sub`), `GED_OIDC_AUDIENCE` (optional; when set, `aud` is
   verified — required at real-IdP cutover), `GED_ADMIN_USERNAME`,
-  `GED_ADMIN_PASSWORD`, `OTEL_EXPORTER_OTLP_ENDPOINT` (empty = OTel fully
-  disabled; compose feeds it from `GED_OTEL_ENDPOINT`), `OTEL_SERVICE_NAME`
-  (default `ged`). Worker scaling: `JOB_THREADS` (default 3, uploads
-  pool threads; also raises the DB pool via `config/database.yml`),
-  `JOB_CONCURRENCY` (default 1, uploads worker processes per container),
-  `SOLID_QUEUE_SHUTDOWN_TIMEOUT` (default 30s, must stay under the worker's
-  `stop_grace_period` 40s).
+  `GED_ADMIN_PASSWORD`, `GED_MAX_UPLOAD_BYTES` (default 52428800 = 50 MiB;
+  caps upload size — enforced at the edge via Thruster `MAX_REQUEST_BODY`,
+  and by `Document::MAX_BYTE_SIZE` model validation + the async staging guard),
+  `OTEL_EXPORTER_OTLP_ENDPOINT` (empty = OTel fully disabled; compose feeds
+  it from `GED_OTEL_ENDPOINT`), `OTEL_SERVICE_NAME` (default `ged`). Worker
+  scaling: `JOB_THREADS` (default 3, uploads pool threads; also raises the DB
+  pool via `config/database.yml`), `JOB_CONCURRENCY` (default 1, uploads
+  worker processes per container), `SOLID_QUEUE_SHUTDOWN_TIMEOUT` (default
+  30s, must stay under the worker's `stop_grace_period` 40s).
 - API error contract: 401 invalid/missing token, 403 unregistered client or
   forbidden department, 404 not found, 400 missing param or malformed JSON body,
   422 validation. A malformed JSON body raises before any controller, so it is

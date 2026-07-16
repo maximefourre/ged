@@ -168,12 +168,9 @@ class InputFuzzTest < ActionDispatch::IntegrationTest
   end
 
   test "an oversized upload is rejected" do
-    skip "documented finding GED-SEC-02 — see docs/security/pentest-2026-07-15.md"
-
-    # Desired behavior: there should be a maximum accepted upload size, so a
-    # Document whose byte_size is far beyond any reasonable document is
-    # invalid (422 at the API layer). Currently byte_size has no validation
-    # at all, so this document saves successfully instead of being rejected.
+    # There should be a maximum accepted upload size, so a Document whose
+    # byte_size is far beyond any reasonable document is invalid (422 at the
+    # API layer).
     document = Document.new(
       department: @department, filename: "huge.pdf", content_type: "application/pdf",
       byte_size: 200.megabytes, uploaded_by: "deptA"
@@ -221,5 +218,66 @@ class InputFuzzTest < ActionDispatch::IntegrationTest
     )
     assert_equal "unnamed", document.filename
     assert_equal "unnamed", document.file.filename.to_s
+  end
+
+  # --- upload size limit ---
+
+  test "a byte_size of nil stays valid (guards allow_nil)" do
+    # byte_size is nullable (async uploads may not populate it at request time);
+    # the validation must allow nil to prevent false positives.
+    document = Document.new(
+      department: @department, filename: "report.pdf", content_type: "application/pdf",
+      byte_size: nil, uploaded_by: "deptA"
+    )
+    document.file.attach(io: StringIO.new("PDF!"), filename: "report.pdf",
+                         content_type: "application/pdf")
+    assert document.valid?
+    assert document.errors[:byte_size].empty?
+  end
+
+  test "a sync oversized upload is rejected with 422" do
+    # Cap at 3 bytes so the 4-byte fixture trips the real model validation
+    # (DocumentCreator -> Document#save! -> RecordInvalid -> 422).
+    with_max_byte_size(3) do
+      post "/api/v1/documents", headers: bearer_header("deptA"),
+           params: { department_id: @department.id, file: upload_file }
+    end
+    assert_response :unprocessable_entity
+  end
+
+  test "an async oversized upload is rejected with 422 AND the staging file is never written" do
+    # Async uploads are guarded at the controller level before UploadRequest
+    # creation or StagingStore write, ensuring no side effects occur on
+    # oversized uploads.
+    staging_files_before = Dir.glob(StagingStore.root.join("*"))
+    upload_requests_count_before = UploadRequest.count
+    with_max_byte_size(3) do
+      post "/api/v1/documents", headers: bearer_header("deptA"),
+           params: {
+             department_id: @department.id,
+             file: upload_file,
+             callback_url: "https://webhook.site/test"
+           }
+      assert_response :unprocessable_entity
+    end
+    assert_equal staging_files_before, Dir.glob(StagingStore.root.join("*")),
+                 "Staging file should not be created for oversized async upload"
+    assert_equal upload_requests_count_before, UploadRequest.count,
+                 "UploadRequest should not be created for oversized async upload"
+  end
+
+  private
+
+  # Temporarily lowers the upload cap so a tiny fixture is "oversized".
+  # Both the model validation (proc) and the create_async guard read
+  # Document::MAX_BYTE_SIZE at runtime, so this drives the real code paths.
+  def with_max_byte_size(bytes)
+    original = Document::MAX_BYTE_SIZE
+    Document.send(:remove_const, :MAX_BYTE_SIZE)
+    Document.const_set(:MAX_BYTE_SIZE, bytes)
+    yield
+  ensure
+    Document.send(:remove_const, :MAX_BYTE_SIZE)
+    Document.const_set(:MAX_BYTE_SIZE, original)
   end
 end

@@ -5,6 +5,11 @@ class Document < ApplicationRecord
   # hard-deleting it (row + attached file).
   RETENTION = 30.days
 
+  # Maximum upload size in bytes. Enforced at three layers: Thruster edge cap
+  # (MAX_REQUEST_BODY in docker-compose.yml), async staging guard in the
+  # controller, and model validation. Env-configurable for testing/operations.
+  MAX_BYTE_SIZE = ENV.fetch("GED_MAX_UPLOAD_BYTES", 50.megabytes).to_i
+
   belongs_to :department
   has_one_attached :file
 
@@ -17,6 +22,8 @@ class Document < ApplicationRecord
   end
 
   validates :filename, :uploaded_by, presence: true
+  validates :byte_size,
+            numericality: { less_than_or_equal_to: ->(_document) { MAX_BYTE_SIZE }, allow_nil: true } # proc so the cap tracks the current constant (kept in sync with the controller guard and testable via a swap)
 
   # Sync uploads and the admin UI leave uploaded_at unset; it then coincides
   # with the indexation time. StoreDocumentJob passes the original request time.

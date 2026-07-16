@@ -74,6 +74,11 @@ module Api
       private
 
       def create_async(department, file)
+        if file.size > Document::MAX_BYTE_SIZE
+          return render json: { error: "file is too large (maximum #{Document::MAX_BYTE_SIZE} bytes)" },
+                        status: :unprocessable_entity
+        end
+
         upload_request = UploadRequest.create!(
           department: department,
           callback_url: params[:callback_url],

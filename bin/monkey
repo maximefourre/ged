@@ -729,15 +729,18 @@ module Monkey
 
         # Oversized upload (GED-SEC-02)
         unless dry_run
-          file = StringIO.new("x" * (40 * 1_000_000))
+          # Must exceed the configured cap (GED_MAX_UPLOAD_BYTES, default 50 MiB
+          # = 52_428_800). 55 MiB trips Thruster's edge cap (413) at the default;
+          # under a lower configured cap the model/staging guards return 422.
+          file = StringIO.new("x" * (55 * 1024 * 1024))
           fields = { "department_id" => deptA_id }
           code, _body = Api.post_multipart(base_url, depta_token, "/api/v1/documents",
                                            fields, [ [ "file", file, "huge.bin", "application/octet-stream" ] ])
           probes << Probe.new(
             module_name: "fuzz-api", name: "oversized_upload", expected: "413 or 422",
             actual_status: code, verdict: (code == 413 || code == 422 ? :defended : :gap),
-            detail: "GED-SEC-02: 40MB upload should reject",
-            repro: "POST with 40MB file body"
+            detail: "GED-SEC-02: upload above the max size should reject",
+            repro: "POST with a 55 MiB file body"
           )
         end
 
@@ -1108,7 +1111,7 @@ module Monkey
           puts "  - non-scalar query params (department_id[a], filename[])"
           puts "  - tag_value without tag, bad ISO8601 dates, invalid upload_mode"
           puts "  - extreme pagination (negative, huge limit/offset)"
-          puts "  - oversized_upload 40MB (GED-SEC-02)"
+          puts "  - oversized_upload 55MiB (GED-SEC-02)"
           puts "  - filename_null_byte, filename_path_traversal (GED-SEC-03)"
           puts "  - spoofed_content_type (GED-SEC-04)"
           puts "  - malformed_json (GED-SEC-05)"
