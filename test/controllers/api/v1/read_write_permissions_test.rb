@@ -99,6 +99,17 @@ class Api::V1::ReadWritePermissionsTest < ActionDispatch::IntegrationTest
     assert_equal [], JSON.parse(response.body)
   end
 
+  # The echo is the result of the client's own write, not a read — so it stands
+  # even though the index above shows this client nothing.
+  test "write-only client can create a sub-department and gets it back" do
+    post "/api/v1/departments", headers: bearer_header("writer-app"),
+         params: { parent_id: @finance.id, name: "Archives" }
+    assert_response :created
+    body = JSON.parse(response.body)
+    assert_equal "Archives", body["name"]
+    assert_equal @finance.id, body["parent_id"]
+  end
+
   test "write-only client can delete (delete is a write)" do
     delete "/api/v1/documents/#{@document.id}", headers: bearer_header("writer-app")
     assert_response :no_content
