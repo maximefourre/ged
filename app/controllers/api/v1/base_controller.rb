@@ -94,11 +94,28 @@ module Api
       # limit/offset pagination for list endpoints: non-positive, non-numeric
       # or non-scalar values fall back to the default, oversized limits and
       # offsets are clamped.
-      def paginate(scope)
+      def pagination_window
         requested = int_param(:limit)
         limit = requested.positive? ? [ requested, MAX_PAGE_SIZE ].min : DEFAULT_PAGE_SIZE
-        offset = int_param(:offset).clamp(0, MAX_OFFSET)
+        [ limit, int_param(:offset).clamp(0, MAX_OFFSET) ]
+      end
+
+      def paginate(scope)
+        limit, offset = pagination_window
         scope.limit(limit).offset(offset)
+      end
+
+      # Envelope for list endpoints: the page under `key`, plus the window
+      # actually applied and the total matching the filters. `scope` must be
+      # unpaginated — Rails counts a limited relation through a subquery that
+      # returns the page size instead of the total.
+      def paginated_json(scope, key:)
+        limit, offset = pagination_window
+        page = scope.limit(limit).offset(offset)
+        {
+          key => page.map { |record| yield record },
+          pagination: { limit: limit, offset: offset, total: scope.count }
+        }
       end
 
       def int_param(key)

@@ -26,9 +26,8 @@ module Api
         elsif scalar_param(:tag_value).present?
           raise BadParameter, "tag_value requires tag"
         end
-        scope = filter_by_metadata(scope)
-        scope = paginate(scope.order(created_at: :desc, id: :desc))
-        render json: scope.map { |d| document_json(d) }
+        scope = filter_by_metadata(scope).order(created_at: :desc, id: :desc)
+        render json: paginated_json(scope, key: :documents) { |d| document_json(d) }
       end
 
       def create
