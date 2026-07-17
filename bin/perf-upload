@@ -341,17 +341,14 @@ module PerfUpload
     end
 
     def count_documents(base_url, tokens, run_id)
-      count = 0
-      offset = 0
-      loop do
-        code, page = get_json(base_url, tokens,
-                              "/api/v1/documents?tag=perf_run&tag_value=#{run_id}&limit=500&offset=#{offset}")
-        return -1 unless code == 200 && page.is_a?(Array)
-        count += page.size
-        break if page.size < 500
-        offset += 500
-      end
-      count
+      # One limit=1 probe reads the unpaginated total the list endpoint now
+      # reports, replacing a 500-at-a-time walk. -1 = could not count; Report
+      # turns that into zero_loss: false rather than a silent pass.
+      code, body = get_json(base_url, tokens,
+                            "/api/v1/documents?tag=perf_run&tag_value=#{run_id}&limit=1")
+      return -1 unless code == 200 && body.is_a?(Hash)
+      total = body.dig("pagination", "total")
+      total.is_a?(Integer) ? total : -1
     end
   end
 
