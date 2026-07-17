@@ -310,6 +310,15 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     assert_response :bad_request
   end
 
+  test "sync upload targeting trashed department returns 404" do
+    trashed_dept = Department.create!(name: "Trashed")
+    trashed_dept.soft_delete!
+
+    post "/api/v1/documents", headers: bearer_header("erp-app"),
+         params: { department_id: trashed_dept.id, file: upload_file }
+    assert_response :not_found
+  end
+
   private
 
   def create_document(department, filename)

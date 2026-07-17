@@ -15,7 +15,10 @@
         <% @documents.each do |doc| %>
           <tr>
             <td class="strong"><%= doc.filename %></td>
-            <td><%= doc.department.name %></td>
+            <td>
+              <% dept = @departments_by_id[doc.department_id] %>
+              <%= dept&.name %><% if dept&.deleted_at? %> <span class="muted">(trashed)</span><% end %>
+            </td>
             <td><%= render "admin/shared/tag_chips", tags: doc.tags %></td>
             <td class="date"><%= doc.deleted_at.strftime("%Y-%m-%d %H:%M") %></td>
             <td class="date"><%= doc.purge_at.strftime("%Y-%m-%d") %></td>

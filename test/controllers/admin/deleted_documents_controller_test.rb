@@ -46,4 +46,46 @@ class Admin::DeletedDocumentsControllerTest < ActionDispatch::IntegrationTest
     get "/admin/deleted_documents"
     assert_redirected_to "/admins/sign_in"
   end
+
+  test "single-doc restore un-greys its department but leaves siblings trashed" do
+    sign_in @admin
+
+    # Create documents while department is live
+    doc1 = create_document(filename: "sibling1.pdf")
+    doc2 = create_document(filename: "sibling2.pdf")
+
+    # Soft-delete the department (which trashes its live docs)
+    @finance.soft_delete!
+
+    # Both docs should be trashed now
+    assert doc1.reload.deleted_at.present?
+    assert doc2.reload.deleted_at.present?
+    assert @finance.reload.deleted_at.present?
+
+    # Restore only doc1
+    patch "/admin/deleted_documents/#{doc1.id}/restore"
+
+    assert_redirected_to "/admin/deleted_documents"
+
+    # doc1 should be live, doc2 should still be trashed
+    assert doc1.reload.deleted_at.nil?
+    assert doc2.reload.deleted_at.present?
+
+    # Department should be un-greyed (no longer trashed)
+    assert @finance.reload.deleted_at.nil?
+  end
+
+  test "trash page renders for doc whose department is trashed" do
+    sign_in @admin
+    doc = create_document(filename: "gone.pdf", deleted: true)
+
+    # Soft-delete the department (doc is already trashed)
+    @finance.soft_delete!
+
+    # Should not raise 500, should show the doc and indicate department is trashed
+    get "/admin/deleted_documents"
+    assert_response :success
+    assert_includes response.body, "gone.pdf"
+    assert_includes response.body, "(trashed)"
+  end
 end

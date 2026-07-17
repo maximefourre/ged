@@ -5,7 +5,14 @@ Rails.application.routes.draw do
   namespace :admin do
     root to: "dashboard#index"
     get "status", to: "status#index"
-    resources :departments, only: [ :index, :new, :create, :edit, :update, :destroy ]
+    resources :departments, only: [ :index, :new, :create, :edit, :update, :destroy ] do
+      member do
+        get   :confirm_deletion
+        post  :move_documents
+        post  :trash
+        patch :restore
+      end
+    end
     resources :app_clients, except: [ :show ]
     resources :documents, only: [ :index, :new, :create, :edit, :update, :destroy ] do
       member { get :download }

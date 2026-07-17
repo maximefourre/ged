@@ -144,6 +144,24 @@ is the source of truth.
   the window elapses. The parallel async **upload_request** purge already exists
   (`ReconcileUploadRequestsJob`, 30-day terminal-request cleanup) and is
   unchanged.
+- **Departments are soft-deleted too, but purge-gated on their references, not
+  a timer:** trashing a department (`Department#soft_delete!`) is **leaf-only**
+  (checked **unscoped** — a trashed child still blocks its parent) and, in one
+  transaction, hides the department (`deleted_at`) and bulk-trashes its live
+  docs via `update_all` (identical `purge_at = now + Document::RETENTION`).
+  A trashed department is API-invisible (fail-closed via `default_scope`, so no
+  new uploads land in it) and greyed in the admin index. `restore!` brings the
+  department **and all its trashed docs** back; `clear_soft_delete!` un-greys
+  the department only (used when a single doc is restored). The admin delete
+  flow (`Admin::DepartmentsController#destroy`) branches to a
+  `confirm_deletion` resolution page when the department still holds docs or
+  upload_requests: **Move** everything (live + trashed docs and upload_requests)
+  to another department then hard-delete the source, or **Trash** the department
+  and its docs. Departments with sub-departments keep today's blocking error.
+  There is **no `departments.purge_at` column** — a trashed department is
+  hard-deleted by `PurgeDeletedDocumentsJob` only once all of its referencing
+  rows (trashed docs, upload_requests, unscoped children) are gone (~30 days),
+  which cascades its `client_department_accesses`.
 
 ## How the pieces fit (implementation map)
 
@@ -224,10 +242,24 @@ is the source of truth.
   `restore` → `Document#restore!`), linked in the top-bar nav.
   `PurgeDeletedDocumentsJob` (`Document.purgeable.find_each(&:destroy!)`,
   scheduled daily in `config/recurring.yml`) hard-deletes past-due rows;
-  `destroy!` fires Active Storage's default async blob purge. Deleting a
-  department that holds only soft-deleted docs stays safe — the
-  `documents.department_id` FK backstops the (default-scoped)
-  `restrict_with_error`, caught by `Admin::DepartmentsController`.
+  `destroy!` fires Active Storage's default async blob purge. The same job then
+  hard-deletes trashed **leaf departments** (`Department.deleted`) whose
+  references are all clear — checked explicitly & unscoped, because the
+  `restrict_with_error` associations are default-scoped and never see trashed
+  rows: no `Document.with_deleted` under it, no `upload_requests`, no
+  `Department.with_deleted` children (the last covers the trash-child-then-parent
+  ordering — the parent clears the run after its last trashed child purges);
+  each `destroy!` is rescued+logged so one bad row can't abort the pass.
+  `Department` mirrors the document soft-delete (`default_scope`,
+  `with_deleted`/`deleted`, `soft_delete!`/`restore!`/`clear_soft_delete!`,
+  `leaf?`), and its name-uniqueness validation carries
+  `conditions: -> { with_deleted }` so recreating/restoring a trashed name
+  hits a 422 validation error, not an unrescued `RecordNotUnique`. Two
+  collateral read paths were hardened for a nil (trashed) department: the admin
+  Trash view resolves names via a `Department.with_deleted` lookup (marking
+  `(trashed)`) instead of the scoped `belongs_to`, and
+  `Api::V1::UploadRequestsController#show` treats a nil department as
+  `RecordNotFound` (404, not 500).
 - **Admin UI is a hand-rolled design system, no framework:** one plain
   `app/assets/stylesheets/application.css` (CSS custom-property tokens, served
   by Propshaft, no build) styles a top-bar layout via class names on the views.

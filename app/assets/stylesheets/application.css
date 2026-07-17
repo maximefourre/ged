@@ -285,6 +285,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl .mono { font-family: var(--font-mono); }
 .tbl .muted { color: var(--muted); }
 .tbl .date { color: var(--muted); white-space: nowrap; font-family: var(--font-mono); font-size: 12px; }
+.tbl tr.trashed td { color: var(--muted); }
+.tbl tr.trashed td.strong { color: var(--muted); font-weight: 600; }
 .row-actions { display: flex; gap: 2px; justify-content: flex-end; align-items: center; white-space: nowrap; }
 .dash { color: var(--faint); }
 

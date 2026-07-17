@@ -17,6 +17,15 @@ class Api::V1::DepartmentsTest < ActionDispatch::IntegrationTest
     assert_equal [ "Finance", "Invoices" ], names.sort
   end
 
+  test "list omits trashed departments" do
+    @invoices.soft_delete!
+    get "/api/v1/departments", headers: bearer_header("erp-app")
+    assert_response :success
+    names = JSON.parse(response.body).map { |d| d["name"] }
+    assert_equal [ "Finance" ], names
+    assert_not_includes names, "Invoices"
+  end
+
   test "create a subfolder under an accessible department" do
     post "/api/v1/departments", headers: bearer_header("erp-app"),
          params: { name: "2026", parent_id: @invoices.id }

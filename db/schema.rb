@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_12_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_17_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
@@ -74,9 +74,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_12_120000) do
 
   create_table "departments", force: :cascade do |t|
     t.datetime "created_at", null: false
+    t.datetime "deleted_at"
     t.string "name", null: false
     t.bigint "parent_id"
     t.datetime "updated_at", null: false
+    t.index ["deleted_at"], name: "index_departments_on_deleted_at"
     t.index ["name"], name: "index_departments_on_name_at_root", unique: true, where: "(parent_id IS NULL)"
     t.index ["parent_id", "name"], name: "index_departments_on_parent_id_and_name", unique: true
     t.index ["parent_id"], name: "index_departments_on_parent_id"

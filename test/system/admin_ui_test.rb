@@ -168,19 +168,38 @@ class AdminUiTest < ApplicationSystemTestCase
     assert_selector "tr", text: "report.pdf"
   end
 
-  # --- 2.10 Deleting a non-empty department is refused ---------------------
+  # --- 2.10 Deleting a non-empty department opens the resolution flow ------
 
-  test "2.10 deleting a department that still holds documents is refused" do
+  test "2.10 deleting a department with documents offers move or trash, then trashes" do
     finance = Department.create!(name: "Finance")
+    Department.create!(name: "Archives")
     attach_report(finance, filename: "report.pdf")
     sign_in_admin
 
+    # Deleting a non-empty department is intercepted by the resolution page,
+    # which offers both moving the documents elsewhere and trashing everything.
     visit admin_departments_path
     within("tr", text: "Finance") { click_button "Delete" }
 
-    assert_text "Cannot delete"
-    assert_selector "td", text: "Finance"
-    assert_equal 1, Department.where(name: "Finance").count
+    assert_text "This department holds 1 active and 0 trashed document(s)."
+    assert_button "Move documents and delete department"
+    assert_button "Trash department and its documents"
+    assert_equal 1, Department.where(name: "Finance").count, "must not delete before resolving"
+
+    # Trash everything: the department is soft-deleted, greyed in the list,
+    # and offers a Restore action instead of Rename/Delete.
+    click_button "Trash department and its documents"
+
+    assert_selector "tr.trashed", text: "Finance"
+    within("tr", text: "Finance") { assert_button "Restore" }
+    assert Department.with_deleted.find_by(name: "Finance").deleted_at,
+           "department should be soft-deleted"
+
+    # Restore brings the department (and its documents) back to life.
+    within("tr.trashed", text: "Finance") { click_button "Restore" }
+
+    assert_no_selector "tr.trashed", text: "Finance"
+    assert_nil Department.find_by(name: "Finance").deleted_at
   end
 
   # --- 2.11 Logout ---------------------------------------------------------

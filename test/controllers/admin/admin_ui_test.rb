@@ -98,17 +98,16 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     assert_not Department.exists?(@finance.id)
   end
 
-  test "deleting a department with upload requests shows an alert instead of a 500" do
+  test "deleting a department with upload requests redirects to the resolution page (no 500)" do
     UploadRequest.create!(department: @finance, filename: "report.pdf",
                           callback_url: "https://caller.test/cb",
                           uploaded_by: "erp-app", status: "pending")
     delete "/admin/departments/#{@finance.id}"
-    assert_redirected_to "/admin/departments"
-    assert flash[:alert].present?
+    assert_redirected_to confirm_deletion_admin_department_path(@finance)
     assert Department.exists?(@finance.id)
   end
 
-  test "deleting a department whose only documents are soft-deleted is refused, not a 500" do
+  test "deleting a department whose only documents are soft-deleted redirects to the resolution page (no 500)" do
     doc = Document.new(department: @finance, filename: "trashed.pdf", uploaded_by: "seed")
     doc.file.attach(io: StringIO.new("PDF!"), filename: "trashed.pdf",
                     content_type: "application/pdf")
@@ -116,8 +115,7 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     doc.soft_delete!
 
     delete "/admin/departments/#{@finance.id}"
-    assert_redirected_to "/admin/departments"
-    assert flash[:alert].present?
+    assert_redirected_to confirm_deletion_admin_department_path(@finance)
     assert Department.exists?(@finance.id)
     assert Document.with_deleted.exists?(doc.id)
   end

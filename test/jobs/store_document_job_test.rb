@@ -104,4 +104,18 @@ class StoreDocumentJobTest < ActiveJob::TestCase
   test "runs on the dedicated uploads queue" do
     assert_equal "uploads", StoreDocumentJob.new.queue_name
   end
+
+  test "async fail-closed: soft-deleted department fails the job" do
+    # Soft-delete the department (the request becomes its only reference)
+    @finance.soft_delete!
+
+    StoreDocumentJob.perform_now(@request.id)
+
+    @request.reload
+    assert_equal "failed", @request.status
+    assert @request.error_message.present?
+    assert_match(/must exist|Department/, @request.error_message)
+    assert_nil @request.document_id
+    assert_enqueued_with(job: DeliverCallbackJob, args: [ @request.id ])
+  end
 end

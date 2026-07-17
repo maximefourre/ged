@@ -1,0 +1,29 @@
+<header class="page-head">
+  <h1>Delete <%= @department.name %></h1>
+</header>
+
+<div class="card">
+  <p>This department holds <%= @live_docs_count %> active and <%= @trashed_docs_count %> trashed document(s).</p>
+  <% if @pending_requests_count.positive? %>
+    <p class="muted"><%= @pending_requests_count %> pending upload request(s): trashing the department will fail them; moving re-targets them.</p>
+  <% end %>
+
+  <% if @target_departments.exists? %>
+    <%= form_with url: move_documents_admin_department_path(@department), method: :post do %>
+      <div class="field">
+        <label for="target_department_id">Move everything to</label>
+        <select name="target_department_id" id="target_department_id">
+          <% @target_departments.each do |dept| %>
+            <option value="<%= dept.id %>" <%= "selected" if dept.id == @default_target&.id %>><%= dept.name %></option>
+          <% end %>
+        </select>
+      </div>
+      <%= submit_tag "Move documents and delete department", class: "btn btn-primary" %>
+    <% end %>
+  <% else %>
+    <p class="muted">No other active department to move documents into.</p>
+  <% end %>
+
+  <%= button_to "Trash department and its documents", trash_admin_department_path(@department), method: :post, class: "btn btn-danger" %>
+  <%= link_to "Cancel", admin_departments_path, class: "btn btn-link" %>
+</div>

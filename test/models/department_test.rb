@@ -50,4 +50,136 @@ class DepartmentTest < ActiveSupport::TestCase
     child.parent = child
     assert_not child.valid?
   end
+
+  # Helper to create a document with optional soft-delete
+  def make_doc(dept, filename: "d.pdf", deleted: false)
+    doc = Document.create!(department: dept, filename: filename,
+                          content_type: "application/pdf", byte_size: 4,
+                          uploaded_by: "seed")
+    doc.soft_delete! if deleted
+    doc
+  end
+
+  test "soft_delete! sets deleted_at on the department and trashes its live documents" do
+    dept = Department.create!(name: "Finance")
+    doc1 = make_doc(dept, filename: "report.pdf")
+    doc2 = make_doc(dept, filename: "invoice.pdf")
+
+    dept.soft_delete!
+
+    dept.reload
+    doc1.reload
+    doc2.reload
+
+    assert_not_nil dept.deleted_at
+    assert_not_nil doc1.deleted_at
+    assert_not_nil doc2.deleted_at
+    assert_not_nil doc1.purge_at
+    assert_not_nil doc2.purge_at
+    assert doc1.purge_at > Time.current
+    assert doc2.purge_at > Time.current
+  end
+
+  test "restore! clears deleted_at and restores all trashed documents" do
+    dept = Department.create!(name: "Finance")
+    doc1 = make_doc(dept, filename: "report.pdf")
+    doc2 = make_doc(dept, filename: "invoice.pdf")
+
+    dept.soft_delete!
+    assert_not_nil dept.reload.deleted_at
+    assert_not_nil doc1.reload.deleted_at
+
+    dept.restore!
+
+    dept.reload
+    doc1.reload
+    doc2.reload
+
+    assert_nil dept.deleted_at
+    assert_nil doc1.deleted_at
+    assert_nil doc2.deleted_at
+    assert_nil doc1.purge_at
+    assert_nil doc2.purge_at
+  end
+
+  test "default_scope hides soft-deleted departments" do
+    dept = Department.create!(name: "Finance")
+    make_doc(dept)
+
+    # Before soft-delete, department is visible
+    assert Department.exists?(dept.id)
+
+    dept.soft_delete!
+
+    # After soft-delete, hidden by default scope
+    assert_not Department.exists?(dept.id)
+
+    # But visible with escape-hatch scopes
+    assert Department.with_deleted.exists?(dept.id)
+    assert Department.deleted.exists?(dept.id)
+  end
+
+  test "leaf? returns false when department has a live child" do
+    root = Department.create!(name: "Finance")
+    child = Department.create!(name: "Invoices", parent: root)
+
+    assert_not root.leaf?
+    assert child.leaf?
+  end
+
+  test "soft_delete! raises when department has live children" do
+    root = Department.create!(name: "Finance")
+    child = Department.create!(name: "Invoices", parent: root)
+
+    error = assert_raises(ActiveRecord::RecordNotDestroyed) do
+      root.soft_delete!
+    end
+    assert_match(/not a leaf/i, error.message)
+  end
+
+  test "soft_delete! raises when department has trashed children" do
+    root = Department.create!(name: "Finance")
+    child = Department.create!(name: "Invoices", parent: root)
+    make_doc(child)
+
+    child.soft_delete!
+    # child is now soft-deleted, but still a child of root
+
+    error = assert_raises(ActiveRecord::RecordNotDestroyed) do
+      root.soft_delete!
+    end
+    assert_match(/not a leaf/i, error.message)
+  end
+
+  test "name uniqueness validation allows restoring a trashed department's name" do
+    dept1 = Department.create!(name: "Finance")
+    make_doc(dept1)
+
+    dept1.soft_delete!
+
+    # Creating a new department with the same name should pass validation
+    # (trashed rows are included in uniqueness check via with_deleted scope)
+    dept2 = Department.new(name: "Finance")
+    # This should NOT raise RecordNotUnique from the DB, but should raise or invalidate
+    # because the validation uses with_deleted
+    assert_not dept2.valid?
+    assert dept2.errors[:name].any?
+  end
+
+  test "clear_soft_delete! un-greys the department without restoring documents" do
+    dept = Department.create!(name: "Finance")
+    doc = make_doc(dept)
+
+    dept.soft_delete!
+    assert_not_nil dept.reload.deleted_at
+    assert_not_nil doc.reload.deleted_at
+
+    dept.clear_soft_delete!
+
+    dept.reload
+    doc.reload
+
+    assert_nil dept.deleted_at
+    assert_not_nil doc.deleted_at
+  end
 end

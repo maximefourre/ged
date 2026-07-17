@@ -7,19 +7,24 @@
   <div class="table-wrap">
     <table class="tbl">
       <thead>
-        <tr><th>Name</th><th>Parent</th><th></th></tr>
+        <tr><th>Name</th><th>Parent</th><th>Documents</th><th></th></tr>
       </thead>
       <tbody>
         <% @departments.each do |dept| %>
-          <tr>
+          <tr<%= ' class="trashed"'.html_safe if dept.deleted_at? %>>
             <td class="strong"><%= dept.name %></td>
             <td><% if dept.parent %><%= dept.parent.name %><% else %><span class="dash">—</span><% end %></td>
+            <td><%= dept.deleted_at? ? @trashed_counts.fetch(dept.id, 0) : @doc_counts.fetch(dept.id, 0) %></td>
             <td>
               <div class="row-actions">
-                <%= link_to "Rename", edit_admin_department_path(dept), class: "btn btn-link btn-sm" %>
-                <%= button_to "Delete", admin_department_path(dept), method: :delete,
-                    class: "btn btn-danger btn-sm",
-                    data: { turbo_confirm: "Delete #{dept.name}?" } %>
+                <% if dept.deleted_at? %>
+                  <%= button_to "Restore", restore_admin_department_path(dept), method: :patch, class: "btn btn-sm" %>
+                <% else %>
+                  <%= link_to "Rename", edit_admin_department_path(dept), class: "btn btn-link btn-sm" %>
+                  <%= button_to "Delete", admin_department_path(dept), method: :delete,
+                      class: "btn btn-danger btn-sm",
+                      data: { turbo_confirm: "Delete #{dept.name}?" } %>
+                <% end %>
               </div>
             </td>
           </tr>
