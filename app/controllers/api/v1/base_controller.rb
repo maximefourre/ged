@@ -65,6 +65,17 @@ module Api
         scalar_param(key).presence || raise(ActionController::ParameterMissing.new(key))
       end
 
+      # Identifiers legitimately arrive as JSON integers ({"parent_id": 8}), which
+      # Rails does not stringify. Normalize to String so finders behave as they do
+      # on the form-encoded path.
+      def id_param(key)
+        value = params[key]
+        unless value.nil? || value.is_a?(String) || value.is_a?(Integer)
+          raise BadParameter, "#{key} must be a string or an integer"
+        end
+        value&.to_s
+      end
+
       # tags arrives as nested params (tags[type]=facture). Anything that is
       # not a nested hash is passed through so model validation rejects it
       # with 422 instead of a 500 here.

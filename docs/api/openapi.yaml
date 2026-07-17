@@ -383,7 +383,7 @@ paths:
     post:
       tags: [Departments]
       summary: Create a sub-department
-      description: Creates a child of `parent_id`, which requires write access.
+      description: Creates a child of `parent_id`, which requires write access. The `parent_id` parameter is required and non-null; top-level departments can only be created by an admin.
       operationId: createDepartment
       requestBody:
         required: true
@@ -394,6 +394,7 @@ paths:
               properties:
                 parent_id:
                   type: integer
+                  description: Required parent department ID. Top-level departments can only be created by an admin.
                 name:
                   type: string
               required: [parent_id, name]

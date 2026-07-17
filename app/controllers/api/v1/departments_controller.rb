@@ -8,7 +8,11 @@ module Api
       end
 
       def create
-        parent = Department.find(require_scalar_param(:parent_id))
+        parent_id = id_param(:parent_id)
+        if parent_id.blank?
+          raise BadParameter, "parent_id is required (top-level departments are created by an admin)"
+        end
+        parent = Department.find(parent_id)
         authorize_department!(parent, mode: :write)
         department = Department.create!(name: require_scalar_param(:name), parent: parent)
         render json: department_json(department), status: :created

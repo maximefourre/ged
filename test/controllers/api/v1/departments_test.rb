@@ -56,6 +56,35 @@ class Api::V1::DepartmentsTest < ActionDispatch::IntegrationTest
     assert_equal 3, Department.count
   end
 
+  test "create with an integer parent_id in a JSON body returns 201" do
+    post "/api/v1/departments", headers: bearer_header("erp-app"), as: :json,
+         params: { name: "2027", parent_id: @invoices.id }
+    assert_response :created
+    body = JSON.parse(response.body)
+    assert_equal "2027", body["name"]
+    assert_equal @invoices.id, body["parent_id"]
+  end
+
+  test "create with a null parent_id in a JSON body returns 400 with an honest message" do
+    post "/api/v1/departments", headers: bearer_header("erp-app"), as: :json,
+         params: { name: "Rogue", parent_id: nil }
+    assert_response :bad_request
+    body = JSON.parse(response.body)
+    assert_match(/top-level/, body["error"])
+  end
+
+  test "create with a non-scalar (hash) parent_id in a JSON body returns 400" do
+    post "/api/v1/departments", headers: bearer_header("erp-app"), as: :json,
+         params: { name: "Rogue", parent_id: { a: "b" } }
+    assert_response :bad_request
+  end
+
+  test "create with a float parent_id in a JSON body returns 400" do
+    post "/api/v1/departments", headers: bearer_header("erp-app"), as: :json,
+         params: { name: "Rogue", parent_id: 1.5 }
+    assert_response :bad_request
+  end
+
   test "unique-index race on create returns 422 like the validation path" do
     # concurrent create of the same sibling name: the validation passes for
     # both requests and the [parent_id, name] unique index rejects the loser
