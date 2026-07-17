@@ -3,6 +3,8 @@ require "test_helper"
 # Verb-level authorization matrix: a read-only grant must block every write
 # endpoint, a write-only grant must block every read endpoint.
 class Api::V1::ReadWritePermissionsTest < ActionDispatch::IntegrationTest
+  include DocumentListHelpers
+
   setup do
     stub_jwks!
     @finance = Department.create!(name: "Finance")
@@ -30,7 +32,7 @@ class Api::V1::ReadWritePermissionsTest < ActionDispatch::IntegrationTest
   test "read-only client can list, show and download" do
     get "/api/v1/documents", headers: bearer_header("reader-app")
     assert_response :success
-    assert_equal [ "report.pdf" ], JSON.parse(response.body).map { |d| d["filename"] }
+    assert_equal [ "report.pdf" ], documents_in(response).map { |d| d["filename"] }
 
     get "/api/v1/documents/#{@document.id}", headers: bearer_header("reader-app")
     assert_response :success
@@ -77,7 +79,7 @@ class Api::V1::ReadWritePermissionsTest < ActionDispatch::IntegrationTest
   test "write-only client cannot list, show or download" do
     get "/api/v1/documents", headers: bearer_header("writer-app")
     assert_response :success
-    assert_equal [], JSON.parse(response.body)  # list scope is read-based: empty
+    assert_equal [], documents_in(response)  # list scope is read-based: empty
 
     get "/api/v1/documents/#{@document.id}", headers: bearer_header("writer-app")
     assert_response :forbidden

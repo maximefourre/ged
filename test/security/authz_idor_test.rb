@@ -5,6 +5,8 @@ require "test_helper"
 # defenses: department-scoped access must never leak or reach a document
 # outside the granted subtree, and read/write must stay independent.
 class AuthzIdorTest < ActionDispatch::IntegrationTest
+  include DocumentListHelpers
+
   setup do
     stub_jwks!
 
@@ -70,7 +72,7 @@ class AuthzIdorTest < ActionDispatch::IntegrationTest
   test "deptA client's unfiltered list never leaks dept B's document" do
     get "/api/v1/documents", headers: bearer_header("deptA")
     assert_response :success
-    ids = JSON.parse(response.body).map { |d| d["id"] }
+    ids = documents_in(response).map { |d| d["id"] }
     assert_not_includes ids, @doc_b.id
     assert_includes ids, @doc_a.id
   end
@@ -97,7 +99,7 @@ class AuthzIdorTest < ActionDispatch::IntegrationTest
 
     get "/api/v1/documents", headers: bearer_header("noaccess")
     assert_response :success
-    assert_equal [], JSON.parse(response.body)
+    assert_equal [], documents_in(response)
   end
 
   test "a random unknown document UUID is 404, never 200 or 500" do

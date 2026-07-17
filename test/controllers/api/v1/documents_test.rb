@@ -1,6 +1,8 @@
 require "test_helper"
 
 class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
+  include DocumentListHelpers
+
   setup do
     stub_jwks!
     @finance = Department.create!(name: "Finance")
@@ -88,20 +90,20 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     doc.update!(tags: { "invoice" => "2026" })
 
     get "/api/v1/documents", headers: bearer_header("erp-app")
-    names = JSON.parse(response.body).map { |d| d["filename"] }
+    names = documents_in(response).map { |d| d["filename"] }
     assert_equal [ "facture-2026.pdf" ], names
 
     get "/api/v1/documents", headers: bearer_header("erp-app"),
         params: { filename: "facture" }
-    assert_equal 1, JSON.parse(response.body).size
+    assert_equal 1, documents_in(response).size
 
     get "/api/v1/documents", headers: bearer_header("erp-app"),
         params: { tag: "invoice" }
-    assert_equal 1, JSON.parse(response.body).size
+    assert_equal 1, documents_in(response).size
 
     get "/api/v1/documents", headers: bearer_header("erp-app"),
         params: { tag: "nope" }
-    assert_equal 0, JSON.parse(response.body).size
+    assert_equal 0, documents_in(response).size
   end
 
   test "documents carry their tags as a map and tag_value filters on the pair" do
@@ -110,18 +112,18 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
 
     get "/api/v1/documents", headers: bearer_header("erp-app"),
         params: { tag: "type", tag_value: "facture" }
-    body = JSON.parse(response.body)
+    body = documents_in(response)
     assert_equal 1, body.size
     assert_equal({ "type" => "facture", "urgent" => nil }, body.first["tags"])
 
     # filter params are normalized like stored tags
     get "/api/v1/documents", headers: bearer_header("erp-app"),
         params: { tag: " Type ", tag_value: " facture " }
-    assert_equal 1, JSON.parse(response.body).size
+    assert_equal 1, documents_in(response).size
 
     get "/api/v1/documents", headers: bearer_header("erp-app"),
         params: { tag: "type", tag_value: "devis" }
-    assert_equal 0, JSON.parse(response.body).size
+    assert_equal 0, documents_in(response).size
   end
 
   test "tag_value without tag returns 400" do
@@ -135,24 +137,58 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
 
     get "/api/v1/documents", headers: bearer_header("erp-app"),
         params: { limit: 2 }
-    assert_equal 2, JSON.parse(response.body).size
+    assert_equal 2, documents_in(response).size
+    # total counts every match, not the page
+    assert_equal({ "limit" => 2, "offset" => 0, "total" => 3 }, pagination_in(response))
 
     get "/api/v1/documents", headers: bearer_header("erp-app"),
         params: { limit: 2, offset: 2 }
-    assert_equal 1, JSON.parse(response.body).size
+    assert_equal 1, documents_in(response).size
 
     # garbage / non-positive values fall back to the default page size
     [ "abc", 0, -5 ].each do |bad_limit|
       get "/api/v1/documents", headers: bearer_header("erp-app"),
           params: { limit: bad_limit, offset: "junk" }
-      assert_equal 3, JSON.parse(response.body).size, "limit=#{bad_limit.inspect}"
+      assert_equal 3, documents_in(response).size, "limit=#{bad_limit.inspect}"
     end
 
-    # a limit above the cap is clamped, not an error
+    # a limit above the cap is clamped, not an error, and the response echoes
+    # the clamped value rather than what was asked for
     get "/api/v1/documents", headers: bearer_header("erp-app"),
         params: { limit: 999_999 }
     assert_response :success
-    assert_equal 3, JSON.parse(response.body).size
+    assert_equal 3, documents_in(response).size
+    assert_equal 500, pagination_in(response)["limit"]
+  end
+
+  test "the list is a documents envelope carrying the applied window" do
+    create_document(@finance, "doc.pdf")
+    get "/api/v1/documents", headers: bearer_header("erp-app")
+    body = JSON.parse(response.body)
+    assert_equal %w[documents pagination], body.keys.sort
+    assert_equal({ "limit" => 100, "offset" => 0, "total" => 1 }, body["pagination"])
+  end
+
+  test "pagination total reflects the filters, not the whole scope" do
+    3.times { |i| create_document(@finance, "match-#{i}.pdf").update!(tags: { "type" => "facture" }) }
+    2.times { |i| create_document(@finance, "other-#{i}.pdf") }
+
+    get "/api/v1/documents", headers: bearer_header("erp-app"),
+        params: { tag: "type", tag_value: "facture", limit: 1 }
+    assert_equal 1, documents_in(response).size
+    assert_equal 3, pagination_in(response)["total"]
+  end
+
+  test "an empty list still carries a pagination block" do
+    get "/api/v1/documents", headers: bearer_header("erp-app")
+    assert_equal [], documents_in(response)
+    assert_equal({ "limit" => 100, "offset" => 0, "total" => 0 }, pagination_in(response))
+  end
+
+  test "an offset above the cap is echoed clamped" do
+    get "/api/v1/documents", headers: bearer_header("erp-app"),
+        params: { offset: 5_000_000 }
+    assert_equal 1_000_000, pagination_in(response)["offset"]
   end
 
   test "departments list paginates too" do
@@ -166,7 +202,7 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     get "/api/v1/documents", headers: bearer_header("erp-app"),
         params: { limit: [ 2 ], offset: { page: 1 } }
     assert_response :success
-    assert_equal 3, JSON.parse(response.body).size
+    assert_equal 3, documents_in(response).size
   end
 
   test "non-string filter params return 400 instead of 500" do
@@ -243,13 +279,13 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     async.update_columns(stored_async: true, uploaded_by: "other-app")
 
     get "/api/v1/documents", headers: bearer_header("erp-app"), params: { upload_mode: "async" }
-    assert_equal [ "async.pdf" ], JSON.parse(response.body).map { |d| d["filename"] }
+    assert_equal [ "async.pdf" ], documents_in(response).map { |d| d["filename"] }
 
     get "/api/v1/documents", headers: bearer_header("erp-app"), params: { upload_mode: "sync" }
-    assert_equal [ "sync.pdf" ], JSON.parse(response.body).map { |d| d["filename"] }
+    assert_equal [ "sync.pdf" ], documents_in(response).map { |d| d["filename"] }
 
     get "/api/v1/documents", headers: bearer_header("erp-app"), params: { uploaded_by: "other-app" }
-    assert_equal [ "async.pdf" ], JSON.parse(response.body).map { |d| d["filename"] }
+    assert_equal [ "async.pdf" ], documents_in(response).map { |d| d["filename"] }
 
     get "/api/v1/documents", headers: bearer_header("erp-app"), params: { upload_mode: "sideways" }
     assert_response :bad_request
@@ -267,7 +303,7 @@ class Api::V1::DocumentsTest < ActionDispatch::IntegrationTest
     { uploaded_after: "recent.pdf", indexed_after: "recent.pdf", updated_after: "recent.pdf",
       uploaded_before: "old.pdf", indexed_before: "old.pdf", updated_before: "old.pdf" }.each do |param, expected|
       get "/api/v1/documents", headers: bearer_header("erp-app"), params: { param => cutoff }
-      assert_equal [ expected ], JSON.parse(response.body).map { |d| d["filename"] }, "filter #{param}"
+      assert_equal [ expected ], documents_in(response).map { |d| d["filename"] }, "filter #{param}"
     end
 
     get "/api/v1/documents", headers: bearer_header("erp-app"), params: { uploaded_after: "not-a-date" }
