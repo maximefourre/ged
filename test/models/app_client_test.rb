@@ -32,6 +32,19 @@ class AppClientTest < ActiveSupport::TestCase
     assert_not reader.can_access?(@invoices, :write)  # no write anywhere in the subtree
   end
 
+  test "an unknown mode fails closed instead of falling through to read" do
+    reader = AppClient.create!(client_identifier: "reader")
+    reader.client_department_accesses.create!(department: @finance, can_read: true, can_write: false)
+
+    # A typo'd / stringified / nil mode must raise, not silently authorize via
+    # can_read. The dangerous regression is a read-only client answering "yes".
+    [ :wrtie, "write", nil ].each do |bad_mode|
+      assert_raises(ArgumentError, "mode #{bad_mode.inspect} should fail closed") do
+        reader.can_access?(@finance, bad_mode)
+      end
+    end
+  end
+
   test "a write-only grant does not allow read" do
     writer = AppClient.create!(client_identifier: "writer")
     writer.client_department_accesses.create!(department: @finance, can_read: false, can_write: true)

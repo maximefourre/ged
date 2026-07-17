@@ -18,7 +18,15 @@ class AppClient < ApplicationRecord
   private
 
   def granted_department_ids(mode)
-    column = (mode == :write) ? :can_write : :can_read
+    # Fail closed: an unknown mode (typo, string, nil) must raise, not quietly
+    # fall through to can_read and authorize a write. The comment on
+    # can_access? promises this — a ternary only delivered it for a literal
+    # :write.
+    column = case mode
+    when :write then :can_write
+    when :read  then :can_read
+    else raise ArgumentError, "unknown access mode: #{mode.inspect}"
+    end
     client_department_accesses.where(column => true).pluck(:department_id)
   end
 end

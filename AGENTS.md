@@ -154,7 +154,10 @@ is the source of truth.
   `AppClient#can_access?(dept, mode)` — `mode` (`:read`/`:write`) is required
   on both, so a forgotten mode fails loudly instead of silently authorizing
   the wrong verb (walks `Department#self_and_ancestors` over the grants where
-  the mode's column is true). List scopes use
+  the mode's column is true). Fail-closed on the value too: an unknown mode
+  (typo, string, `nil`) raises `ArgumentError` in `granted_department_ids`
+  rather than defaulting to `can_read` — so a mistyped `:write` can never
+  authorize a write via the read column. List scopes use
   `accessible_department_ids(:read)`; `find_authorized_document(mode:)` splits
   show/download (`:read`) from destroy (`:write`).
 - **Async upload flow:** controller creates an `UploadRequest` (uuid pk) +
