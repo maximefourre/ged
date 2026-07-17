@@ -92,6 +92,34 @@ Boot the full stack:
      -H "Authorization: Bearer <token>"
    ```
 
+   Returns an envelope with documents and pagination metadata:
+   ```json
+   {
+     "documents": [
+       {
+         "id": "uuid",
+         "filename": "invoice.pdf",
+         "content_type": "application/pdf",
+         "byte_size": 12345,
+         "department_id": 1,
+         "uploaded_by": "my-app",
+         "tags": {"type": "facture"},
+         "created_at": "2026-07-16T...",
+         "metadata": {
+           "uploaded_at": "2026-07-16T...",
+           "updated_at": "2026-07-16T...",
+           "upload_mode": "sync"
+         }
+       }
+     ],
+     "pagination": {
+       "limit": 100,
+       "offset": 0,
+       "total": 1234
+     }
+   }
+   ```
+
 **Note:** Containers reach the provider at `http://oauth-provider:9292` (Docker
 Compose DNS); tokens issued by the provider carry `iss=http://oauth-provider:9292`,
 which validates correctly inside the stack.

@@ -40,4 +40,24 @@ class ApiDocsTest < ActionDispatch::IntegrationTest
     missing = routed - documented
     assert_empty missing, "undocumented API paths: #{missing.to_a.join(", ")}"
   end
+
+  test "documents list response conforms to envelope schema" do
+    spec = YAML.safe_load_file(Rails.root.join("docs/api/openapi.yaml"), aliases: true)
+
+    list_response = spec.dig("paths", "/api/v1/documents", "get", "responses", "200")
+    assert list_response, "documents list endpoint missing 200 response"
+    schema_ref = list_response.dig("content", "application/json", "schema", "$ref")
+    assert_equal "#/components/schemas/DocumentList", schema_ref,
+                 "documents list 200 response should $ref DocumentList"
+
+    document_list = spec.dig("components", "schemas", "DocumentList")
+    assert document_list, "DocumentList schema not found"
+    assert_equal %w[documents pagination], document_list["properties"].keys.sort,
+                 "DocumentList should have documents and pagination properties"
+
+    pagination = spec.dig("components", "schemas", "Pagination")
+    assert pagination, "Pagination schema not found"
+    assert_equal %w[limit offset total], pagination["properties"].keys.sort,
+                 "Pagination should have limit, offset, and total properties"
+  end
 end

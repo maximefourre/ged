@@ -166,9 +166,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Document"
+                $ref: "#/components/schemas/DocumentList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -578,6 +576,33 @@ components:
           enum: [sync, async]
           description: How the document was stored
       required: [uploaded_at, updated_at, upload_mode]
+
+    DocumentList:
+      type: object
+      description: List of documents with pagination metadata
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: "#/components/schemas/Document"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+      required: [documents, pagination]
+
+    Pagination:
+      type: object
+      description: Pagination state for list responses
+      properties:
+        limit:
+          type: integer
+          description: Effective page size (the limit parameter applied, after clamping to max 500)
+        offset:
+          type: integer
+          description: Effective offset (the offset parameter applied, after clamping to 1000000)
+        total:
+          type: integer
+          description: Total number of matches in the filtered set, ignoring the pagination window
+      required: [limit, offset, total]
 
     Department:
       type: object

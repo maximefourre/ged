@@ -336,4 +336,11 @@ pitfalls:
   the `{ "error": ... }` contract for `/api/v1` paths, not a `rescue_from`.
 - API list endpoints paginate via `limit`/`offset` (default 100, max 500;
   `offset` is clamped to `MAX_OFFSET` = 1,000,000 so a hostile value cannot
-  overflow the Postgres bigint offset into a 500).
+  overflow the Postgres bigint offset into a 500). `GET /api/v1/documents`
+  returns an envelope `{ documents: [...], pagination: { limit, offset, total } }`
+  where `limit`/`offset` are the effective applied values (after clamping) and
+  `total` is the count of all filtered matches pre-pagination — so `total` can
+  exceed `documents.length`. **Note:** Rails counts a `.limit(n)` relation through
+  a subquery returning the page size, not the total; `total` must count the
+  filtered scope before limit/offset are applied to avoid this silent wrong-answer bug.
+  `GET /api/v1/departments` still returns a bare array (unchanged).

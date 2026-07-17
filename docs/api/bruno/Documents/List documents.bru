@@ -26,4 +26,8 @@ auth:bearer {
 docs {
   Lists accessible documents, newest first. Enable any of the disabled query
   params to filter. `tag_value` requires `tag`.
+
+  Response is an envelope: `{ documents: [...], pagination: { limit, offset, total } }`.
+  `limit` and `offset` are the effective applied values (after clamping).
+  `total` is the count of all matches ignoring the pagination window.
 }
