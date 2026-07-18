@@ -18,8 +18,9 @@
               <% if client.client_department_accesses.any? %>
                 <div class="tags">
                   <% client.client_department_accesses.each do |access| %>
+                    <% dept = @departments_by_id[access.department_id] %>
                     <span class="tag">
-                      <span class="k"><%= access.department.name %></span>
+                      <span class="k"><%= dept&.name %><% if dept&.deleted_at? %> (trashed)<% end %></span>
                       <span class="v"><%= [ ("R" if access.can_read?), ("W" if access.can_write?) ].compact.join %></span>
                     </span>
                   <% end %>

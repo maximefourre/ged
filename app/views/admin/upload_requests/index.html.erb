@@ -30,7 +30,10 @@
         <% @upload_requests.each do |request| %>
           <tr>
             <td class="id"><%= request.id %></td>
-            <td><%= request.department.name %></td>
+            <td>
+              <% dept = @departments_by_id[request.department_id] %>
+              <%= dept&.name %><% if dept&.deleted_at? %> <span class="muted">(trashed)</span><% end %>
+            </td>
             <td class="strong"><%= request.filename %></td>
             <td><%= render "admin/shared/tag_chips", tags: request.tags %></td>
             <td><span class="badge <%= status_badge_class(request.status) %>"><%= request.status %></span></td>
