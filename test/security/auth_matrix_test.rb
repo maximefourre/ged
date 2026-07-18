@@ -114,4 +114,30 @@ class AuthMatrixTest < ActionDispatch::IntegrationTest
     get "/api/v1/ping", headers: { "Authorization" => "Bearer #{audless}" }
     assert_response :unauthorized
   end
+
+  test "authentication failures return a generic error body, not jwt-gem internals" do
+    # GED-SEC-02 (2026-07-18 soak): the 401 body used to echo the raw jwt-gem /
+    # JWKS exception message ("Not enough or too many segments", "Expected a
+    # different algorithm", ...), disclosing implementation detail. It must now
+    # be a fixed generic message for every authentication failure.
+    get "/api/v1/ping", headers: { "Authorization" => "Bearer garbage" }
+    assert_response :unauthorized
+    assert_equal "invalid token", JSON.parse(response.body)["error"]
+    refute_includes response.body, "segments"
+  end
+
+  test "a malicious kid is not reflected in the error body" do
+    # The token's kid is attacker-controlled and was echoed verbatim in the 401
+    # body ("Could not find public key for kid ../../../etc/passwd"). The error
+    # response must never reflect it.
+    token = JWT.encode(
+      { sub: "erp-app", iss: ENV.fetch("GED_OIDC_ISSUER"), exp: 1.hour.from_now.to_i },
+      JwtTestHelpers::SIGNING_KEY, "RS256", kid: "../../../etc/passwd"
+    )
+    get "/api/v1/ping", headers: { "Authorization" => "Bearer #{token}" }
+    assert_response :unauthorized
+    assert_equal "invalid token", JSON.parse(response.body)["error"]
+    refute_includes response.body, "etc/passwd"
+    refute_includes response.body, "public key"
+  end
 end

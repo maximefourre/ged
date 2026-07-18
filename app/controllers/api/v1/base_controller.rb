@@ -37,10 +37,13 @@ module Api
           render json: { error: "client not registered" }, status: :forbidden
         end
       rescue Auth::TokenValidator::InvalidToken => e
-        render_unauthorized(e.message)
+        # Log the specific reason server-side, but never leak jwt-gem/JWKS
+        # internals — or the attacker-controlled kid — in the response body.
+        Rails.logger.info("bearer auth rejected: #{e.message}")
+        render_unauthorized
       end
 
-      def render_unauthorized(message)
+      def render_unauthorized(message = "invalid token")
         render json: { error: message }, status: :unauthorized
       end
 
