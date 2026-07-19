@@ -33,6 +33,13 @@
   </head>
 
   <body>
+    <% if flash.any? %>
+      <div class="flashes flashes-floating">
+        <% flash.each do |kind, msg| %>
+          <div class="flash flash-<%= kind %>"><%= msg %></div>
+        <% end %>
+      </div>
+    <% end %>
     <%= yield %>
   </body>
 </html>

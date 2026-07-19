@@ -16,4 +16,10 @@ class Admin::AuthenticationTest < ActionDispatch::IntegrationTest
     follow_redirect!
     assert_response :success
   end
+
+  test "failed login re-renders the form with the devise alert visible" do
+    Admin.create!(username: "alice", password: "secret123")
+    post admin_session_path, params: { admin: { username: "alice", password: "wrong" } }
+    assert_match "Invalid", response.body
+  end
 end

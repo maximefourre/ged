@@ -622,7 +622,7 @@ git commit -m "style(admin): editorial retheme — indigo/serif/pills tokens, da
 **Interfaces:**
 - Consumes: `.flashes`, `.flash-*`, `.flashes-floating` (Task 2).
 
-- [ ] **Step 1 : Écrire le test qui échoue** — ajouter à la fin de la classe dans `test/controllers/admin/authentication_test.rb` :
+- [x] **Step 1 : Écrire le test qui échoue** — ajouter à la fin de la classe dans `test/controllers/admin/authentication_test.rb` :
 
 ```ruby
   test "failed login re-renders the form with the devise alert visible" do
@@ -632,7 +632,7 @@ git commit -m "style(admin): editorial retheme — indigo/serif/pills tokens, da
   end
 ```
 
-- [ ] **Step 2 : Vérifier qu'il échoue**
+- [x] **Step 2 : Vérifier qu'il échoue**
 
 ```bash
 bin/rails test test/controllers/admin/authentication_test.rb
@@ -640,7 +640,7 @@ bin/rails test test/controllers/admin/authentication_test.rb
 
 Expected: FAIL — le layout `application` ne rend aucun flash, le corps ne contient pas le message Devise.
 
-- [ ] **Step 3 : Rendre les flashes dans le layout** — dans `app/views/layouts/application.html.erb`, remplacer :
+- [x] **Step 3 : Rendre les flashes dans le layout** — dans `app/views/layouts/application.html.erb`, remplacer :
 
 ```erb
   <body>
@@ -663,7 +663,7 @@ par :
   </body>
 ```
 
-- [ ] **Step 4 : Vérifier que le test passe**
+- [x] **Step 4 : Vérifier que le test passe**
 
 ```bash
 bin/rails test test/controllers/admin/authentication_test.rb
@@ -671,7 +671,7 @@ bin/rails test test/controllers/admin/authentication_test.rb
 
 Expected: PASS.
 
-- [ ] **Step 5 : Commit**
+- [x] **Step 5 : Commit**
 
 ```bash
 git add app/views/layouts/application.html.erb test/controllers/admin/authentication_test.rb
@@ -783,7 +783,7 @@ bin/rails test
 
 Expected: `0 failures, 0 errors` aux deux. Les tests contrôleurs ne exécutent pas de JS et ne voient que le changement d'attribut `data`.
 
-- [ ] **Step 5 : Commit**
+- [x] **Step 5 : Commit**
 
 ```bash
 git add app/javascript/application.js app/views/admin/documents/index.html.erb app/views/admin/departments/index.html.erb app/views/admin/app_clients/index.html.erb test/system/admin_ui_test.rb
@@ -946,7 +946,7 @@ bin/rails test test/controllers/admin/departments_controller_test.rb test/contro
 
 Expected: PASS partout.
 
-- [ ] **Step 5 : Commit**
+- [x] **Step 5 : Commit**
 
 ```bash
 git add app/views/admin/departments/index.html.erb app/views/admin/app_clients/index.html.erb app/views/admin/upload_requests/index.html.erb test/controllers/admin/departments_controller_test.rb test/controllers/admin/app_clients_controller_test.rb test/controllers/admin/upload_requests_controller_test.rb
