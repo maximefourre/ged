@@ -41,4 +41,11 @@ class Admin::UploadRequestsControllerTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Finance"
     assert_includes response.body, "(trashed)"
   end
+
+  test "index shows an empty state when there are no upload requests" do
+    sign_in @admin
+    get admin_upload_requests_path
+    assert_response :success
+    assert_match "No upload requests match.", response.body
+  end
 end

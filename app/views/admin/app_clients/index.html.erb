@@ -39,6 +39,9 @@
             </td>
           </tr>
         <% end %>
+        <% if @app_clients.empty? %>
+          <tr><td colspan="4" class="empty">No registered clients.</td></tr>
+        <% end %>
       </tbody>
     </table>
   </div>

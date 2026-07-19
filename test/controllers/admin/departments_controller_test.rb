@@ -213,4 +213,10 @@ class Admin::DepartmentsControllerTest < ActionDispatch::IntegrationTest
     assert_includes response.body, 'class="trashed"'
     assert_includes response.body, "Restore"
   end
+
+  test "index shows an empty state when there are no departments" do
+    get admin_departments_path
+    assert_response :success
+    assert_match "No departments yet.", response.body
+  end
 end

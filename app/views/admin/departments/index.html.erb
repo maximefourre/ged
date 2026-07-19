@@ -29,6 +29,9 @@
             </td>
           </tr>
         <% end %>
+        <% if @departments.empty? %>
+          <tr><td colspan="4" class="empty">No departments yet.</td></tr>
+        <% end %>
       </tbody>
     </table>
   </div>

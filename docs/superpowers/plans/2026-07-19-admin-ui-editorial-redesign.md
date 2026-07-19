@@ -904,7 +904,7 @@ Ajout dans `test/controllers/admin/upload_requests_controller_test.rb` (idem, `s
   end
 ```
 
-- [ ] **Step 2 : Vérifier qu'ils échouent**
+- [x] **Step 2 : Vérifier qu'ils échouent**
 
 ```bash
 bin/rails test test/controllers/admin/departments_controller_test.rb test/controllers/admin/app_clients_controller_test.rb test/controllers/admin/upload_requests_controller_test.rb
@@ -938,7 +938,7 @@ Expected: 3 FAIL (les vues ne rendent rien quand la collection est vide).
         <% end %>
 ```
 
-- [ ] **Step 4 : Vérifier que les trois tests passent**
+- [x] **Step 4 : Vérifier que les trois tests passent**
 
 ```bash
 bin/rails test test/controllers/admin/departments_controller_test.rb test/controllers/admin/app_clients_controller_test.rb test/controllers/admin/upload_requests_controller_test.rb

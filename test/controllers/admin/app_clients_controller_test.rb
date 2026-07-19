@@ -93,4 +93,11 @@ class Admin::AppClientsControllerTest < ActionDispatch::IntegrationTest
     assert access.can_read?
     assert access.can_write?
   end
+
+  test "index shows an empty state when there are no clients" do
+    sign_in @admin
+    get admin_app_clients_path
+    assert_response :success
+    assert_match "No registered clients.", response.body
+  end
 end
