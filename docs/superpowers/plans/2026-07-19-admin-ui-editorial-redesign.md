@@ -28,14 +28,14 @@
 **Interfaces:**
 - Produces: worktree opérationnel avec Postgres dédié (`bin/worktree-stack db`), spec + plan committés sur la branche, baseline de tests verte.
 
-- [ ] **Step 1 : Créer le worktree et la branche**
+- [x] **Step 1 : Créer le worktree et la branche**
 
 ```bash
 cd /Users/fourreto/Projects/vibecode/ged
 git worktree add ../ged-editorial -b feature/admin-editorial-redesign
 ```
 
-- [ ] **Step 2 : Copier la spec et le plan (non committés dans l'arbre principal) dans le worktree, puis les committer**
+- [x] **Step 2 : Copier la spec et le plan (non committés dans l'arbre principal) dans le worktree, puis les committer**
 
 ```bash
 cp docs/superpowers/specs/2026-07-19-admin-ui-editorial-redesign-design.md ../ged-editorial/docs/superpowers/specs/
@@ -45,7 +45,7 @@ git add docs/superpowers/specs/2026-07-19-admin-ui-editorial-redesign-design.md 
 git commit -m "docs(specs): admin UI editorial redesign — spec + plan"
 ```
 
-- [ ] **Step 3 : Démarrer le Postgres du worktree et vérifier la baseline**
+- [x] **Step 3 : Démarrer le Postgres du worktree et vérifier la baseline**
 
 ```bash
 bin/worktree-stack db
@@ -595,7 +595,7 @@ en pills, (c) passe h1/brand/section-title/auth h2 en serif, (d) ajoute
 `.tbl .strong`/`.tbl .muted` (couverts par les globaux — la cascade trashed
 `.tbl tr.trashed td.strong` reste) et tout le bloc `.check-grid` (mort).
 
-- [ ] **Step 2 : Vérifier que rien ne casse**
+- [x] **Step 2 : Vérifier que rien ne casse**
 
 ```bash
 bin/rails test
@@ -604,7 +604,7 @@ bin/rails test:system
 
 Expected: `0 failures, 0 errors` aux deux (aucun libellé ni classe consommée par les vues n'a changé).
 
-- [ ] **Step 3 : Commit**
+- [x] **Step 3 : Commit**
 
 ```bash
 git add app/assets/stylesheets/application.css
@@ -850,7 +850,7 @@ bin/rails test:system
 
 Expected: `0 failures, 0 errors` (2.10 traverse la page et clique les deux boutons par libellé).
 
-- [ ] **Step 3 : Commit**
+- [x] **Step 3 : Commit**
 
 ```bash
 git add app/views/admin/departments/confirm_deletion.html.erb

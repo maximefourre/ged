@@ -1,60 +1,61 @@
 /*
- * GED admin — "Console" design system (Propshaft, plain CSS, no build).
- * Top bar navigation, teal accent, monospace identifiers, dense tables.
- * Theme-aware: light by default, dark via :root[data-theme="dark"]
- * (set by an inline init script + the top-bar toggle, persisted in localStorage).
+ * GED admin — "Éditorial" design system (Propshaft, plain CSS, no build).
+ * Top bar navigation à pills, accent indigo, titres serif, identifiants mono.
+ * Theme-aware : clair par défaut, sombre « Nuit indigo » via
+ * :root[data-theme="dark"] (inline init script + toggle, localStorage).
  */
 
 :root {
-  --bg: #f4f6f8;
+  --bg: #eef0f6;
   --surface: #ffffff;
-  --surface-2: #f1f4f7;
-  --surface-3: #e9edf1;
-  --text: #16202b;
-  --muted: #5a6775;
-  --faint: #8b97a4;
-  --border: #e0e5ea;
-  --border-strong: #cfd6dd;
+  --surface-2: #f4f5fa;
+  --surface-3: #ececf4;
+  --text: #1d2138;
+  --muted: #6d7285;
+  --faint: #9aa0b5;
+  --border: #e7e9f2;
+  --border-strong: #d6d9e8;
 
-  --accent: #0f8a78;
-  --accent-ink: #0b6b5d;
-  --accent-weak: #dff3ef;
+  --accent: #5b5bd6;
+  --accent-ink: #4a4ab8;
+  --accent-weak: #ececfb;
   --accent-contrast: #ffffff;
 
-  --ok: #1e7a52;  --ok-bg: #e2f1ea;
-  --warn: #9a6a12; --warn-bg: #f7edda;
-  --bad: #c33b2c;  --bad-bg: #fae6e3;
-  --info: #2565c9; --info-bg: #e5edfb;
+  --ok: #1e7a52;  --ok-bg: #e3f2ea;
+  --warn: #9a6a12; --warn-bg: #f9eeda;
+  --bad: #c33b2c;  --bad-bg: #fbe7e3;
+  --info: #2565c9; --info-bg: #e6eefc;
 
-  --radius: 8px;
-  --radius-sm: 6px;
-  --shadow: 0 1px 2px rgba(20, 30, 50, .05), 0 8px 24px -18px rgba(20, 30, 50, .3);
+  --radius: 10px;
+  --radius-sm: 8px;
+  --radius-pill: 999px;
+  --shadow: 0 2px 12px rgba(30, 30, 60, .08), 0 1px 2px rgba(30, 30, 60, .05);
 
-  --font-head: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-head: Georgia, "Times New Roman", serif;
   --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
 :root[data-theme="dark"] {
-  --bg: #0e1319;
-  --surface: #151b23;
-  --surface-2: #1a212b;
-  --surface-3: #11171e;
-  --text: #e7ecf2;
-  --muted: #8a97a6;
-  --faint: #6b7788;
-  --border: #263039;
-  --border-strong: #313d49;
+  --bg: #0f1020;
+  --surface: #15172b;
+  --surface-2: #191c33;
+  --surface-3: #232748;
+  --text: #eceef8;
+  --muted: #8285a3;
+  --faint: #6f7292;
+  --border: #262a45;
+  --border-strong: #2e325a;
 
-  --accent: #2bc6a6;
-  --accent-ink: #7fe9d3;
-  --accent-weak: rgba(43, 198, 166, .15);
-  --accent-contrast: #06231d;
+  --accent: #7a7ae6;
+  --accent-ink: #b3b3f2;
+  --accent-weak: #2b2e55;
+  --accent-contrast: #0f1020;
 
-  --ok: #34d399;  --ok-bg: rgba(52, 211, 153, .13);
-  --warn: #f5b544; --warn-bg: rgba(245, 181, 68, .13);
-  --bad: #f87171;  --bad-bg: rgba(248, 113, 113, .13);
-  --info: #5aa9ff; --info-bg: rgba(90, 169, 255, .13);
+  --ok: #34d399;  --ok-bg: #15332c;
+  --warn: #f5b544; --warn-bg: #3b3122;
+  --bad: #f2a08f;  --bad-bg: #452b33;
+  --info: #5aa9ff; --info-bg: #1d2c4a;
 
   --shadow: none;
 }
@@ -75,14 +76,26 @@ body {
 
 a { color: var(--accent-ink); }
 
+/* Utilitaires globaux (utilisés hors tables : Status, Trash, confirm_deletion) */
+.strong { font-weight: 600; color: var(--text); }
+.muted { color: var(--muted); }
+
+code {
+  font-family: var(--font-mono);
+  font-size: .92em;
+  background: var(--surface-3);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
 /* ============================ App shell (top bar) ============================ */
 body.admin { display: flex; flex-direction: column; min-height: 100vh; }
 
 .topbar {
   display: flex;
   align-items: center;
-  gap: 2px;
-  height: 54px;
+  gap: 4px;
+  height: 56px;
   padding: 0 clamp(12px, 2.5vw, 22px);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -101,9 +114,10 @@ body.admin { display: flex; flex-direction: column; min-height: 100vh; }
   white-space: nowrap;
 }
 .brand b {
-  font-weight: 800;
-  font-size: 18px;
-  letter-spacing: .02em;
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: .01em;
   color: var(--text);
 }
 .brand span {
@@ -114,28 +128,27 @@ body.admin { display: flex; flex-direction: column; min-height: 100vh; }
   font-weight: 700;
 }
 
-.nav { display: flex; align-items: stretch; height: 100%; min-width: 0; overflow-x: auto; }
+.nav { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-x: auto; }
 .nav-link {
   display: flex;
   align-items: center;
-  padding: 0 13px;
-  height: 100%;
-  border-bottom: 2px solid transparent;
+  padding: 7px 13px;
+  border-radius: var(--radius-pill);
   font-size: 13.5px;
   font-weight: 500;
   color: var(--muted);
   text-decoration: none;
   white-space: nowrap;
-  transition: color .15s, border-color .15s;
+  transition: color .15s, background .15s;
 }
-.nav-link:hover { color: var(--text); }
-.nav-link.is-active { color: var(--accent-ink); border-bottom-color: var(--accent); font-weight: 600; }
+.nav-link:hover { color: var(--text); background: var(--surface-2); }
+.nav-link.is-active { color: var(--accent-ink); background: var(--accent-weak); font-weight: 600; }
 
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; padding-left: 12px; }
 .who { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .avatar {
   width: 25px; height: 25px; border-radius: 50%; flex: none;
-  background: var(--accent-weak); color: var(--accent-ink);
+  background: var(--accent); color: var(--accent-contrast);
   display: grid; place-items: center; font-weight: 700; font-size: 12px;
 }
 
@@ -171,6 +184,19 @@ body.admin { display: flex; flex-direction: column; min-height: 100vh; }
 .flash-notice { background: var(--ok-bg); color: var(--ok); }
 .flash-alert { background: var(--bad-bg); color: var(--bad); }
 
+/* Variante flottante pour le layout hors-admin (page de login) : ne décale
+   pas la carte centrée en plein écran. */
+.flashes-floating {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  width: min(92vw, 420px);
+  margin: 0;
+}
+.flashes-floating .flash { border: 1px solid var(--border); box-shadow: var(--shadow); }
+
 /* ============================ Page header ============================ */
 .page-head {
   display: flex;
@@ -182,9 +208,9 @@ body.admin { display: flex; flex-direction: column; min-height: 100vh; }
 }
 .content h1 {
   font-family: var(--font-head);
-  font-size: 21px;
+  font-size: 24px;
   font-weight: 700;
-  letter-spacing: -.01em;
+  letter-spacing: 0;
   margin: 0;
   text-wrap: balance;
 }
@@ -216,6 +242,8 @@ body.admin { display: flex; flex-direction: column; min-height: 100vh; }
 .btn-link:hover { background: var(--accent-weak); }
 .btn-danger { background: transparent; border-color: transparent; color: var(--bad); padding: 6px 8px; }
 .btn-danger:hover { background: var(--bad-bg); }
+.btn-danger-solid { background: var(--bad); border-color: var(--bad); color: var(--accent-contrast); }
+.btn-danger-solid:hover { filter: brightness(1.06); background: var(--bad); }
 
 /* button_to renders a <form>; keep those inline within action groups */
 .row-actions form, .queue form, .page-head form.inline { display: inline; margin: 0; }
@@ -255,6 +283,13 @@ textarea.input { width: 100%; resize: vertical; font-family: var(--font-mono); f
   outline-offset: 2px;
 }
 
+/* Validation re-render : Rails enveloppe champs et labels fautifs dans
+   <div class="field_with_errors">. display:contents neutralise le wrapper
+   dans le flex des .field ; l'état d'erreur se voit sur le champ lui-même. */
+.field_with_errors { display: contents; }
+.field_with_errors .input, .field_with_errors .select { border-color: var(--bad); }
+.field_with_errors label { color: var(--bad); }
+
 /* ============================ Cards & tables ============================ */
 .card {
   background: var(--surface);
@@ -280,10 +315,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl td { padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .tbl tbody tr:last-child td { border-bottom: 0; }
 .tbl tbody tr:hover td { background: var(--surface-2); }
-.tbl .strong { font-weight: 600; color: var(--text); }
 .tbl .id { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
 .tbl .mono { font-family: var(--font-mono); }
-.tbl .muted { color: var(--muted); }
 .tbl .date { color: var(--muted); white-space: nowrap; font-family: var(--font-mono); font-size: 12px; }
 .tbl tr.trashed td { color: var(--muted); }
 .tbl tr.trashed td.strong { color: var(--muted); font-weight: 600; }
@@ -320,12 +353,12 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   font-family: var(--font-mono);
   font-size: 11.5px;
   line-height: 1;
-  border-radius: 4px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
   border: 1px solid var(--border-strong);
 }
-.tag .k { padding: 4px 7px; background: var(--surface-3); color: var(--muted); }
-.tag .v { padding: 4px 8px; background: var(--accent-weak); color: var(--accent-ink); font-weight: 600; }
+.tag .k { padding: 4px 8px; background: var(--surface-3); color: var(--muted); }
+.tag .v { padding: 4px 9px; background: var(--accent-weak); color: var(--accent-ink); font-weight: 600; }
 .tag.solo .k { background: var(--accent-weak); color: var(--accent-ink); font-weight: 600; }
 
 /* ============================ Status badges ============================ */
@@ -335,8 +368,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   gap: 6px;
   font-size: 12px;
   font-weight: 600;
-  padding: 4px 10px 4px 8px;
-  border-radius: 5px;
+  padding: 4px 11px 4px 9px;
+  border-radius: var(--radius-pill);
   background: var(--surface-3);
   color: var(--muted);
 }
@@ -380,6 +413,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   flex-direction: column;
   gap: 16px;
 }
+.form-card p { margin: 0; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > label, .field-label {
   font-size: 11.5px;
@@ -390,21 +424,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 .field .input, .field .select { width: 100%; }
 .field .hint { color: var(--muted); font-size: 12.5px; font-weight: 400; text-transform: none; letter-spacing: 0; }
-.form-actions { display: flex; gap: 10px; align-items: center; }
-
-/* checkbox grid (client department access) */
-.check-grid {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 12px;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 8px 14px;
-  margin: 0;
-}
-.check-grid legend { padding: 0 0 4px; }
-.check-grid label { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
-.check-grid input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+.form-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.form-actions form { margin: 0; }
 
 /* ============================ Dropzone ============================ */
 .dropzone {
@@ -457,7 +478,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 :root[data-theme="dark"] .auth-wrap {
   background:
-    radial-gradient(1100px 480px at 50% -10%, rgba(43, 198, 166, .10), transparent 70%), var(--bg);
+    radial-gradient(1100px 480px at 50% -10%, rgba(122, 122, 230, .12), transparent 70%), var(--bg);
 }
 .auth-card {
   width: 100%;
@@ -469,17 +490,17 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   box-shadow: var(--shadow);
 }
 .auth-brand { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
-.auth-brand b { font-weight: 800; font-size: 18px; letter-spacing: .02em; color: var(--text); }
+.auth-brand b { font-family: var(--font-head); font-weight: 700; font-size: 19px; letter-spacing: .01em; color: var(--text); }
 .auth-brand span { font-size: 11px; text-transform: uppercase; letter-spacing: .16em; color: var(--accent); font-weight: 700; }
-.auth-card h2 { font-family: var(--font-head); font-size: 19px; font-weight: 700; margin: 16px 0 4px; }
+.auth-card h2 { font-family: var(--font-head); font-size: 20px; font-weight: 700; margin: 16px 0 4px; }
 .auth-lede { margin: 0 0 20px; color: var(--muted); font-size: 13.5px; }
 .auth-card .field { margin-bottom: 14px; }
 .auth-card .btn-primary { width: 100%; justify-content: center; margin-top: 6px; padding: 11px; }
 
 /* ============================ Status page ============================ */
-.section-title { font-size: 14px; font-weight: 600; margin: 22px 0 10px; color: var(--muted); }
+.section-title { font-family: var(--font-head); font-size: 15px; font-weight: 700; margin: 22px 0 10px; color: var(--text); }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
-.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; box-shadow: var(--shadow); }
 .stat .num { display: block; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .stat .lbl { font-size: 12px; color: var(--muted); }
 .health-list { list-style: none; margin: 0; padding: 0; }
