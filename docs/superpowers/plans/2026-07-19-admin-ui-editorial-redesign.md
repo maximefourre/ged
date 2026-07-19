@@ -801,7 +801,7 @@ git commit -m "fix(admin): real delete confirmations via vanilla data-confirm (t
 - Consumes: `.form-card`, `.form-card p`, `.form-actions form`, `.select`, `.btn-danger-solid`, `.muted` global (Task 2).
 - Libellés inchangés : « Move everything to », « Move documents and delete department », « Trash department and its documents », « Cancel » (les tests système 2.10 s'y accrochent).
 
-- [ ] **Step 1 : Remplacer intégralement `app/views/admin/departments/confirm_deletion.html.erb` par :**
+- [x] **Step 1 : Remplacer intégralement `app/views/admin/departments/confirm_deletion.html.erb` par :**
 
 ```erb
 <header class="page-head">
@@ -841,7 +841,7 @@ git commit -m "fix(admin): real delete confirmations via vanilla data-confirm (t
 
 (Changements : `.card` nu → `.form-card` paddé ; le `<select>` gagne la classe `select` ; le `<div class="field">` espace le formulaire de move ; « Trash… » passe du style lien fantôme `btn-danger` au bouton plein `btn-danger-solid` ; le petit `<div class="field">` du move est suivi d'un `form-actions` pour l'alignement. Aucun texte ne change.)
 
-- [ ] **Step 2 : Vérifier les tests qui couvrent la page**
+- [x] **Step 2 : Vérifier les tests qui couvrent la page**
 
 ```bash
 bin/rails test test/controllers/admin/departments_controller_test.rb
