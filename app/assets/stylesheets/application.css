@@ -278,7 +278,7 @@ body.admin { display: flex; flex-direction: column; min-height: 100vh; }
 textarea.input { width: 100%; resize: vertical; font-family: var(--font-mono); font-size: 13px; }
 
 .input:focus, .select:focus, .btn:focus-visible, .nav-link:focus-visible,
-.icon-btn:focus-visible, .dropzone:focus-within, a:focus-visible {
+.icon-btn:focus-visible, .dropzone:focus-within, a:focus-visible, .tree-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -323,6 +323,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .row-actions { display: flex; gap: 2px; justify-content: flex-end; align-items: center; white-space: nowrap; }
 .dash { color: var(--faint); }
 .tree-guide { color: var(--faint); font-family: var(--font-mono); font-size: 12px; }
+.tree-toggle { font: inherit; font-family: var(--font-mono); font-size: 11px; line-height: 1; cursor: pointer; border: 0; background: none; color: var(--muted); padding: 2px 6px 2px 0; }
+.tree-toggle:hover { color: var(--accent-ink); }
 
 /* Empty state */
 .empty { padding: 34px 16px; text-align: center; color: var(--muted); }

@@ -50,3 +50,41 @@
     if (btn && !window.confirm(btn.dataset.confirm)) e.preventDefault();
   });
 })();
+
+// Collapsible department tree (admin/departments#index). Rows carry
+// data-dept-id / data-parent-id; a [data-tree-toggle] button hides or shows
+// its subtree. Everything starts expanded, no persistence across reloads.
+(function () {
+  function childRows(deptId) {
+    return document.querySelectorAll('tr[data-parent-id="' + deptId + '"]');
+  }
+
+  // Collapsing hides every descendant row unconditionally. Expanding only
+  // reveals direct children, then recurses into a child's own subtree only
+  // if that child's toggle is still expanded — so a nested collapsed branch
+  // stays collapsed when its ancestor re-opens.
+  function setDescendantsVisible(deptId, visible) {
+    childRows(deptId).forEach(function (row) {
+      row.hidden = !visible;
+      var childToggle = row.querySelector("[data-tree-toggle]");
+      if (!visible) {
+        setDescendantsVisible(row.dataset.deptId, false);
+      } else if (!childToggle || childToggle.getAttribute("aria-expanded") === "true") {
+        setDescendantsVisible(row.dataset.deptId, true);
+      }
+    });
+  }
+
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-tree-toggle]");
+    if (!btn) return;
+    var row = btn.closest("tr");
+    if (!row) return;
+
+    var expanded = btn.getAttribute("aria-expanded") === "true";
+    var next = !expanded;
+    btn.setAttribute("aria-expanded", String(next));
+    btn.textContent = next ? "▾" : "▸";
+    setDescendantsVisible(row.dataset.deptId, next);
+  });
+})();

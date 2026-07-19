@@ -1,6 +1,7 @@
 class Admin::DepartmentsController < Admin::BaseController
   def index
     @department_pairs = Department.tree(Department.with_deleted)
+    @parent_ids = @department_pairs.map { |d, _| d.parent_id }.compact.to_set
     @doc_counts = Document.group(:department_id).count
     @trashed_counts = Document.deleted.group(:department_id).count
   end

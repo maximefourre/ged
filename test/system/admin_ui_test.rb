@@ -63,6 +63,21 @@ class AdminUiTest < ApplicationSystemTestCase
     assert_equal 1, Department.where(name: "Finance", parent_id: nil).count
   end
 
+  test "department tree rows collapse and expand" do
+    finance = Department.create!(name: "Finance")
+    Department.create!(name: "Invoices", parent: finance)
+    sign_in_admin
+
+    visit admin_departments_path
+    assert_selector "tr", text: "Invoices"
+
+    within("tr", text: "Finance") { find("[data-tree-toggle]").click }
+    assert_no_selector "tr", text: "Invoices"
+
+    within("tr", text: "Finance") { find("[data-tree-toggle]").click }
+    assert_selector "tr", text: "Invoices"
+  end
+
   # --- 2.5 Tags ------------------------------------------------------------
 
   test "2.5 tag keys are normalized to lowercase in the document tags textarea" do

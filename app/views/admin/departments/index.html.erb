@@ -11,8 +11,15 @@
       </thead>
       <tbody>
         <% @department_pairs.each do |dept, depth| %>
-          <tr<%= ' class="trashed"'.html_safe if dept.deleted_at? %>>
-            <td class="strong"><% if depth > 0 %><span class="tree-guide"><%= " " * 3 * (depth - 1) %>└─ </span><% end %><%= dept.name %></td>
+          <tr<%= ' class="trashed"'.html_safe if dept.deleted_at? %> data-dept-id="<%= dept.id %>"<% if dept.parent_id %> data-parent-id="<%= dept.parent_id %>"<% end %>>
+            <td class="strong">
+              <% if @parent_ids.include?(dept.id) %>
+                <% if depth > 0 %><span class="tree-guide"><%= " " * 3 * (depth - 1) %></span><% end %><button type="button" class="tree-toggle" data-tree-toggle aria-expanded="true" aria-label="Replier <%= dept.name %>">▾</button>
+              <% elsif depth > 0 %>
+                <span class="tree-guide"><%= " " * 3 * (depth - 1) %>└─ </span>
+              <% end %>
+              <%= dept.name %>
+            </td>
             <td><%= dept.deleted_at? ? @trashed_counts.fetch(dept.id, 0) : @doc_counts.fetch(dept.id, 0) %></td>
             <td>
               <div class="row-actions">

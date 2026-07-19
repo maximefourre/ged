@@ -231,4 +231,16 @@ class Admin::DepartmentsControllerTest < ActionDispatch::IntegrationTest
     assert_operator body.index("Factures"), :<, body.index("2026")
     assert_includes body, "tree-guide"
   end
+
+  test "index renders a tree-toggle button for a parent department but not a leaf" do
+    parent = Department.create!(name: "Compta")
+    child = Department.create!(name: "Factures", parent: parent)
+
+    get admin_departments_path
+
+    assert_response :success
+    assert_select %(tr[data-dept-id="#{parent.id}"] [data-tree-toggle]), 1
+    assert_select %(tr[data-dept-id="#{child.id}"] [data-tree-toggle]), 0
+    assert_select %(tr[data-parent-id="#{parent.id}"]), 1
+  end
 end
