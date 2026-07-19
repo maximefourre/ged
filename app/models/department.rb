@@ -16,6 +16,23 @@ class Department < ApplicationRecord
   validates :name, presence: true, uniqueness: { scope: :parent_id, conditions: -> { with_deleted } }
   validate :parent_is_not_self_or_descendant
 
+  # Depth-first [department, depth] pairs, names sorted at each level.
+  # Works on any relation (with_deleted, filtered…): nodes whose parent is
+  # not in the set are treated as roots, so a filtered set stays complete.
+  def self.tree(scope = all)
+    nodes = scope.to_a
+    by_parent = nodes.group_by(&:parent_id)
+    ids = nodes.map(&:id).to_set
+    roots = nodes.select { |d| d.parent_id.nil? || ids.exclude?(d.parent_id) }
+    pairs = []
+    visit = lambda do |dept, depth|
+      pairs << [ dept, depth ]
+      (by_parent[dept.id] || []).sort_by(&:name).each { |c| visit.call(c, depth + 1) }
+    end
+    roots.sort_by(&:name).each { |r| visit.call(r, 0) }
+    pairs
+  end
+
   def self_and_ancestors
     node, list, seen = self, [], Set.new
     while node && seen.exclude?(node.id)

@@ -8,14 +8,12 @@
     <p class="muted"><%= @pending_requests_count %> pending upload request(s): trashing the department will fail them; moving re-targets them.</p>
   <% end %>
 
-  <% if @target_departments.exists? %>
+  <% if @target_pairs.any? %>
     <%= form_with url: move_documents_admin_department_path(@department), method: :post do %>
       <div class="field">
         <label for="target_department_id">Move everything to</label>
         <select name="target_department_id" id="target_department_id" class="select">
-          <% @target_departments.each do |dept| %>
-            <option value="<%= dept.id %>" <%= "selected" if dept.id == @default_target&.id %>><%= dept.name %></option>
-          <% end %>
+          <%= department_tree_options(@target_pairs, @default_target&.id) %>
         </select>
       </div>
       <div class="form-actions">

@@ -11,12 +11,12 @@ class Admin::AppClientsController < Admin::BaseController
 
   def new
     @app_client = AppClient.new
-    @departments = departments_for_form(@app_client)
+    @department_pairs = departments_for_form(@app_client)
   end
 
   def edit
     @app_client = AppClient.find(params[:id])
-    @departments = departments_for_form(@app_client)
+    @department_pairs = departments_for_form(@app_client)
   end
 
   def create
@@ -25,7 +25,7 @@ class Admin::AppClientsController < Admin::BaseController
       redirect_to admin_app_clients_path, notice: "Client registered."
     else
       flash.now[:alert] = @app_client.errors.full_messages.join(", ")
-      @departments = departments_for_form(@app_client)
+      @department_pairs = departments_for_form(@app_client)
       render :new, status: :unprocessable_entity
     end
   end
@@ -37,7 +37,7 @@ class Admin::AppClientsController < Admin::BaseController
       redirect_to admin_app_clients_path, notice: "Client updated."
     else
       flash.now[:alert] = @app_client.errors.full_messages.join(", ")
-      @departments = departments_for_form(@app_client)
+      @department_pairs = departments_for_form(@app_client)
       render :edit, status: :unprocessable_entity
     end
   end
@@ -56,10 +56,11 @@ class Admin::AppClientsController < Admin::BaseController
   # Live departments plus any (trashed) department the client already has a
   # grant for, so an existing access to a soft-deleted department stays visible
   # and removable in the grid instead of silently persisting off-screen.
+  # Returned depth-first (Department.tree) so the grid reads as a hierarchy.
   def departments_for_form(client)
     ids = Department.pluck(:id)
     ids += client.client_department_accesses.pluck(:department_id) if client.persisted?
-    Department.with_deleted.where(id: ids.uniq).order(:name)
+    Department.tree(Department.with_deleted.where(id: ids.uniq))
   end
 
   def save_with_access

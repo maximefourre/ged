@@ -1,6 +1,6 @@
 class Admin::DepartmentsController < Admin::BaseController
   def index
-    @departments = Department.with_deleted.includes(:parent).order(:name)
+    @department_pairs = Department.tree(Department.with_deleted)
     @doc_counts = Document.group(:department_id).count
     @trashed_counts = Document.deleted.group(:department_id).count
   end
@@ -57,8 +57,8 @@ class Admin::DepartmentsController < Admin::BaseController
     @live_docs_count = Document.where(department_id: @department.id).count
     @trashed_docs_count = Document.deleted.where(department_id: @department.id).count
     @pending_requests_count = @department.upload_requests.count
-    @target_departments = Department.where.not(id: @department.id).order(:name)
-    @default_target = @department.parent if @department.parent && @target_departments.exists?(@department.parent_id)
+    @target_pairs = Department.tree(Department.where.not(id: @department.id))
+    @default_target = @department.parent if @department.parent && @target_pairs.any? { |d, _| d.id == @department.parent_id }
   end
 
   def move_documents

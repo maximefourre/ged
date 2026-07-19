@@ -5,7 +5,7 @@
 <%= form_with model: [ :admin, @document ], class: "form-card" do |f| %>
   <div class="field">
     <%= f.label :department_id %>
-    <%= f.collection_select :department_id, Department.order(:name), :id, :name, {}, { class: "select" } %>
+    <%= f.select :department_id, department_tree_options(Department.tree), {}, { class: "select" } %>
   </div>
 
   <div class="field">

@@ -166,6 +166,14 @@ class DepartmentTest < ActiveSupport::TestCase
     assert dept2.errors[:name].any?
   end
 
+  test ".tree returns depth-first pairs with depths, filtered sets promoting orphans to roots" do
+    a = Department.create!(name: "A")
+    b = Department.create!(name: "B", parent: a)
+    c = Department.create!(name: "C", parent: b)
+    assert_equal [ [ a, 0 ], [ b, 1 ], [ c, 2 ] ], Department.tree
+    assert_equal [ [ b, 0 ], [ c, 1 ] ], Department.tree(Department.where.not(id: a.id))
+  end
+
   test "clear_soft_delete! un-greys the department without restoring documents" do
     dept = Department.create!(name: "Finance")
     doc = make_doc(dept)

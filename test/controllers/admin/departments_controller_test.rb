@@ -219,4 +219,16 @@ class Admin::DepartmentsControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_match "No departments yet.", response.body
   end
+
+  test "index lists departments depth-first with tree guides" do
+    parent = Department.create!(name: "Compta")
+    child = Department.create!(name: "Factures", parent: parent)
+    grandchild = Department.create!(name: "2026", parent: child)
+    get admin_departments_path
+    assert_response :success
+    body = response.body
+    assert_operator body.index("Compta"), :<, body.index("Factures")
+    assert_operator body.index("Factures"), :<, body.index("2026")
+    assert_includes body, "tree-guide"
+  end
 end

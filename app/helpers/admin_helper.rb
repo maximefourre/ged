@@ -17,4 +17,13 @@ module AdminHelper
   def health_badge_class(state)
     HEALTH_BADGE.fetch(state, "info")
   end
+
+  # Indented (NBSP-prefixed) select options for a department tree.
+  # pairs come from Department.tree; selected is an id or nil.
+  def department_tree_options(pairs, selected = nil)
+    options_for_select(
+      pairs.map { |dept, depth| [ "#{" " * 3 * depth}#{dept.name}", dept.id ] },
+      selected
+    )
+  end
 end

@@ -48,8 +48,8 @@ class AdminUiTest < ApplicationSystemTestCase
     within "table" do
       assert_selector "td", text: "Finance"
       assert_selector "td", text: "HR"
-      # Invoices row shows Finance as its parent.
-      assert_selector "tr", text: "Invoices Finance"
+      # Invoices is nested under Finance in the depth-first tree.
+      assert_selector "tr", text: "└─ Invoices"
     end
   end
 

@@ -322,6 +322,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl tr.trashed td.strong { color: var(--muted); font-weight: 600; }
 .row-actions { display: flex; gap: 2px; justify-content: flex-end; align-items: center; white-space: nowrap; }
 .dash { color: var(--faint); }
+.tree-guide { color: var(--faint); font-family: var(--font-mono); font-size: 12px; }
 
 /* Empty state */
 .empty { padding: 34px 16px; text-align: center; color: var(--muted); }

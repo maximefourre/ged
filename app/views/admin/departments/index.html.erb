@@ -7,13 +7,12 @@
   <div class="table-wrap">
     <table class="tbl">
       <thead>
-        <tr><th>Name</th><th>Parent</th><th>Documents</th><th></th></tr>
+        <tr><th>Name</th><th>Documents</th><th></th></tr>
       </thead>
       <tbody>
-        <% @departments.each do |dept| %>
+        <% @department_pairs.each do |dept, depth| %>
           <tr<%= ' class="trashed"'.html_safe if dept.deleted_at? %>>
-            <td class="strong"><%= dept.name %></td>
-            <td><% if dept.parent %><%= dept.parent.name %><% else %><span class="dash">—</span><% end %></td>
+            <td class="strong"><% if depth > 0 %><span class="tree-guide"><%= " " * 3 * (depth - 1) %>└─ </span><% end %><%= dept.name %></td>
             <td><%= dept.deleted_at? ? @trashed_counts.fetch(dept.id, 0) : @doc_counts.fetch(dept.id, 0) %></td>
             <td>
               <div class="row-actions">
@@ -29,8 +28,8 @@
             </td>
           </tr>
         <% end %>
-        <% if @departments.empty? %>
-          <tr><td colspan="4" class="empty">No departments yet.</td></tr>
+        <% if @department_pairs.empty? %>
+          <tr><td colspan="3" class="empty">No departments yet.</td></tr>
         <% end %>
       </tbody>
     </table>

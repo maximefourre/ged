@@ -15,11 +15,11 @@
           <tr><th>Department</th><th>Read</th><th>Write</th></tr>
         </thead>
         <tbody>
-          <% @departments.each do |department| %>
+          <% @department_pairs.each do |department, depth| %>
             <% access = @app_client.client_department_accesses
                                    .detect { |a| a.department_id == department.id } %>
             <tr>
-              <td><%= department.name %><% if department.deleted_at? %> <span class="muted">(trashed)</span><% end %></td>
+              <td><% if depth > 0 %><span class="tree-guide"><%= " " * 3 * (depth - 1) %>└─ </span><% end %><%= department.name %><% if department.deleted_at? %> <span class="muted">(trashed)</span><% end %></td>
               <td>
                 <%= hidden_field_tag "app_client[access][#{department.id}][read]", "0", id: nil %>
                 <%= check_box_tag "app_client[access][#{department.id}][read]", "1",

@@ -9,8 +9,7 @@
   </div>
   <div class="field">
     <%= f.label :parent_id, "Parent (blank = top-level)" %>
-    <%= f.collection_select :parent_id, Department.order(:name), :id, :name,
-          { include_blank: true }, { class: "select" } %>
+    <%= f.select :parent_id, department_tree_options(Department.tree), { include_blank: true }, { class: "select" } %>
   </div>
   <div class="form-actions">
     <%= f.submit "Create", class: "btn btn-primary" %>
