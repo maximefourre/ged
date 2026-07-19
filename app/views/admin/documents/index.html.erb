@@ -32,7 +32,7 @@
                 <%= link_to "Tags", edit_admin_document_path(doc), class: "btn btn-link btn-sm" %>
                 <%= button_to "Delete", admin_document_path(doc), method: :delete,
                     class: "btn btn-danger btn-sm",
-                    data: { turbo_confirm: "Delete #{doc.filename}?" } %>
+                    data: { confirm: "Delete #{doc.filename}?" } %>
               </div>
             </td>
           </tr>

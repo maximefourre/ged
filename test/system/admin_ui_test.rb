@@ -142,9 +142,8 @@ class AdminUiTest < ApplicationSystemTestCase
     visit admin_documents_path
     assert_selector "tr", text: "report.pdf"
 
-    # The admin layout ships no JavaScript, so the turbo-confirm never fires;
-    # the delete button just submits its form.
-    within("tr", text: "report.pdf") { click_button "Delete" }
+    # Le bouton Delete porte un data-confirm géré en vanilla JS.
+    within("tr", text: "report.pdf") { accept_confirm { click_button "Delete" } }
 
     assert_text "Document moved to trash."
     assert_no_selector "tr", text: "report.pdf"
@@ -153,7 +152,7 @@ class AdminUiTest < ApplicationSystemTestCase
   test "2.9b a deleted document can be restored from the trash" do
     upload_report_into("Finance")
     visit admin_documents_path
-    within("tr", text: "report.pdf") { click_button "Delete" }
+    within("tr", text: "report.pdf") { accept_confirm { click_button "Delete" } }
     assert_text "Document moved to trash."
     assert_no_selector "tr", text: "report.pdf"
 
@@ -179,7 +178,7 @@ class AdminUiTest < ApplicationSystemTestCase
     # Deleting a non-empty department is intercepted by the resolution page,
     # which offers both moving the documents elsewhere and trashing everything.
     visit admin_departments_path
-    within("tr", text: "Finance") { click_button "Delete" }
+    within("tr", text: "Finance") { accept_confirm { click_button "Delete" } }
 
     assert_text "This department holds 1 active and 0 trashed document(s)."
     assert_button "Move documents and delete department"

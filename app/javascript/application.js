@@ -41,3 +41,12 @@
     });
   });
 })();
+
+// Delete confirmations (pas de Turbo dans cette app) : tout bouton portant
+// data-confirm demande confirmation avant que son <form> (button_to) parte.
+(function () {
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-confirm]");
+    if (btn && !window.confirm(btn.dataset.confirm)) e.preventDefault();
+  });
+})();
