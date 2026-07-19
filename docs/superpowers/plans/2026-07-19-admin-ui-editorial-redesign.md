@@ -960,7 +960,7 @@ git commit -m "feat(admin): empty states on departments, clients and upload requ
 **Files:**
 - Aucun nouveau fichier ; validation.
 
-- [ ] **Step 1 : Suite complète + lint**
+- [x] **Step 1 : Suite complète + lint**
 
 ```bash
 bin/ci
@@ -968,7 +968,7 @@ bin/ci
 
 Expected: tests, tests système et RuboCop tous verts. Rapporter la sortie réelle (jamais « ça passe » sans l'avoir vue).
 
-- [ ] **Step 2 : Rebase sur main à jour**
+- [x] **Step 2 : Rebase sur main à jour**
 
 ```bash
 git fetch origin && git rebase main
@@ -977,7 +977,7 @@ bin/rails test
 
 Expected: rebase propre, tests toujours verts.
 
-- [ ] **Step 3 : Monter la stack isolée du worktree pour la validation visuelle**
+- [x] **Step 3 : Monter la stack isolée du worktree pour la validation visuelle**
 
 ```bash
 bin/worktree-stack up
