@@ -19,8 +19,9 @@ Full specification: `docs/superpowers/specs/2026-07-08-ged-design.md`
   block separate from user tags
 - **Sync and async uploads** — same endpoint (`POST /api/v1/documents`); async mode
   accepts a `callback_url` to POST the result to when the upload completes
-- **Logical deletion with retention** — documents soft-delete for 30 days before
-  hard purge; admin can restore from Trash within the window
+- **Logical deletion with retention** — documents and departments soft-delete
+  (30-day retention before hard purge); admin can restore from Trash within the
+  window, or move/trash a department's contents before removing it
 - **Two auth paths** — application clients authenticate via OAuth2 client_credentials
   (JWT/JWKS); admin users via Devise username/password
 - **Admin UI** — manage departments, register application clients, upload/list/tag
@@ -52,8 +53,12 @@ bundle + starts Postgres + prepares the database in one step.
 
 ## Deployment (Docker)
 
-For production or integrated testing (postgres, oauth provider, and rails in
-containers):
+For production or integrated testing (postgres, oauth provider, rails, and a
+dedicated Solid Queue `worker` service, all in containers). `worker` runs jobs
+only (`./bin/jobs`) and shares the `storage` volume with `web`; hot-scale it on
+the same host without touching `web` or rebuilding:
+
+    docker compose up -d --scale worker=N     # or: bin/worktree-stack scale N
 
 Create a `.env` file at the repo root (gitignored; read automatically by compose):
 
@@ -174,8 +179,14 @@ service environment variables:
 - `GED_OIDC_ISSUER` — the real IdP's issuer URL
 - `GED_OIDC_JWKS_URL` — the real IdP's JWKS endpoint
 - `GED_CLIENT_ID_CLAIM` — the claim containing the client ID (default: `sub`)
-- `GED_OIDC_AUDIENCE` — **required** (fail-closed): `aud` is always verified and
-  the app refuses to boot without it, preventing token reuse across services
-  under a shared IdP
+- `GED_OIDC_TOKEN_BINDING` — how GED isolates itself from other services on a
+  shared IdP; `audience` (default) or `scope`
+  - `audience`: set `GED_OIDC_AUDIENCE` — **required** (fail-closed), `aud` is
+    verified and the app refuses to boot without it. Use this when the IdP
+    issues a separate audience per service.
+  - `scope`: set `GED_OIDC_REQUIRED_SCOPE` — **required** (fail-closed), every
+    token's `scope`/`scp` claim must contain it. Use this when the IdP issues
+    one shared audience across every internal service, so `aud` alone can't
+    distinguish them.
 
 Then remove the `oauth-provider` service from `docker-compose.yml`.
