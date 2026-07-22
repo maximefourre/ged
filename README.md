@@ -5,6 +5,7 @@ the permission boundary) and per-document key→value tags. Accessed primarily b
 internal applications over an API secured with OAuth2/JWT bearer tokens, plus a
 minimal admin web UI for humans to manage departments, clients, and documents.
 
+Architecture diagrams (C4 model, renders on GitHub): [`docs/architecture/c4.md`](docs/architecture/c4.md)
 Full specification: `docs/superpowers/specs/2026-07-08-ged-design.md`
 
 ## Features

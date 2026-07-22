@@ -46,7 +46,9 @@ is the source of truth.
   `bin/rails test` + `bin/rubocop`); report the actual output, don't claim
   success without running it.
 - **Keep docs in sync when scope changes** — update `docs/api/openapi.yaml`
-  when adding/renaming an `/api/v1` endpoint (a test fails otherwise) and this
+  when adding/renaming an `/api/v1` endpoint (a test fails otherwise),
+  `docs/architecture/c4.md` when adding a compose service, a job, a service
+  object or a queue pool (a test fails otherwise too — see below), and this
   `AGENTS.md` when conventions change.
 - **Go through specs/plans for architectural changes** — capture the design in
   `docs/superpowers/specs/` and the steps in `docs/superpowers/plans/` before
@@ -80,6 +82,13 @@ is the source of truth.
   designed for resuming and/or delegation to subagents)
 - `docs/api/` — `openapi.yaml` (OpenAPI 3.1 contract, hand-maintained source of
   truth for the API) and `bruno/` (ready-to-run Bruno collection)
+- `docs/architecture/c4.md` — C4 model of the system as Mermaid diagrams (L1
+  context, L2 containers, L3 components for `web` and `worker`, plus dynamic
+  views of the auth chain, the async upload pipeline, and soft-delete/purge).
+  Read it first to get oriented; the prose here stays the source of truth.
+  Kept honest by `test/integration/c4_diagrams_test.rb`, which fails when a
+  compose service, an `app/jobs/` class, an `app/services/` object, a
+  `config/recurring.yml` task or a `config/queue.yml` pool is missing from it.
 - `oauth-provider/` — temporary standalone OAuth2 dev provider (own Gemfile)
 
 ## Key architectural decisions
