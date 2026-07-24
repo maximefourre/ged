@@ -40,7 +40,7 @@ gem "zip_kit"
 # when OTEL_EXPORTER_OTLP_ENDPOINT is set; dev/test and deployments without a
 # backend pay nothing. Metrics SDK/exporter are experimental 0.x — minor pins.
 gem "opentelemetry-metrics-api", "~> 0.6"
-gem "opentelemetry-sdk", "~> 1.12", require: false
+gem "opentelemetry-sdk", "~> 1.13", require: false
 gem "opentelemetry-exporter-otlp", "~> 0.34", require: false
 gem "opentelemetry-metrics-sdk", "~> 0.15.0", require: false
 gem "opentelemetry-exporter-otlp-metrics", "~> 0.10.0", require: false

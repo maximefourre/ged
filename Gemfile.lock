@@ -222,7 +222,7 @@ GEM
       racc (~> 1.4)
     nokogiri (1.19.4-x86_64-linux-musl)
       racc (~> 1.4)
-    opentelemetry-api (1.10.1)
+    opentelemetry-api (1.11.0)
       logger
     opentelemetry-common (0.25.1)
       opentelemetry-api (~> 1.0)
@@ -290,9 +290,9 @@ GEM
       opentelemetry-api (~> 1.1)
       opentelemetry-metrics-api (~> 0.2)
       opentelemetry-sdk (~> 1.2)
-    opentelemetry-registry (0.6.1)
+    opentelemetry-registry (0.6.3)
       opentelemetry-api (~> 1.1)
-    opentelemetry-sdk (1.12.1)
+    opentelemetry-sdk (1.13.0)
       logger
       opentelemetry-api (~> 1.1)
       opentelemetry-common (~> 0.20)
@@ -496,7 +496,7 @@ DEPENDENCIES
   opentelemetry-instrumentation-rails (~> 0.42)
   opentelemetry-metrics-api (~> 0.6)
   opentelemetry-metrics-sdk (~> 0.15.0)
-  opentelemetry-sdk (~> 1.12)
+  opentelemetry-sdk (~> 1.13)
   pg (~> 1.1)
   propshaft
   puma (>= 5.0)
