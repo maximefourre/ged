@@ -64,9 +64,9 @@ class Admin::DocumentsController < Admin::BaseController
   def preview
     document = Document.find(params[:id])
     response.set_header("X-Content-Type-Options", "nosniff")
-    response.set_header("Content-Security-Policy",
-      "default-src 'none'; img-src 'self'; object-src 'self'; " \
-      "style-src 'unsafe-inline'; sandbox")
+    if (csp = preview_csp(document.content_type))
+      response.set_header("Content-Security-Policy", csp)
+    end
     send_document_file(document, disposition: :inline)
   end
 
@@ -76,6 +76,20 @@ class Admin::DocumentsController < Admin::BaseController
   end
 
   private
+
+  def preview_csp(content_type)
+    if content_type == "application/pdf"
+      # Chrome's built-in PDF viewer refuses to render under a CSP `sandbox`
+      # directive (even one carrying allow-* tokens): "This page has been
+      # blocked by Chrome". Keep a strict policy WITHOUT that directive —
+      # `frame-ancestors 'self'` still bars embedding elsewhere. Safety for the
+      # PDF itself comes from nosniff (a spoofed HTML upload is never run as
+      # HTML) plus PDFium sandboxing the document from the admin origin.
+      "frame-ancestors 'self'"
+    else
+      "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"
+    end
+  end
 
   # One "key=value" pair per line; a line without "=" is a key with no value.
   def parse_tags_text(text)

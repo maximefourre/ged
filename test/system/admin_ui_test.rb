@@ -184,7 +184,7 @@ class AdminUiTest < ApplicationSystemTestCase
 
   # --- Inline document preview ---------------------------------------------
 
-  test "clicking a document row opens the split-pane preview with a sandboxed iframe" do
+  test "clicking a document row opens the split-pane preview in an iframe" do
     finance = Department.create!(name: "Finance")
     document = attach_report(finance, filename: "report.pdf")
     sign_in_admin
@@ -198,9 +198,25 @@ class AdminUiTest < ApplicationSystemTestCase
 
     frame = find(".doc-preview iframe")
     assert frame[:src].include?(preview_admin_document_path(document))
-    # Headless Chrome may report a boolean `sandbox=""` attribute as the empty
-    # string rather than nil — either shows the frame is sandboxed.
-    assert frame[:sandbox] == "" || !frame[:sandbox].nil?
+    # Chrome's PDF viewer only renders in a frame without a sandbox attribute
+    # (user-approved tradeoff — see the application.js comment for why this
+    # stays safe); this assertion pins that so a future "hardening" doesn't
+    # silently break PDF preview again.
+    assert frame[:sandbox].to_s.empty?, "PDF iframe must have no sandbox attribute"
+  end
+
+  test "an image row renders an <img> preview, not an iframe" do
+    finance = Department.create!(name: "Finance")
+    document = attach_image(finance, filename: "logo.png")
+    sign_in_admin
+
+    visit admin_documents_path
+    find("tr[data-doc-row]", text: "logo.png").click
+
+    assert_selector ".doc-split.is-open"
+    img = find(".doc-preview img.doc-preview-img")
+    assert img[:src].include?(preview_admin_document_path(document))
+    assert_no_selector ".doc-preview iframe"
   end
 
   test "a non-previewable content type shows the fallback card instead of an iframe" do
@@ -367,6 +383,22 @@ class AdminUiTest < ApplicationSystemTestCase
     )
     document.file.attach(io: File.open(report_pdf_path), filename: filename,
                          content_type: "application/zip")
+    document.save!
+    document
+  end
+
+  # An image-typed document — the preview renders it via <img>, so again only
+  # the row's data-content-type matters, not the bytes.
+  def attach_image(department, filename: "logo.png")
+    document = Document.new(
+      department: department,
+      filename: filename,
+      content_type: "image/png",
+      byte_size: File.size(report_pdf_path),
+      uploaded_by: "admin:admin"
+    )
+    document.file.attach(io: File.open(report_pdf_path), filename: filename,
+                         content_type: "image/png")
     document.save!
     document
   end

@@ -18,7 +18,7 @@ class Admin::DocumentsControllerTest < ActionDispatch::IntegrationTest
     @document.save!
   end
 
-  test "preview streams the file inline with hardening headers, signed in" do
+  test "preview streams a PDF inline with a viewer-compatible CSP, signed in" do
     sign_in @admin
 
     get preview_admin_document_path(@document)
@@ -28,9 +28,31 @@ class Admin::DocumentsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "nosniff", response.headers["X-Content-Type-Options"]
     csp = response.headers["Content-Security-Policy"]
     assert csp.present?
-    assert_includes csp, "sandbox"
-    assert_includes csp, "default-src 'none'"
+    # PDFs must NOT carry a `sandbox` directive or Chrome's viewer is blocked;
+    # PDFium + nosniff keep this safe (see Admin::DocumentsController#preview_csp).
+    assert_not_includes csp, "sandbox"
+    assert_includes csp, "frame-ancestors 'self'"
     assert_equal File.binread(@path), response.body
+  end
+
+  test "preview hardens non-PDF types with a scriptless sandbox CSP" do
+    sign_in @admin
+    document = Document.new(
+      department: Department.create!(name: "Notes"),
+      filename: "note.txt", content_type: "text/plain",
+      byte_size: File.size(@path), uploaded_by: "admin:admin"
+    )
+    document.file.attach(io: File.open(@path), filename: "note.txt",
+                         content_type: "text/plain")
+    document.save!
+
+    get preview_admin_document_path(document)
+
+    assert_response :success
+    csp = response.headers["Content-Security-Policy"]
+    assert_includes csp, "default-src 'none'"
+    assert_includes csp, "sandbox"
+    assert_not_includes csp, "allow-scripts"
   end
 
   test "preview redirects to login when signed out" do

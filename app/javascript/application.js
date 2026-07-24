@@ -139,15 +139,36 @@
     downloadLink.href = downloadUrl;
 
     var type = contentType || "";
-    var ok = type === "application/pdf" || /^image\//.test(type) || /^text\//.test(type);
 
     body.innerHTML = "";
-    if (ok) {
-      var f = document.createElement("iframe");
-      f.className = "doc-preview-frame";
-      f.setAttribute("sandbox", "");
-      f.src = previewUrl;
-      body.appendChild(f);
+    if (/^image\//.test(type)) {
+      // An <img> can't run script, even for image/svg+xml (SVG scripts only
+      // execute when embedded as a document, not when loaded as an image), so
+      // images need no iframe/sandbox and render at their natural size.
+      var img = document.createElement("img");
+      img.className = "doc-preview-img";
+      img.alt = filename;
+      img.src = previewUrl;
+      body.appendChild(img);
+    } else if (type === "application/pdf") {
+      // Chrome disables its PDF plugin in ANY sandboxed frame — even with
+      // allow-scripts/allow-same-origin the viewer shows "This page has been
+      // blocked by Chrome". So the PDF iframe carries no sandbox attribute
+      // (user-approved tradeoff). Still safe: the endpoint serves nosniff as
+      // application/pdf (a spoofed HTML upload is never run as HTML — worst
+      // case an invalid PDF fails to parse) and PDFium isolates the document
+      // from the admin origin.
+      var pf = document.createElement("iframe");
+      pf.className = "doc-preview-frame";
+      pf.src = previewUrl;
+      body.appendChild(pf);
+    } else if (/^text\//.test(type)) {
+      // Scripts disabled: safe to render even a text/html payload as a document.
+      var tf = document.createElement("iframe");
+      tf.className = "doc-preview-frame";
+      tf.setAttribute("sandbox", "");
+      tf.src = previewUrl;
+      body.appendChild(tf);
     } else {
       var empty = document.createElement("div");
       empty.className = "doc-preview-empty";
