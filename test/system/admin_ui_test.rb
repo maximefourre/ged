@@ -182,6 +182,67 @@ class AdminUiTest < ApplicationSystemTestCase
     assert_selector "tr", text: "report.pdf"
   end
 
+  # --- Inline document preview ---------------------------------------------
+
+  test "clicking a document row opens the split-pane preview with a sandboxed iframe" do
+    finance = Department.create!(name: "Finance")
+    document = attach_report(finance, filename: "report.pdf")
+    sign_in_admin
+
+    visit admin_documents_path
+    find("tr[data-doc-row]", text: "report.pdf").click
+
+    assert_selector ".doc-split.is-open"
+    assert_selector ".doc-preview:not([hidden])"
+    assert_selector ".doc-preview iframe.doc-preview-frame"
+
+    frame = find(".doc-preview iframe")
+    assert frame[:src].include?(preview_admin_document_path(document))
+    # Headless Chrome may report a boolean `sandbox=""` attribute as the empty
+    # string rather than nil — either shows the frame is sandboxed.
+    assert frame[:sandbox] == "" || !frame[:sandbox].nil?
+  end
+
+  test "a non-previewable content type shows the fallback card instead of an iframe" do
+    finance = Department.create!(name: "Finance")
+    attach_zip(finance, filename: "archive.zip")
+    sign_in_admin
+
+    visit admin_documents_path
+    find("tr[data-doc-row]", text: "archive.zip").click
+
+    assert_selector ".doc-split.is-open"
+    assert_text "Aucun aperçu disponible pour ce type"
+    assert_no_selector ".doc-preview iframe"
+    within(".doc-preview") { assert_link "Download" }
+  end
+
+  test "the Close button hides the preview and restores the full-width table" do
+    finance = Department.create!(name: "Finance")
+    attach_report(finance, filename: "report.pdf")
+    sign_in_admin
+
+    visit admin_documents_path
+    find("tr[data-doc-row]", text: "report.pdf").click
+    assert_selector ".doc-split.is-open"
+
+    within(".doc-preview") { click_button "Close" }
+
+    assert_no_selector ".doc-split.is-open"
+    assert_selector ".doc-preview[hidden]", visible: :hidden
+  end
+
+  test "clicking Download/Tags/Delete in a row does not open the preview" do
+    finance = Department.create!(name: "Finance")
+    attach_report(finance, filename: "report.pdf")
+    sign_in_admin
+
+    visit admin_documents_path
+    within("tr[data-doc-row]", text: "report.pdf") { click_link "Tags" }
+
+    assert_no_selector ".doc-split.is-open"
+  end
+
   # --- 2.10 Deleting a non-empty department opens the resolution flow ------
 
   test "2.10 deleting a department with documents offers move or trash, then trashes" do
@@ -290,6 +351,22 @@ class AdminUiTest < ApplicationSystemTestCase
     )
     document.file.attach(io: File.open(report_pdf_path), filename: filename,
                          content_type: "application/pdf")
+    document.save!
+    document
+  end
+
+  # Same idea as attach_report, but tagged as a non-previewable content type —
+  # the file's actual bytes don't matter, only the row's data-content-type.
+  def attach_zip(department, filename: "archive.zip")
+    document = Document.new(
+      department: department,
+      filename: filename,
+      content_type: "application/zip",
+      byte_size: File.size(report_pdf_path),
+      uploaded_by: "admin:admin"
+    )
+    document.file.attach(io: File.open(report_pdf_path), filename: filename,
+                         content_type: "application/zip")
     document.save!
     document
   end

@@ -61,6 +61,15 @@ class Admin::DocumentsController < Admin::BaseController
     send_document_file(Document.find(params[:id]))
   end
 
+  def preview
+    document = Document.find(params[:id])
+    response.set_header("X-Content-Type-Options", "nosniff")
+    response.set_header("Content-Security-Policy",
+      "default-src 'none'; img-src 'self'; object-src 'self'; " \
+      "style-src 'unsafe-inline'; sandbox")
+    send_document_file(document, disposition: :inline)
+  end
+
   def destroy
     Document.find(params[:id]).soft_delete!
     redirect_to admin_documents_path, notice: "Document moved to trash."

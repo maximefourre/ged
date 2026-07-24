@@ -5,10 +5,11 @@
 module DocumentStreaming
   private
 
-  def send_document_file(document)
+  def send_document_file(document, disposition: :attachment)
     blob = document.file.blob
     options = { filename: document.filename,
-                type: document.content_type || "application/octet-stream" }
+                type: document.content_type || "application/octet-stream",
+                disposition: disposition }
     if blob.service.respond_to?(:path_for)
       send_file blob.service.path_for(blob.key), **options
     else

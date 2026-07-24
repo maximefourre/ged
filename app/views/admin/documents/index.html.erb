@@ -12,37 +12,50 @@
   <%= f.submit "Filter", class: "btn" %>
 <% end %>
 
-<div class="card">
-  <div class="table-wrap">
-    <table class="tbl">
-      <thead>
-        <tr><th>Filename</th><th>Department</th><th>Tags</th><th>Uploaded by</th><th>Date</th><th></th></tr>
-      </thead>
-      <tbody>
-        <% @documents.each do |doc| %>
-          <tr>
-            <td class="strong"><%= doc.filename %></td>
-            <td><%= doc.department.name %></td>
-            <td><%= render "admin/shared/tag_chips", tags: doc.tags %></td>
-            <td class="muted"><%= doc.uploaded_by %></td>
-            <td class="date"><%= doc.created_at.strftime("%Y-%m-%d %H:%M") %></td>
-            <td>
-              <div class="row-actions">
-                <%= link_to "Download", download_admin_document_path(doc), class: "btn btn-link btn-sm" %>
-                <%= link_to "Tags", edit_admin_document_path(doc), class: "btn btn-link btn-sm" %>
-                <%= button_to "Delete", admin_document_path(doc), method: :delete,
-                    class: "btn btn-danger btn-sm",
-                    data: { confirm: "Delete #{doc.filename}?" } %>
-              </div>
-            </td>
-          </tr>
-        <% end %>
-        <% if @documents.empty? %>
-          <tr><td colspan="6" class="empty">No documents match.</td></tr>
-        <% end %>
-      </tbody>
-    </table>
+<div class="doc-split">
+  <div class="card">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Filename</th><th>Department</th><th>Tags</th><th>Uploaded by</th><th>Date</th><th></th></tr>
+        </thead>
+        <tbody>
+          <% @documents.each do |doc| %>
+            <tr data-doc-row data-preview-url="<%= preview_admin_document_path(doc) %>" data-content-type="<%= doc.content_type %>" data-filename="<%= doc.filename %>" data-download-url="<%= download_admin_document_path(doc) %>">
+              <td class="strong"><%= doc.filename %></td>
+              <td><%= doc.department.name %></td>
+              <td><%= render "admin/shared/tag_chips", tags: doc.tags %></td>
+              <td class="muted"><%= doc.uploaded_by %></td>
+              <td class="date"><%= doc.created_at.strftime("%Y-%m-%d %H:%M") %></td>
+              <td>
+                <div class="row-actions">
+                  <%= link_to "Download", download_admin_document_path(doc), class: "btn btn-link btn-sm" %>
+                  <%= link_to "Tags", edit_admin_document_path(doc), class: "btn btn-link btn-sm" %>
+                  <%= button_to "Delete", admin_document_path(doc), method: :delete,
+                      class: "btn btn-danger btn-sm",
+                      data: { confirm: "Delete #{doc.filename}?" } %>
+                </div>
+              </td>
+            </tr>
+          <% end %>
+          <% if @documents.empty? %>
+            <tr><td colspan="6" class="empty">No documents match.</td></tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
   </div>
+
+  <aside class="doc-preview" data-doc-preview hidden>
+    <header class="doc-preview-head">
+      <span class="doc-preview-name" data-preview-name></span>
+      <div class="doc-preview-actions">
+        <a class="btn btn-sm" data-preview-download href="#">Download</a>
+        <button type="button" class="btn btn-sm" data-preview-close>Close</button>
+      </div>
+    </header>
+    <div class="doc-preview-body" data-preview-body></div>
+  </aside>
 </div>
 
 <%= render "admin/shared/pagination" %>

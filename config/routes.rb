@@ -15,7 +15,7 @@ Rails.application.routes.draw do
     end
     resources :app_clients, except: [ :show ]
     resources :documents, only: [ :index, :new, :create, :edit, :update, :destroy ] do
-      member { get :download }
+      member { get :download; get :preview }
     end
     resources :upload_requests, only: [ :index ]
     resource :upload_queue_pause, only: [ :create, :destroy ]

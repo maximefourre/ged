@@ -88,3 +88,74 @@
     setDescendantsVisible(row.dataset.deptId, next);
   });
 })();
+
+// Split-pane document preview (admin/documents#index). Clicking a row loads
+// an inline preview on the right via an iframe (sandboxed, no scripts/same
+// origin) for previewable types; other types get a fallback with a Download
+// link. Clicks on links/buttons inside the row (Download/Tags/Delete) are
+// left alone.
+(function () {
+  var panel = document.querySelector("[data-doc-preview]");
+  var split = document.querySelector(".doc-split");
+  if (!panel || !split) return;
+
+  var body = panel.querySelector("[data-preview-body]");
+  var nameEl = panel.querySelector("[data-preview-name]");
+  var downloadLink = panel.querySelector("[data-preview-download]");
+  var closeBtn = panel.querySelector("[data-preview-close]");
+  var activeRow = null;
+
+  function clearActive() {
+    if (activeRow) activeRow.classList.remove("is-active");
+    activeRow = null;
+  }
+
+  function closePreview() {
+    panel.hidden = true;
+    split.classList.remove("is-open");
+    body.innerHTML = "";
+    clearActive();
+  }
+
+  document.addEventListener("click", function (e) {
+    if (e.target.closest("a, button")) return;
+
+    var row = e.target.closest("[data-doc-row]");
+    if (!row) return;
+
+    var previewUrl = row.dataset.previewUrl;
+    var contentType = row.dataset.contentType;
+    var filename = row.dataset.filename;
+    var downloadUrl = row.dataset.downloadUrl;
+
+    clearActive();
+    row.classList.add("is-active");
+    activeRow = row;
+
+    panel.hidden = false;
+    split.classList.add("is-open");
+
+    nameEl.textContent = filename;
+    downloadLink.href = downloadUrl;
+
+    var type = contentType || "";
+    var ok = type === "application/pdf" || /^image\//.test(type) || /^text\//.test(type);
+
+    body.innerHTML = "";
+    if (ok) {
+      var f = document.createElement("iframe");
+      f.className = "doc-preview-frame";
+      f.setAttribute("sandbox", "");
+      f.src = previewUrl;
+      body.appendChild(f);
+    } else {
+      var empty = document.createElement("div");
+      empty.className = "doc-preview-empty";
+      empty.innerHTML = "<p>Aucun aperçu disponible pour ce type</p>" +
+        '<a class="btn btn-sm" href="' + downloadUrl + '">Download</a>';
+      body.appendChild(empty);
+    }
+  });
+
+  closeBtn.addEventListener("click", closePreview);
+})();

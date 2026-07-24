@@ -510,6 +510,21 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .health-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .health-row:last-child { border-bottom: 0; }
 
+/* ============================ Document split / preview ============================ */
+.doc-split { display: flex; gap: 16px; align-items: flex-start; }
+.doc-split .card { flex: 1 1 auto; min-width: 0; }
+.doc-split.is-open .card { flex: 0 1 35%; min-width: 260px; }
+.doc-preview[hidden] { display: none; }
+.doc-preview { flex: 1 1 65%; min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; }
+.doc-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.doc-preview-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-preview-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.doc-preview-body { flex: 1 1 auto; display: flex; }
+.doc-preview-frame { width: 100%; min-height: 70vh; border: 0; background: var(--surface); }
+.doc-preview-empty { margin: auto; padding: 40px 20px; text-align: center; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.tbl tr[data-doc-row] { cursor: pointer; }
+.tbl tr[data-doc-row].is-active td { background: var(--accent-weak); }
+
 /* ============================ Motion / responsive ============================ */
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
@@ -518,4 +533,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .brand { padding-right: 8px; }
   .topbar-right { width: 100%; order: 3; justify-content: flex-end; padding: 0; }
   .nav { order: 4; width: 100%; }
+  .doc-split { flex-direction: column; }
+  .doc-split.is-open .card { flex: 1 1 auto; min-width: 0; }
+  .doc-preview { width: 100%; }
 }
