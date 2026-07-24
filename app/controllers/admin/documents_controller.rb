@@ -1,5 +1,6 @@
 class Admin::DocumentsController < Admin::BaseController
   include DocumentStreaming
+  include ZipKit::RailsStreaming
 
   def index
     scope = Document.includes(:department).order(created_at: :desc, id: :desc)
@@ -73,6 +74,28 @@ class Admin::DocumentsController < Admin::BaseController
   def destroy
     Document.find(params[:id]).soft_delete!
     redirect_to admin_documents_path, notice: "Document moved to trash."
+  end
+
+  def bulk_destroy
+    ids = Array(params[:document_ids]).map(&:to_s).reject(&:blank?)
+    if ids.empty?
+      redirect_to admin_documents_path, alert: "No documents selected." and return
+    end
+    n = Document.bulk_soft_delete(ids) # default_scope limits to live docs
+    redirect_to admin_documents_path, notice: "#{n} documents moved to trash."
+  end
+
+  def bulk_download
+    ids = Array(params[:document_ids]).map(&:to_s).reject(&:blank?)
+    if ids.empty?
+      redirect_to admin_documents_path, alert: "No documents selected." and return
+    end
+    docs = Document.includes(:department).where(id: ids)
+    zip_kit_stream(filename: "documents-#{Time.current.strftime('%Y%m%d')}.zip") do |zip|
+      DocumentZipper.new(docs).each_entry do |name, blob|
+        zip.write_file(name) { |sink| blob.download { |chunk| sink << chunk } }
+      end
+    end
   end
 
   private

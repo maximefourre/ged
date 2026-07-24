@@ -32,6 +32,7 @@ gem "image_processing", "~> 1.2"
 
 gem "devise"
 gem "jwt"
+gem "zip_kit"
 
 # OpenTelemetry. Only the metrics API loads at boot — its instruments are free
 # no-ops without an SDK, so lib/telemetry.rb call sites are unconditional.

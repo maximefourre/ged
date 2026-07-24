@@ -465,6 +465,7 @@ GEM
     xpath (3.2.0)
       nokogiri (~> 1.8)
     zeitwerk (2.8.2)
+    zip_kit (6.3.4)
 
 PLATFORMS
   aarch64-linux
@@ -508,6 +509,7 @@ DEPENDENCIES
   tzinfo-data
   web-console
   webmock
+  zip_kit
 
 BUNDLED WITH
    2.6.9

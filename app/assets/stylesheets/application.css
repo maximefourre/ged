@@ -262,6 +262,14 @@ body.admin { display: flex; flex-direction: column; min-height: 100vh; }
   box-shadow: var(--shadow);
 }
 
+.bulk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.bulk-toolbar [data-bulk-count] { color: var(--muted); font-size: 13px; }
+
 /* ============================ Inputs ============================ */
 .input, .select, textarea.input {
   font: inherit;

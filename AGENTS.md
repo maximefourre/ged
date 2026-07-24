@@ -153,6 +153,21 @@ is the source of truth.
   the window elapses. The parallel async **upload_request** purge already exists
   (`ReconcileUploadRequestsJob`, 30-day terminal-request cleanup) and is
   unchanged.
+- **Bulk document actions (admin UI + API):** the admin documents index has a
+  multi-select toolbar (row checkboxes + `#select-all`, plain JS — no
+  Stimulus/Turbo) driving two actions: bulk soft-delete
+  (`POST /admin/documents/bulk_destroy`, `Document.bulk_soft_delete` —
+  `update_all` over the given ids, same semantics/retention as the single
+  delete) and an admin-only bulk ZIP download
+  (`GET /admin/documents/bulk_download`), streamed entry-by-entry by
+  `DocumentZipper` (via the `zip_kit` gem's `ZipKit::RailsStreaming`) so
+  files never buffer fully in memory; ZIP entries are named
+  `"#{id}-#{filename}"` since filenames aren't unique. The API exposes the
+  same bulk soft-delete as `DELETE /api/v1/documents/bulk_destroy`
+  (`document_ids[]`, max 500), fail-closed: any id outside the caller's
+  **write**-accessible departments (or unknown/already-deleted) 403s/404s the
+  whole request rather than partially applying it. There is no bulk-download
+  API endpoint — ZIP export is admin-UI only.
 - **Departments are soft-deleted too, but purge-gated on their references, not
   a timer:** trashing a department (`Department#soft_delete!`) is **leaf-only**
   (checked **unscoped** — a trashed child still blocks its parent) and, in one

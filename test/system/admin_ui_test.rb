@@ -1,4 +1,5 @@
 require "application_system_test_case"
+require "zip"
 
 # Automates section 2 ("Interface d'administration") of docs/qa-test-plan.md
 # against the real admin UI, driven through a headless Chrome browser.
@@ -257,6 +258,50 @@ class AdminUiTest < ApplicationSystemTestCase
     within("tr[data-doc-row]", text: "report.pdf") { click_link "Tags" }
 
     assert_no_selector ".doc-split.is-open"
+  end
+
+  # --- Bulk document actions ------------------------------------------------
+
+  test "select-all enables the bulk toolbar and Delete selected trashes the selection" do
+    finance = Department.create!(name: "Finance")
+    attach_report(finance, filename: "one.pdf")
+    attach_report(finance, filename: "two.pdf")
+    sign_in_admin
+
+    visit admin_documents_path
+    assert_button "Delete selected", disabled: true
+    assert_button "Download ZIP", disabled: true
+
+    find("#select-all").check
+    assert_button "Delete selected", disabled: false
+    assert_button "Download ZIP", disabled: false
+
+    accept_confirm("Move the selected documents to trash?") { click_button "Delete selected" }
+
+    assert_text "documents moved to trash."
+    assert_no_selector "tr", text: "one.pdf"
+    assert_no_selector "tr", text: "two.pdf"
+    assert_equal 2, Document.deleted.count
+  end
+
+  test "bulk ZIP download contains the selected documents" do
+    finance = Department.create!(name: "Finance")
+    d1 = attach_report(finance, filename: "one.pdf")
+    d2 = attach_report(finance, filename: "two.pdf")
+    sign_in_admin
+
+    visit admin_documents_path
+    find("#select-all").check
+
+    query = { document_ids: [ d1.id, d2.id ] }.to_query
+    zip_bytes = download_via_session("/admin/documents/bulk_download?#{query}")
+
+    entries = {}
+    Zip::File.open_buffer(StringIO.new(zip_bytes)) do |zip|
+      zip.each { |entry| entries[entry.name] = entry.get_input_stream.read }
+    end
+    assert entries.key?("#{d1.id}-one.pdf"), "expected entry #{d1.id}-one.pdf, got #{entries.keys}"
+    assert entries.key?("#{d2.id}-two.pdf"), "expected entry #{d2.id}-two.pdf, got #{entries.keys}"
   end
 
   # --- 2.10 Deleting a non-empty department opens the resolution flow ------

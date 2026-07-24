@@ -70,6 +70,23 @@ module Api
         head :no_content
       end
 
+      def bulk_destroy
+        ids = Array(params[:document_ids]).map(&:to_s).reject(&:blank?)
+        raise BadParameter, "document_ids is required" if ids.empty?
+        raise BadParameter, "too many document_ids (max 500)" if ids.size > 500
+
+        docs = Document.where(id: ids)
+        raise ActiveRecord::RecordNotFound if docs.count != ids.uniq.count
+
+        writable = current_app_client.accessible_department_ids(:write)
+        unless docs.all? { |d| writable.include?(d.department_id) }
+          raise NotAuthorizedError, "no write access to one or more documents"
+        end
+
+        n = Document.transaction { Document.bulk_soft_delete(ids) }
+        render json: { deleted: n }
+      end
+
       private
 
       def create_async(department, file)

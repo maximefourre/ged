@@ -12,16 +12,25 @@
   <%= f.submit "Filter", class: "btn" %>
 <% end %>
 
+<%= form_with url: bulk_destroy_admin_documents_path, method: :post, html: { id: "bulk-form" }, class: "bulk-toolbar" do |f| %>
+  <span data-bulk-count>0 selected</span>
+  <%= f.button "Delete selected", type: :submit, formaction: bulk_destroy_admin_documents_path, formmethod: :post,
+        class: "btn btn-danger btn-sm", disabled: true, data: { confirm: "Move the selected documents to trash?" } %>
+  <%= f.button "Download ZIP", type: :submit, formaction: bulk_download_admin_documents_path, formmethod: :get,
+        class: "btn btn-sm", disabled: true %>
+<% end %>
+
 <div class="doc-split">
   <div class="card">
     <div class="table-wrap">
       <table class="tbl">
         <thead>
-          <tr><th>Filename</th><th>Department</th><th>Tags</th><th>Uploaded by</th><th>Date</th><th></th></tr>
+          <tr><th><%= check_box_tag "select-all", "1", false, id: "select-all" %></th><th>Filename</th><th>Department</th><th>Tags</th><th>Uploaded by</th><th>Date</th><th></th></tr>
         </thead>
         <tbody>
           <% @documents.each do |doc| %>
             <tr data-doc-row data-preview-url="<%= preview_admin_document_path(doc) %>" data-content-type="<%= doc.content_type %>" data-filename="<%= doc.filename %>" data-download-url="<%= download_admin_document_path(doc) %>">
+              <td><%= check_box_tag "document_ids[]", doc.id, false, form: "bulk-form", class: "row-select" %></td>
               <td class="strong"><%= doc.filename %></td>
               <td><%= doc.department.name %></td>
               <td><%= render "admin/shared/tag_chips", tags: doc.tags %></td>
@@ -39,7 +48,7 @@
             </tr>
           <% end %>
           <% if @documents.empty? %>
-            <tr><td colspan="6" class="empty">No documents match.</td></tr>
+            <tr><td colspan="7" class="empty">No documents match.</td></tr>
           <% end %>
         </tbody>
       </table>

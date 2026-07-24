@@ -53,6 +53,15 @@ class Document < ApplicationRecord
     update!(deleted_at: now, purge_at: now + RETENTION)
   end
 
+  # Bulk counterpart of soft_delete!, mirroring how Department#soft_delete!
+  # bulk-trashes its documents. update_all skips callbacks/validations, which
+  # is fine here (same two columns as the single-row path). Returns the
+  # affected-row count.
+  def self.bulk_soft_delete(ids)
+    now = Time.current
+    where(id: ids).update_all(deleted_at: now, purge_at: now + RETENTION)
+  end
+
   def restore!
     update!(deleted_at: nil, purge_at: nil)
   end

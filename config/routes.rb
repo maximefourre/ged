@@ -16,6 +16,10 @@ Rails.application.routes.draw do
     resources :app_clients, except: [ :show ]
     resources :documents, only: [ :index, :new, :create, :edit, :update, :destroy ] do
       member { get :download; get :preview }
+      collection do
+        post :bulk_destroy
+        get  :bulk_download
+      end
     end
     resources :upload_requests, only: [ :index ]
     resource :upload_queue_pause, only: [ :create, :destroy ]
@@ -34,6 +38,7 @@ Rails.application.routes.draw do
       get "ping", to: "pings#show"
       resources :documents, only: [ :index, :create, :show, :destroy ] do
         member { get :download }
+        collection { delete :bulk_destroy }
         resource :tags, only: [ :update ], controller: "document_tags"
       end
       resources :departments, only: [ :index, :create ]

@@ -1,4 +1,5 @@
 require "test_helper"
+require "zip"
 
 class Admin::AdminUiTest < ActionDispatch::IntegrationTest
   include Devise::Test::IntegrationHelpers
@@ -254,5 +255,71 @@ class Admin::AdminUiTest < ActionDispatch::IntegrationTest
     doc.save!
     get "/admin/documents/#{doc.id}/download"
     assert_equal "PDF!", response.body
+  end
+
+  test "bulk_destroy soft-deletes the selected documents" do
+    d1 = build_document(filename: "one.pdf")
+    d2 = build_document(filename: "two.pdf")
+
+    post "/admin/documents/bulk_destroy", params: { document_ids: [ d1.id, d2.id ] }
+
+    assert_redirected_to "/admin/documents"
+    assert_match(/2 documents moved to trash/, flash[:notice])
+    assert_equal 2, Document.deleted.count
+    assert_equal 0, Document.count
+  end
+
+  test "bulk_destroy with an empty selection redirects with an alert and deletes nothing" do
+    doc = build_document(filename: "kept.pdf")
+
+    post "/admin/documents/bulk_destroy", params: {}
+
+    assert_redirected_to "/admin/documents"
+    assert flash[:alert].present?
+    assert Document.exists?(doc.id)
+  end
+
+  test "bulk_download streams a ZIP with id-prefixed entry names and correct bytes" do
+    d1 = build_document(filename: "alpha.pdf", bytes: "AAAA")
+    d2 = build_document(filename: "beta.pdf", bytes: "BBBB")
+
+    get "/admin/documents/bulk_download", params: { document_ids: [ d1.id, d2.id ] }
+
+    assert_response :success
+    assert_equal "application/zip", response.media_type
+
+    entries = read_zip_entries(response.body)
+    assert_equal "AAAA", entries.fetch("#{d1.id}-alpha.pdf")
+    assert_equal "BBBB", entries.fetch("#{d2.id}-beta.pdf")
+  end
+
+  test "bulk_download dedupes same-filename documents by id prefix" do
+    d1 = build_document(filename: "report.pdf", bytes: "AAAA")
+    d2 = build_document(filename: "report.pdf", bytes: "BBBB")
+
+    get "/admin/documents/bulk_download", params: { document_ids: [ d1.id, d2.id ] }
+
+    assert_response :success
+    entries = read_zip_entries(response.body)
+    assert_equal 2, entries.size
+    assert_equal "AAAA", entries.fetch("#{d1.id}-report.pdf")
+    assert_equal "BBBB", entries.fetch("#{d2.id}-report.pdf")
+  end
+
+  private
+
+  def build_document(filename:, bytes: "PDF!")
+    doc = Document.new(department: @finance, filename: filename, uploaded_by: "seed")
+    doc.file.attach(io: StringIO.new(bytes), filename: filename, content_type: "application/pdf")
+    doc.save!
+    doc
+  end
+
+  def read_zip_entries(zip_bytes)
+    entries = {}
+    Zip::File.open_buffer(StringIO.new(zip_bytes)) do |zip|
+      zip.each { |entry| entries[entry.name] = entry.get_input_stream.read }
+    end
+    entries
   end
 end

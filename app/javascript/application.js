@@ -92,8 +92,8 @@
 // Split-pane document preview (admin/documents#index). Clicking a row loads
 // an inline preview on the right via an iframe (sandboxed, no scripts/same
 // origin) for previewable types; other types get a fallback with a Download
-// link. Clicks on links/buttons inside the row (Download/Tags/Delete) are
-// left alone.
+// link. Clicks on links/buttons/checkboxes inside the row (Download/Tags/
+// Delete, and the bulk-select checkbox) are left alone.
 (function () {
   var panel = document.querySelector("[data-doc-preview]");
   var split = document.querySelector(".doc-split");
@@ -118,7 +118,7 @@
   }
 
   document.addEventListener("click", function (e) {
-    if (e.target.closest("a, button")) return;
+    if (e.target.closest("a, button, input, label")) return;
 
     var row = e.target.closest("[data-doc-row]");
     if (!row) return;
@@ -179,4 +179,37 @@
   });
 
   closeBtn.addEventListener("click", closePreview);
+})();
+
+// Bulk document actions (admin/documents#index): a #select-all checkbox and
+// per-row .row-select checkboxes (associated to #bulk-form via the HTML
+// form= attribute, since they live outside that form to avoid nesting inside
+// the per-row button_to forms). Updates the "N selected" counters and
+// enables/disables the toolbar's submit buttons. No cross-page persistence.
+(function () {
+  var selectAll = document.getElementById("select-all");
+  var form = document.getElementById("bulk-form");
+  if (!form) return;
+  var counters = document.querySelectorAll("[data-bulk-count]");
+  var buttons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
+
+  function rowChecks() { return document.querySelectorAll(".row-select"); }
+
+  function refresh() {
+    var n = 0;
+    rowChecks().forEach(function (c) { if (c.checked) n++; });
+    counters.forEach(function (el) { el.textContent = n + " selected"; });
+    buttons.forEach(function (b) { b.disabled = n === 0; });
+  }
+
+  if (selectAll) {
+    selectAll.addEventListener("change", function () {
+      rowChecks().forEach(function (c) { c.checked = selectAll.checked; });
+      refresh();
+    });
+  }
+  document.addEventListener("change", function (e) {
+    if (e.target && e.target.classList && e.target.classList.contains("row-select")) refresh();
+  });
+  refresh();
 })();

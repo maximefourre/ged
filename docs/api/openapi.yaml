@@ -247,6 +247,52 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 
+  /api/v1/documents/bulk_destroy:
+    delete:
+      tags: [Documents]
+      summary: Delete multiple documents at once
+      description: >
+        Requires write access to every targeted document's department; the
+        whole request is rejected (403) if even one document is not writable
+        by the caller. Unknown or already soft-deleted ids also fail the
+        whole request (404) rather than silently skipping them. Soft-deletes
+        like the single-document `DELETE /api/v1/documents/{id}`: documents
+        are hidden immediately and purged after the standard 30-day window.
+      operationId: bulkDeleteDocuments
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                document_ids:
+                  type: array
+                  items:
+                    type: integer
+                  description: Ids of the documents to soft-delete (max 500)
+              required: [document_ids]
+      responses:
+        "200":
+          description: Documents soft-deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: integer
+                    description: Number of documents soft-deleted
+                required: [deleted]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/documents/{id}:
     parameters:
       - $ref: "#/components/parameters/DocumentId"
