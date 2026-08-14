@@ -48,7 +48,7 @@ gem "zip_kit"
 gem "opentelemetry-metrics-api", "~> 0.6"
 gem "opentelemetry-sdk", "~> 1.13", require: false
 gem "opentelemetry-exporter-otlp", "~> 0.34", require: false
-gem "opentelemetry-metrics-sdk", "~> 0.15.0", require: false
+gem "opentelemetry-metrics-sdk", "~> 0.16.0", require: false
 gem "opentelemetry-exporter-otlp-metrics", "~> 0.10.0", require: false
 gem "opentelemetry-instrumentation-rails", "~> 0.42", require: false
 gem "opentelemetry-instrumentation-pg", "~> 0.36", require: false
