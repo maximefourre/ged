@@ -51,7 +51,7 @@ gem "opentelemetry-exporter-otlp", "~> 0.34", require: false
 gem "opentelemetry-metrics-sdk", "~> 0.15.0", require: false
 gem "opentelemetry-exporter-otlp-metrics", "~> 0.10.0", require: false
 gem "opentelemetry-instrumentation-rails", "~> 0.42", require: false
-gem "opentelemetry-instrumentation-pg", "~> 0.36", require: false
+gem "opentelemetry-instrumentation-pg", "~> 0.37", require: false
 gem "opentelemetry-instrumentation-net_http", "~> 0.29", require: false
 
 group :development, :test do
