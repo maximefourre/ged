@@ -265,7 +265,7 @@ GEM
       opentelemetry-instrumentation-base (~> 0.25)
     opentelemetry-instrumentation-net_http (0.29.0)
       opentelemetry-instrumentation-base (~> 0.25)
-    opentelemetry-instrumentation-pg (0.36.0)
+    opentelemetry-instrumentation-pg (0.37.0)
       opentelemetry-helpers-sql
       opentelemetry-helpers-sql-processor
       opentelemetry-instrumentation-base (~> 0.25)
@@ -488,7 +488,7 @@ DEPENDENCIES
   opentelemetry-exporter-otlp (~> 0.34)
   opentelemetry-exporter-otlp-metrics (~> 0.10.0)
   opentelemetry-instrumentation-net_http (~> 0.29)
-  opentelemetry-instrumentation-pg (~> 0.36)
+  opentelemetry-instrumentation-pg (~> 0.37)
   opentelemetry-instrumentation-rails (~> 0.42)
   opentelemetry-metrics-api (~> 0.6)
   opentelemetry-metrics-sdk (~> 0.15.0)
