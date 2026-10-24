@@ -36,4 +36,7 @@
 # Orchestration scratch files (never commit).
 .superpowers/
 
+# Linked git worktrees (never commit a checkout inside the repo).
+.worktrees/
+
 tmp_test_data/
