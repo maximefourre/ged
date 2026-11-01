@@ -102,15 +102,19 @@ Backend (parity) : base_url(), db(), run_job(name), reset()
 |---|---|---|
 | 1 | T0 | — |
 | 2 | T1 | T0 |
-| 3 | T2, T3 (parallèles) | T1 |
+| 3 | T2a API, T2b sécurité, T3a admin HTTP, T3b Playwright (parallèles) | T1 |
 | 4 | T4 | T2, T3 |
-| 5 | T5, T6 (parallèles) | T4 |
-| 6 | T7, T8 (parallèles) | T5, T6 |
-| 7 | T9 | T7, T8 |
-| 8 | T10 puis T11 | T9 |
-| 9 | T12, T13, T14 (parallèles) | T11 |
-| 10 | T15 | T12, T13, T14 |
-| 11 | T16 | T15 |
+| 5 | T5, T6, T8, T12 (parallèles) | T4 |
+| 6 | T7, T9 (parallèles), T10 | T5, T6, T8 |
+| 7 | T11, T14 (parallèles) | T7, T9, T10 |
+| 8 | T13, T15 (parallèles) | T11, T14 |
+| 9 | T16 | T13, T15 |
+
+T9 dans la vague 6 ne dépend que de `DocumentCreator` et de la file ; son acceptation
+complète (parité `api_async_*`) se vérifie après intégration de T7. T15 et T13
+utilisent chacun leur stack : leurs mesures de perf ne doivent pas tourner en même
+temps qu'un autre run lourd, donc T15 mesure seul sur la machine une fois T13 fini ou
+mis en pause.
 
 ## Tâches
 
