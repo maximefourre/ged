@@ -8,8 +8,8 @@ Les tests de `oauth-provider/test/` ne sont pas comptés : ce service reste en R
 
 | Catégorie | Tests | Signification |
 |---|---:|---|
-| parité | 229 | boîte noire HTTP/SQL dans `rust/parity` (`cargo test -p parity`), validée d'abord contre Rails |
-| unitaire Rust | 153 | test unitaire ou d'intégration interne dans `rust/ged` (invisible en HTTP) |
+| parité | 228 | boîte noire HTTP/SQL dans `rust/parity` (`cargo test -p parity`), validée d'abord contre Rails |
+| unitaire Rust | 154 | test unitaire ou d'intégration interne dans `rust/ged` (invisible en HTTP) |
 | navigateur | 22 | Playwright dans `rust/e2e`, fermeture explicite du navigateur en `finally` |
 
 Règles de classement :
@@ -87,7 +87,7 @@ Règles de classement :
 | `test/controllers/admin/status_controller_test.rb` | 5 | 4 | 1 | 0 |
 | `test/controllers/admin/upload_queue_pause_test.rb` | 3 | 3 | 0 | 0 |
 | `test/controllers/admin/upload_requests_controller_test.rb` | 4 | 4 | 0 | 0 |
-| `test/controllers/api/v1/async_upload_test.rb` | 12 | 10 | 2 | 0 |
+| `test/controllers/api/v1/async_upload_test.rb` | 12 | 9 | 3 | 0 |
 | `test/controllers/api/v1/authentication_test.rb` | 5 | 5 | 0 | 0 |
 | `test/controllers/api/v1/departments_test.rb` | 12 | 12 | 0 | 0 |
 | `test/controllers/api/v1/document_tags_test.rb` | 7 | 7 | 0 | 0 |
@@ -124,7 +124,7 @@ Règles de classement :
 | `test/services/document_creator_test.rb` | 3 | 0 | 3 | 0 |
 | `test/services/system_health_test.rb` | 10 | 0 | 10 | 0 |
 | `test/system/admin_ui_test.rb` | 22 | 0 | 0 | 22 |
-| **Total** | **404** | **229** | **153** | **22** |
+| **Total** | **404** | **228** | **154** | **22** |
 
 ## Inventaire détaillé
 
@@ -216,10 +216,10 @@ Règles de classement :
 | 84 | `test/controllers/api/v1/async_upload_test.rb:28` | upload with callback_url returns 202 and processes in background | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) ; octets vérifiés par le download ; suppression du fichier de staging : unitaire (store_document) |
 | 85 | `test/controllers/api/v1/async_upload_test.rb:58` | rejects callback_url values that are not http(s) URLs with 422 | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
 | 86 | `test/controllers/api/v1/async_upload_test.rb:71` | upload request status can be polled through pending and completed | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
-| 87 | `test/controllers/api/v1/async_upload_test.rb:92` | an async failure is surfaced through the polling endpoint | unitaire Rust | `rust/ged/src/jobs/store_document.rs` | non porté en parité : le test Ruby supprime `storage/staging` (hors tables métier) ; statut `failed` et `document_id` nul relèvent du job de stockage |
+| 87 | `test/controllers/api/v1/async_upload_test.rb:92` | an async failure is surfaced through the polling endpoint | unitaire Rust | `rust/ged/src/jobs/store_document.rs` | reclassé unitaire : le test Ruby supprime `storage/staging` (hors tables métier) ; statut `failed` et `document_id` nul relèvent du job de stockage |
 | 88 | `test/controllers/api/v1/async_upload_test.rb:111` | async upload applies tags and returns them in the callback and polling | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
 | 89 | `test/controllers/api/v1/async_upload_test.rb:138` | async upload with invalid tags is rejected with 422 before the 202 | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
-| 90 | `test/controllers/api/v1/async_upload_test.rb:150` | a failed async upload reports null tags in the callback | unitaire Rust | `rust/ged/src/jobs/deliver_callback.rs` | non porté en parité : échec provoqué en supprimant le fichier de staging ; tags null du POST de callback |
+| 90 | `test/controllers/api/v1/async_upload_test.rb:150` | a failed async upload reports null tags in the callback | unitaire Rust | `rust/ged/src/jobs/deliver_callback.rs` | reclassé unitaire : échec provoqué en supprimant le fichier de staging ; tags null du POST de callback |
 | 91 | `test/controllers/api/v1/async_upload_test.rb:172` | async metadata is null while pending and populated once completed | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
 | 92 | `test/controllers/api/v1/async_upload_test.rb:192` | the callback payload carries the document metadata | unitaire Rust | `rust/ged/src/jobs/deliver_callback.rs` | POST du callback non observable en boîte noire (SSRF bloque le loopback) ; le polling reste en parité |
 | 93 | `test/controllers/api/v1/async_upload_test.rb:206` | polling an upload request of a forbidden department returns 403 | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
