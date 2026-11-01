@@ -65,28 +65,6 @@ fn parse_uuid(id: &str) -> Uuid {
     Uuid::parse_str(id).unwrap_or_else(|e| panic!("uuid {id}: {e}"))
 }
 
-/// Insert a document row with no file attached. List/authz fixtures only —
-/// anything that streams bytes goes through HTTP upload instead.
-pub async fn insert_document(
-    db: &PgPool,
-    department_id: i64,
-    filename: &str,
-    uploaded_by: &str,
-) -> String {
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO documents \
-         (department_id, filename, uploaded_by, tags, uploaded_at, created_at, updated_at) \
-         VALUES ($1, $2, $3, '{}'::jsonb, now(), now(), now()) RETURNING id",
-    )
-    .bind(department_id)
-    .bind(filename)
-    .bind(uploaded_by)
-    .fetch_one(db)
-    .await
-    .expect("insert document");
-    id.to_string()
-}
-
 pub async fn set_document_tags(db: &PgPool, id: &str, tags: &Value) {
     sqlx::query("UPDATE documents SET tags = $2 WHERE id = $1")
         .bind(parse_uuid(id))
@@ -159,28 +137,6 @@ pub async fn trash_department(db: &PgPool, id: i64) {
         .expect("trash department");
 }
 
-pub async fn insert_upload_request(
-    db: &PgPool,
-    department_id: i64,
-    callback_url: &str,
-    filename: &str,
-    uploaded_by: &str,
-) -> String {
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO upload_requests \
-         (department_id, callback_url, filename, uploaded_by, status, tags, created_at, updated_at) \
-         VALUES ($1, $2, $3, $4, 'pending', '{}'::jsonb, now(), now()) RETURNING id",
-    )
-    .bind(department_id)
-    .bind(callback_url)
-    .bind(filename)
-    .bind(uploaded_by)
-    .fetch_one(db)
-    .await
-    .expect("insert upload_request");
-    id.to_string()
-}
-
 pub async fn backdate_document(db: &PgPool, id: &str, rfc3339: &str) {
     let at = DateTime::parse_from_rfc3339(rfc3339)
         .unwrap_or_else(|e| panic!("time {rfc3339}: {e}"))
@@ -221,14 +177,6 @@ pub async fn make_purgeable(db: &PgPool, document_id: Uuid) {
 /// `make_purgeable` addressed by the document id string returned by the API.
 pub async fn make_purgeable_id(db: &PgPool, document_id: &str) {
     make_purgeable(db, parse_id(document_id)).await;
-}
-
-pub async fn app_client_id(db: &PgPool, identifier: &str) -> i64 {
-    sqlx::query_scalar("SELECT id FROM app_clients WHERE client_identifier = $1")
-        .bind(identifier)
-        .fetch_one(db)
-        .await
-        .expect("app client id")
 }
 
 /// A business-table document with no file attached. Purge observes the row,
@@ -355,7 +303,7 @@ pub async fn retention_seconds(db: &PgPool, document_id: &str) -> Option<f64> {
 }
 
 /// `tags` as stored, or `None` when the row is gone.
-pub async fn document_tags(db: &PgPool, document_id: &str) -> Option<serde_json::Value> {
+pub async fn document_tags_opt(db: &PgPool, document_id: &str) -> Option<serde_json::Value> {
     sqlx::query_scalar("SELECT tags FROM documents WHERE id = $1")
         .bind(parse_id(document_id))
         .fetch_optional(db)

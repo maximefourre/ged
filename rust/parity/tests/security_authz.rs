@@ -166,7 +166,7 @@ async fn security_authz_dept_a_cannot_replace_tags_on_a_document_in_dept_b() {
     assert_error(&r, 403, NO_WRITE);
     let backend = backend().await;
     assert_eq!(
-        fixtures::document_tags(backend.db(), &f.doc_b)
+        fixtures::document_tags_opt(backend.db(), &f.doc_b)
             .await
             .expect("row"),
         json!({})
@@ -354,7 +354,7 @@ async fn security_authz_read_only_cannot_replace_tags() {
         .await;
     assert_error(&r, 403, NO_WRITE);
     assert_eq!(
-        fixtures::document_tags(backend.db(), &doc)
+        fixtures::document_tags_opt(backend.db(), &doc)
             .await
             .expect("row"),
         json!({})
