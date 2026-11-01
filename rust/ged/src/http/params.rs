@@ -11,6 +11,8 @@
 //! scalar*, and so are ignored by the pagination code exactly as in Rails
 //! (`value.is_a?(String) ? value.to_i : 0`).
 
+use std::collections::HashMap;
+
 use axum::body::Body;
 use axum::extract::{FromRequest, FromRequestParts, Request};
 use axum::http::header::CONTENT_TYPE;
@@ -23,8 +25,9 @@ use super::error::ApiError;
 pub const PARAM_DEPTH_LIMIT: usize = 100;
 /// ActiveSupport's `JSON.parse` `max_nesting`.
 pub const JSON_MAX_NESTING: usize = 100;
-/// Largest form or JSON body the extractor reads into memory. Rails has no
-/// cap here (the edge limit does); uploads are multipart and stream elsewhere.
+/// Largest form or JSON body the extractor reads into memory. Rack caps
+/// urlencoded input lower (4 MiB, 4096 keys; see `docs/migration/parity-gaps.md`),
+/// so this is the more permissive side; uploads are multipart and stream elsewhere.
 pub const BODY_LIMIT: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,8 +86,17 @@ impl ParamValue {
 }
 
 /// An insertion-ordered string-keyed map (a Ruby Hash).
+///
+/// `entries` holds the order; `index` maps a key to its slot so that `get`
+/// and `insert` are amortised O(1). A request can carry hundreds of
+/// thousands of distinct keys before authentication, so a linear scan per
+/// insert (quadratic overall) is a CPU denial of service. Keys are never
+/// removed, so slots are stable.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct ParamMap(Vec<(String, ParamValue)>);
+pub struct ParamMap {
+    entries: Vec<(String, ParamValue)>,
+    index: HashMap<String, usize>,
+}
 
 impl ParamMap {
     pub fn new() -> Self {
@@ -92,31 +104,40 @@ impl ParamMap {
     }
 
     pub fn get(&self, key: &str) -> Option<&ParamValue> {
-        self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+        self.index.get(key).map(|&slot| &self.entries[slot].1)
     }
 
     fn get_mut(&mut self, key: &str) -> Option<&mut ParamValue> {
-        self.0.iter_mut().find(|(k, _)| k == key).map(|(_, v)| v)
+        let slot = *self.index.get(key)?;
+        Some(&mut self.entries[slot].1)
     }
 
     /// Ruby `Hash#[]=`: an existing key keeps its position.
     pub fn insert(&mut self, key: String, value: ParamValue) {
-        match self.get_mut(&key) {
-            Some(slot) => *slot = value,
-            None => self.0.push((key, value)),
+        match self.index.get(&key) {
+            Some(&slot) => self.entries[slot].1 = value,
+            None => {
+                self.index.insert(key.clone(), self.entries.len());
+                self.entries.push((key, value));
+            }
         }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, &ParamValue)> {
-        self.0.iter().map(|(k, v)| (k.as_str(), v))
+        self.entries.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// Consumes the map, yielding entries in insertion order.
+    fn into_entries(self) -> Vec<(String, ParamValue)> {
+        self.entries
     }
 
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.entries.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.entries.is_empty()
     }
 }
 
@@ -169,7 +190,7 @@ impl RackParams {
     /// wins, as in `request_parameters.merge(query_parameters)`.
     pub fn merged(body: RackParams, query: RackParams) -> Self {
         let mut map = body.map;
-        for (key, value) in query.map.0 {
+        for (key, value) in query.map.into_entries() {
             map.insert(key, value);
         }
         Self { map }
@@ -652,6 +673,42 @@ mod tests {
 
     fn parse(qs: &str) -> Value {
         map_to_json(RackParams::parse(qs).unwrap().map())
+    }
+
+    /// Pre-auth DoS guard: `insert`/`get` must be amortised O(1), so a query
+    /// of many distinct keys parses in linear time (it was quadratic: 80 000
+    /// keys took ~4.9 s in release). The bound is deliberately generous.
+    #[test]
+    fn many_distinct_keys_parse_in_linear_time_and_keep_insertion_order() {
+        const KEYS: usize = 80_000;
+        let query = (0..KEYS)
+            .map(|i| format!("k{i}=1"))
+            .collect::<Vec<_>>()
+            .join("&");
+        let started = std::time::Instant::now();
+        let params = RackParams::parse(&query).unwrap();
+        let elapsed = started.elapsed();
+        eprintln!("parse of {KEYS} distinct keys: {elapsed:?}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(3),
+            "{KEYS} keys took {elapsed:?}"
+        );
+        assert_eq!(params.map().len(), KEYS);
+        let keys: Vec<&str> = params.map().iter().map(|(k, _)| k).collect();
+        assert_eq!(keys[0], "k0");
+        assert_eq!(keys[KEYS - 1], format!("k{}", KEYS - 1));
+        assert_eq!(params.str("k79999"), Some("1"));
+    }
+
+    #[test]
+    fn an_overwritten_key_keeps_its_original_position() {
+        let mut map = ParamMap::new();
+        map.insert("a".into(), ParamValue::Str("1".into()));
+        map.insert("b".into(), ParamValue::Str("2".into()));
+        map.insert("a".into(), ParamValue::Str("3".into()));
+        let seen: Vec<_> = map.iter().map(|(k, v)| (k, v.as_str())).collect();
+        assert_eq!(seen, [("a", Some("3")), ("b", Some("2"))]);
+        assert_eq!(map.len(), 2);
     }
 
     #[test]

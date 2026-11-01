@@ -174,3 +174,39 @@ async fn wrong_verb_outside_the_api_is_a_404_page_not_a_405() {
         assert!(r.content_type.starts_with("text/html"), "{method}");
     }
 }
+
+/// Pre-auth DoS guard, end to end: the guard buffers and parses an urlencoded
+/// body before any handler or authentication, so many distinct keys must not
+/// cost quadratic time (80 000 keys took ~4.9 s in release before the index).
+#[tokio::test]
+async fn a_form_body_of_many_distinct_keys_is_guarded_in_linear_time() {
+    let body = (0..80_000)
+        .map(|i| format!("k{i}=1"))
+        .collect::<Vec<_>>()
+        .join("&");
+    let started = std::time::Instant::now();
+    let r = request(
+        "POST",
+        "/admin/probe",
+        Some("application/x-www-form-urlencoded"),
+        &format!("{body}&name=x"),
+    )
+    .await;
+    let elapsed = started.elapsed();
+    eprintln!("guard of 80000 distinct keys: {elapsed:?}");
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.body, r#"name=Some("x")"#);
+    assert!(elapsed < std::time::Duration::from_secs(5), "{elapsed:?}");
+}
+
+#[tokio::test]
+async fn an_unserved_verb_with_an_unparsable_query_is_a_404_not_a_400() {
+    for uri in ["/up?a=%ff", "/up?a=1&a[b]=2"] {
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
+            let r = request(method, uri, None, "").await;
+            assert_eq!(r.status, StatusCode::NOT_FOUND, "{method} {uri}");
+        }
+    }
+    // The served verb still gets the parameter check.
+    assert_eq!(get_("/up?a=%ff").await.status, StatusCode::BAD_REQUEST);
+}

@@ -10,6 +10,8 @@
 //! - the query string is parsed before dispatch on every *routed* request,
 //!   so an unparsable one is a 400 even on `/up`, and never on an unrouted
 //!   path;
+//! - that routing miss comes before the parameter check: an unparsable query
+//!   on a verb the route does not serve is the 404, not a 400;
 //! - shapes that are odd but parseable (`limit[]=1`, last duplicate wins, …)
 //!   are not errors.
 //!
@@ -59,6 +61,19 @@ async fn api_errors_a_verb_the_route_does_not_serve_is_a_404_not_a_405() {
     for verb in [Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
         let resp = api.send(verb.clone(), "/up", &[], None).await;
         assert_status(&resp, 404);
+    }
+}
+
+#[tokio::test]
+async fn api_errors_a_verb_the_route_does_not_serve_is_a_404_even_with_an_unparsable_query() {
+    let api = api().await;
+    for query in ["a=%ff", "a=1&a[b]=2", &nested(100)] {
+        for verb in [Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
+            let resp = api
+                .send(verb.clone(), &format!("/up?{query}"), &[], None)
+                .await;
+            assert_status(&resp, 404);
+        }
     }
 }
 

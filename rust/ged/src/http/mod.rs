@@ -11,7 +11,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::header::{CONTENT_TYPE, HeaderValue};
-use axum::http::{StatusCode, Uri};
+use axum::http::{Method, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -92,16 +92,8 @@ fn plain_error(status: StatusCode) -> Response {
 /// cannot parse, before the handler runs.
 async fn guard_params(req: Request, next: Next) -> Response {
     let api = is_api(req.uri());
-    let reject = |api: bool| {
-        if api {
-            ApiError::bad_request().into_response()
-        } else {
-            plain_error(StatusCode::BAD_REQUEST)
-        }
-    };
-
-    if RackParams::parse(req.uri().query().unwrap_or("")).is_err() {
-        return reject(api);
+    if !parses(req.uri().query().unwrap_or("").to_owned()).await {
+        return reject_or_unrouted(req, next, api).await;
     }
 
     let kind = params::BodyKind::of(req.method(), req.headers().get(CONTENT_TYPE));
@@ -113,16 +105,65 @@ async fn guard_params(req: Request, next: Next) -> Response {
     let limited = http_body_util::Limited::new(body, params::BODY_LIMIT);
     let bytes = match http_body_util::BodyExt::collect(limited).await {
         Ok(collected) => collected.to_bytes(),
-        Err(_) => return reject(api),
+        Err(_) => {
+            return reject_or_unrouted(Request::from_parts(parts, Body::empty()), next, api).await;
+        }
     };
-    let valid = std::str::from_utf8(&bytes)
-        .ok()
-        .is_some_and(|text| RackParams::parse(text).is_ok());
+    let valid = match String::from_utf8(bytes.to_vec()) {
+        Ok(text) => parses(text).await,
+        Err(_) => false,
+    };
     if !valid {
-        return reject(api);
+        return reject_or_unrouted(Request::from_parts(parts, Body::empty()), next, api).await;
     }
     next.run(Request::from_parts(parts, Body::from(bytes)))
         .await
+}
+
+/// Above this size a parse (linear, ~30 ms per MiB in release) moves to the
+/// blocking pool so that an 8 MiB pre-auth body never holds an async worker
+/// thread for hundreds of milliseconds.
+const BLOCKING_PARSE_THRESHOLD: usize = 64 * 1024;
+
+/// Whether Rails could parse these urlencoded parameters.
+async fn parses(text: String) -> bool {
+    if text.len() <= BLOCKING_PARSE_THRESHOLD {
+        return RackParams::parse(&text).is_ok();
+    }
+    // A failed join (the parse panicked) is not "valid": fail closed.
+    tokio::task::spawn_blocking(move || RackParams::parse(&text).is_ok())
+        .await
+        .unwrap_or(false)
+}
+
+/// The request's parameters are unparsable. Rails only parses them once the
+/// route *and verb* matched, so on a verb the route does not serve the answer
+/// is the routing miss (405 here, which [`shield`] turns into the 404), not a
+/// 400. Dispatching a method nothing serves makes the router answer 405
+/// without ever running a handler, which tells the two cases apart.
+async fn reject_or_unrouted(req: Request, next: Next, api: bool) -> Response {
+    let (parts, _) = req.into_parts();
+    let unserved = Method::from_bytes(b"GED-PROBE").expect("static token is a valid method");
+    let mut probe = Request::new(Body::empty());
+    *probe.method_mut() = unserved;
+    *probe.uri_mut() = parts.uri;
+    let response = next.run(probe).await;
+    if response.status() == StatusCode::METHOD_NOT_ALLOWED {
+        // The verb in use is served only if it is in `Allow`.
+        let served = response
+            .headers()
+            .get(axum::http::header::ALLOW)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|allow| allow.split(',').any(|m| m.trim() == parts.method.as_str()));
+        if !served {
+            return response;
+        }
+    }
+    if api {
+        ApiError::bad_request().into_response()
+    } else {
+        plain_error(StatusCode::BAD_REQUEST)
+    }
 }
 
 /// Outermost layer: no panic or framework rejection under `/api/v1` ever

@@ -73,8 +73,45 @@ de deux chiffres hexadécimaux est un 400, comme `a=%ff` (octet UTF-8 invalide).
 proxy. Le comportement de Rails seul est figé par le corpus
 `rust/ged/tests/fixtures/rack_params_corpus.json` (généré par
 `ActionDispatch::ParamBuilder`, voir `gen_rack_params_corpus.rb`).
+**Changement observable au cutover.** Ce gap est un durcissement : aujourd'hui, derrière
+Thruster, un client qui envoie `?a=%zz` (ou `a=%zz` dans un corps urlencoded) reçoit une
+réponse normale (le paramètre est silencieusement supprimé) ; après la bascule vers le
+Rust, la même requête reçoit un `400 {"error":"bad request"}`. À consigner dans le journal
+de cutover et à annoncer aux applications clientes ; un client qui n'encode pas ses
+valeurs (`%` littéral non échappé) casserait à ce moment-là.
+
 Le traitement de `;` dans la requête n'a pas été observé : le port suit Rails
 (`a=1;b=2` est un seul paramètre `a` valant `1;b=2`).
+
+## Taille et nombre des paramètres urlencoded (limite de 8 Mio du Rust)
+
+Le garde du Rust (`rust/ged/src/http/params.rs`, `BODY_LIMIT`) lit un corps urlencoded
+en mémoire jusqu'à **8 Mio** et répond `400 {"error":"bad request"}` au-delà, avant
+l'authentification. Rails n'a pas ce plafond-là : il en a de plus bas, observés le
+2026-11-01 sur le stack (Thruster, `POST /api/v1/documents` sans jeton, corps
+`application/x-www-form-urlencoded`) :
+
+| Corps | Réponse Rails |
+|---|---|
+| `a=1` | 401 `missing bearer token` |
+| 4096 clés distinctes (`k0=1&k1=1…`) | 401 |
+| 4097 clés distinctes, 5000, 80 000 | **400** `{"error":"bad request"}` |
+| une clé de 4 194 304 octets (4 Mio exactement) | 401 |
+| 4 194 305 octets, 5 Mio, 8 Mio, 9 Mio | **400** `{"error":"bad request"}` |
+| 5000 clés en *query string* (`GET /up?…`) | **400** |
+| corps **JSON** de 9 Mio | 401 (analysé à la demande, voir plus bas) |
+
+Ce sont les limites par défaut de Rack 3.2 (`params_limit` 4096, `bytesize_limit`
+4 Mio), non surchargées dans l'app. Le Rust ne les reproduit pas : il accepte jusqu'à
+8 Mio et un nombre de clés illimité dans cette enveloppe ; entre 4 Mio et 8 Mio (ou
+au-delà de 4096 clés) Rails répond 400 là où le Rust analyse et laisse passer. L'écart
+est donc **plus permissif côté Rust**, jamais plus strict, et le statut au-delà de
+8 Mio (400) est identique. Le garde bufferise jusqu'à 8 Mio par requête avant
+l'authentification ; le coût d'analyse est linéaire (index `HashMap` dans `ParamMap`,
+voir la revue T4 B1 : 80 000 clés passaient de 4,7 s à 17 ms en release) et, au-delà de
+64 Kio, déporté sur le pool bloquant pour ne pas retenir un thread du runtime async.
+Aligner le Rust sur les plafonds de Rack (4096 clés, 4 Mio) reste possible si l'on veut
+la parité stricte ; non fait ici.
 
 ## Analyse des paramètres : ce qui est eager, ce qui est lazy
 
@@ -84,7 +121,9 @@ Observé sur le stack Rails (Thruster inclus) :
   toute route qui correspond : un conflit de types (`a=1&a[b]=2`), une profondeur
   de 100 ou plus, un octet invalide donnent un 400 `{"error":"bad request"}` (JSON
   sous `/api/v1`) *avant* l'authentification, y compris sur `/up`. Sur un chemin
-  sans route, c'est le 404 qui gagne.
+  sans route, c'est le 404 qui gagne. De même sur une route existante dont le verbe n'est pas servi
+  (`POST /up?a=%ff`) : 404, jamais 400 (observé sur Rails, figé par
+  `api_errors_a_verb_the_route_does_not_serve_is_a_404_even_with_an_unparsable_query`).
 - Un corps **JSON** est analysé **à la demande** : `POST /api/v1/documents` avec
   `{bad` et sans jeton répond 401 `missing bearer token`, pas 400. Le 400 n'arrive
   qu'une fois authentifié, quand le contrôleur lit les paramètres. Le Rust a la même
