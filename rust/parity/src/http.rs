@@ -139,6 +139,74 @@ impl Api {
             .await
     }
 
+    /// GET with a bearer token and a query string. `fields` keeps duplicates
+    /// and empty values (`limit=` is not the same encoding as an absent key);
+    /// names and values are percent-encoded, which Rack decodes back.
+    pub async fn get_bearer_query(&self, path: &str, token: &str, fields: &[(&str, &str)]) -> Resp {
+        let path = append_query(path, fields);
+        self.get_bearer(&path, token).await
+    }
+
+    /// PUT `application/x-www-form-urlencoded` with a bearer token.
+    pub async fn put_form_bearer(&self, path: &str, token: &str, fields: &[(&str, &str)]) -> Resp {
+        self.form_bearer(Method::PUT, path, token, fields).await
+    }
+
+    /// POST a raw body with a bearer token (malformed JSON, oversized bodies).
+    pub async fn post_bytes_bearer(
+        &self,
+        path: &str,
+        token: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Resp {
+        self.bytes_bearer(Method::POST, path, token, content_type, body)
+            .await
+    }
+
+    /// Raw body with a bearer token (malformed JSON, oversized bodies).
+    pub async fn bytes_bearer(
+        &self,
+        method: Method,
+        path: &str,
+        token: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Resp {
+        let auth = format!("Bearer {token}");
+        self.send(
+            method,
+            path,
+            &[("Authorization", &auth), ("Content-Type", content_type)],
+            Some(body),
+        )
+        .await
+    }
+
+    /// Multipart document upload. `filename` is sent verbatim inside the
+    /// Content-Disposition quotes (no client-side basename), so Rack sees the
+    /// same string a hostile client would send. Field order is preserved,
+    /// including duplicate names such as `tags[type]`.
+    pub async fn upload_bearer(
+        &self,
+        path: &str,
+        token: &str,
+        fields: &[(&str, &str)],
+        filename: &str,
+        content_type: &str,
+        bytes: &[u8],
+    ) -> Resp {
+        let (ct, body) = encode_multipart(fields, filename, content_type, bytes);
+        let auth = format!("Bearer {token}");
+        self.send(
+            Method::POST,
+            path,
+            &[("Authorization", &auth), ("Content-Type", &ct)],
+            Some(body),
+        )
+        .await
+    }
+
     /// Multipart body with a bearer token. `file` is one uploaded part;
     /// `fields` are text parts (bracket keys allowed).
     pub async fn post_multipart(
@@ -178,6 +246,81 @@ pub struct FilePart<'a> {
     pub filename: &'a str,
     pub content_type: &'a str,
     pub bytes: &'a [u8],
+}
+
+fn append_query(path: &str, fields: &[(&str, &str)]) -> String {
+    if fields.is_empty() {
+        path.to_owned()
+    } else {
+        format!("{path}?{}", form_encode(fields))
+    }
+}
+
+/// `application/x-www-form-urlencoded` encoding. Unreserved characters stay
+/// literal; everything else (including `[]`) is percent-encoded.
+pub fn form_encode(fields: &[(&str, &str)]) -> String {
+    fields
+        .iter()
+        .map(|(k, v)| format!("{}={}", percent_encode(k), percent_encode(v)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+fn encode_multipart(
+    fields: &[(&str, &str)],
+    filename: &str,
+    content_type: &str,
+    bytes: &[u8],
+) -> (String, Vec<u8>) {
+    let boundary = format!("parity{}", uuid::Uuid::new_v4().simple());
+    let mut body = Vec::new();
+    for (name, value) in fields {
+        push_str(
+            &mut body,
+            &format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            ),
+        );
+    }
+    let quoted = quote_filename(filename);
+    push_str(
+        &mut body,
+        &format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename={quoted}\r\nContent-Type: {content_type}\r\n\r\n"
+        ),
+    );
+    body.extend_from_slice(bytes);
+    push_str(&mut body, &format!("\r\n--{boundary}--\r\n"));
+    (format!("multipart/form-data; boundary={boundary}"), body)
+}
+
+fn quote_filename(name: &str) -> String {
+    let mut out = String::from("\"");
+    for c in name.chars() {
+        if c == '"' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
+fn push_str(buf: &mut Vec<u8>, s: &str) {
+    buf.extend_from_slice(s.as_bytes());
 }
 
 pub(crate) async fn read(resp: reqwest::Response) -> Resp {

@@ -217,3 +217,152 @@ pub async fn make_purgeable(db: &PgPool, document_id: Uuid) {
     .await
     .expect("age document");
 }
+
+/// `make_purgeable` addressed by the document id string returned by the API.
+pub async fn make_purgeable_id(db: &PgPool, document_id: &str) {
+    make_purgeable(db, parse_id(document_id)).await;
+}
+
+pub async fn app_client_id(db: &PgPool, identifier: &str) -> i64 {
+    sqlx::query_scalar("SELECT id FROM app_clients WHERE client_identifier = $1")
+        .bind(identifier)
+        .fetch_one(db)
+        .await
+        .expect("app client id")
+}
+
+/// A business-table document with no file attached. Purge observes the row,
+/// never storage tables; file-bearing documents are created through HTTP.
+pub async fn insert_document(
+    db: &PgPool,
+    department_id: i64,
+    filename: &str,
+    uploaded_by: &str,
+) -> String {
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO documents \
+         (department_id, filename, content_type, byte_size, uploaded_by, uploaded_at, \
+          tags, stored_async, created_at, updated_at) \
+         VALUES ($1, $2, 'application/pdf', 4, $3, now(), '{}'::jsonb, false, now(), now()) \
+         RETURNING id",
+    )
+    .bind(department_id)
+    .bind(filename)
+    .bind(uploaded_by)
+    .fetch_one(db)
+    .await
+    .expect("insert document");
+    id.to_string()
+}
+
+pub async fn insert_upload_request(
+    db: &PgPool,
+    department_id: i64,
+    callback_url: &str,
+    filename: &str,
+    uploaded_by: &str,
+) -> String {
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO upload_requests \
+         (department_id, callback_url, filename, content_type, uploaded_by, status, tags, \
+          created_at, updated_at) \
+         VALUES ($1, $2, $3, 'application/pdf', $4, 'pending', '{}'::jsonb, now(), now()) \
+         RETURNING id",
+    )
+    .bind(department_id)
+    .bind(callback_url)
+    .bind(filename)
+    .bind(uploaded_by)
+    .fetch_one(db)
+    .await
+    .expect("insert upload request");
+    id.to_string()
+}
+
+/// Same columns as `Document#soft_delete!`: hidden, purge_at 30 days out.
+pub async fn soft_delete_document(db: &PgPool, document_id: &str) {
+    sqlx::query(
+        "UPDATE documents SET deleted_at = now(), \
+         purge_at = now() + interval '30 days', updated_at = now() WHERE id = $1",
+    )
+    .bind(parse_id(document_id))
+    .execute(db)
+    .await
+    .expect("soft-delete document");
+}
+
+/// `deleted_at` only. Does not trash documents (that is `Department#soft_delete!`).
+pub async fn mark_department_deleted(db: &PgPool, department_id: i64) {
+    sqlx::query("UPDATE departments SET deleted_at = now(), updated_at = now() WHERE id = $1")
+        .bind(department_id)
+        .execute(db)
+        .await
+        .expect("soft-delete department");
+}
+
+pub async fn document_count(db: &PgPool, department_id: i64) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE department_id = $1")
+        .bind(department_id)
+        .fetch_one(db)
+        .await
+        .expect("document count")
+}
+
+pub async fn document_exists(db: &PgPool, document_id: &str) -> bool {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM documents WHERE id = $1)")
+        .bind(parse_id(document_id))
+        .fetch_one(db)
+        .await
+        .expect("document exists")
+}
+
+pub async fn department_exists(db: &PgPool, department_id: i64) -> bool {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM departments WHERE id = $1)")
+        .bind(department_id)
+        .fetch_one(db)
+        .await
+        .expect("department exists")
+}
+
+pub async fn grant_count(db: &PgPool, department_id: i64) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM client_department_accesses WHERE department_id = $1")
+        .bind(department_id)
+        .fetch_one(db)
+        .await
+        .expect("grant count")
+}
+
+pub async fn upload_request_count(db: &PgPool, department_id: i64, callback_url: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM upload_requests WHERE department_id = $1 AND callback_url = $2",
+    )
+    .bind(department_id)
+    .bind(callback_url)
+    .fetch_one(db)
+    .await
+    .expect("upload request count")
+}
+
+/// Seconds between `deleted_at` and `purge_at`, for the retention window.
+pub async fn retention_seconds(db: &PgPool, document_id: &str) -> Option<f64> {
+    sqlx::query_scalar(
+        "SELECT EXTRACT(EPOCH FROM (purge_at - deleted_at))::float8 FROM documents WHERE id = $1",
+    )
+    .bind(parse_id(document_id))
+    .fetch_one(db)
+    .await
+    .expect("retention")
+}
+
+/// `tags` as stored, or `None` when the row is gone.
+pub async fn document_tags(db: &PgPool, document_id: &str) -> Option<serde_json::Value> {
+    sqlx::query_scalar("SELECT tags FROM documents WHERE id = $1")
+        .bind(parse_id(document_id))
+        .fetch_optional(db)
+        .await
+        .expect("document tags")
+}
+
+fn parse_id(id: &str) -> Uuid {
+    Uuid::parse_str(id).unwrap_or_else(|e| panic!("document id {id:?}: {e}"))
+}

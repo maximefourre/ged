@@ -22,3 +22,4 @@ pub mod stack;
 
 pub use backend::{Backend, backend};
 pub use http::{Api, Resp};
+pub use sqlx::PgPool;
