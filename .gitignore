@@ -40,3 +40,6 @@
 .worktrees/
 
 tmp_test_data/
+
+# Rust build output.
+/rust/target/

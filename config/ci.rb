@@ -10,6 +10,9 @@ CI.run do
   step "Security: Brakeman code analysis", "bin/brakeman --quiet --no-pager --exit-on-warn --exit-on-error"
   step "Tests: Rails", "bin/rails test"
   step "Tests: System", "bin/rails test:system"
+  step "Rust: fmt", "cd rust && mise exec -- cargo fmt --check"
+  step "Rust: clippy", "cd rust && mise exec -- cargo clippy --all-targets -- -D warnings"
+  step "Rust: tests", "cd rust && mise exec -- cargo test"
   step "Tests: Seeds", "env RAILS_ENV=test bin/rails db:seed:replant"
 
   # Optional: set a green GitHub commit status to unblock PR merge.
