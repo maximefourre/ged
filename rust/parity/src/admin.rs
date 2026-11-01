@@ -93,18 +93,21 @@ impl AdminSession {
         Ok((this, resp))
     }
 
-    /// One login per process, then every caller reuses the session cookie.
+    /// One login per process. Later callers clone that client so they share its
+    /// cookie jar. A frozen `Cookie` header would keep sending the pre-rotation
+    /// session after Rails issues a new one, and the next form POST would 422
+    /// on CSRF.
     pub async fn cached(base: &str) -> Result<Self, String> {
-        static COOKIE: tokio::sync::Mutex<Option<String>> = tokio::sync::Mutex::const_new(None);
-        let mut slot = COOKIE.lock().await;
-        if let Some(c) = slot.as_ref() {
+        static CLIENT: tokio::sync::Mutex<Option<Client>> = tokio::sync::Mutex::const_new(None);
+        let mut slot = CLIENT.lock().await;
+        if let Some(http) = slot.clone() {
             return Ok(Self {
                 base: base.trim_end_matches('/').to_owned(),
-                http: new_client(Some(c)),
+                http,
             });
         }
         let this = Self::login(base).await?;
-        *slot = Some(this.session_cookie().await?);
+        *slot = Some(this.http.clone());
         Ok(this)
     }
 
@@ -145,6 +148,19 @@ impl AdminSession {
         let page = self.get("/admin/documents").await;
         csrf_token(&page.text())
             .unwrap_or_else(|| panic!("no csrf-token on /admin/documents (HTTP {})", page.status))
+    }
+
+    /// Pause the uploads queue (admin button). Idempotent at the HTTP layer:
+    /// callers should resume afterwards, including after a failed assertion.
+    pub async fn pause_upload_queue(&self) -> Resp {
+        self.submit(Method::POST, "/admin/upload_queue_pause", &[])
+            .await
+    }
+
+    /// Resume the uploads queue.
+    pub async fn resume_upload_queue(&self) -> Resp {
+        self.submit(Method::DELETE, "/admin/upload_queue_pause", &[])
+            .await
     }
 
     /// Submit a form with a valid CSRF token. `method` other than POST is sent

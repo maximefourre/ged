@@ -92,6 +92,92 @@ impl Api {
         )
         .await
     }
+
+    /// POST a JSON body with a bearer token.
+    pub async fn post_json(&self, path: &str, token: &str, body: &Value) -> Resp {
+        self.json_bearer(Method::POST, path, token, body).await
+    }
+
+    /// `application/x-www-form-urlencoded` body with a bearer token.
+    /// Keys are sent as given, so Rack bracket names (`tags[type]`,
+    /// `document_ids[]`) round-trip unchanged.
+    pub async fn form_bearer(
+        &self,
+        method: Method,
+        path: &str,
+        token: &str,
+        fields: &[(&str, &str)],
+    ) -> Resp {
+        let auth = format!("Bearer {token}");
+        let req = self
+            .http
+            .request(method, self.url(path))
+            .header(
+                "Authorization",
+                HeaderValue::from_str(&auth).expect("authorization header"),
+            )
+            .form(&fields);
+        read(req.send().await.expect("send form")).await
+    }
+
+    pub async fn post_form(&self, path: &str, token: &str, fields: &[(&str, &str)]) -> Resp {
+        self.form_bearer(Method::POST, path, token, fields).await
+    }
+
+    pub async fn put_form(&self, path: &str, token: &str, fields: &[(&str, &str)]) -> Resp {
+        self.form_bearer(Method::PUT, path, token, fields).await
+    }
+
+    pub async fn delete_form(&self, path: &str, token: &str, fields: &[(&str, &str)]) -> Resp {
+        self.form_bearer(Method::DELETE, path, token, fields).await
+    }
+
+    /// DELETE with a bearer token and no body.
+    pub async fn delete_bearer(&self, path: &str, token: &str) -> Resp {
+        let auth = format!("Bearer {token}");
+        self.send(Method::DELETE, path, &[("Authorization", &auth)], None)
+            .await
+    }
+
+    /// Multipart body with a bearer token. `file` is one uploaded part;
+    /// `fields` are text parts (bracket keys allowed).
+    pub async fn post_multipart(
+        &self,
+        path: &str,
+        token: &str,
+        fields: &[(&str, &str)],
+        file: Option<FilePart<'_>>,
+    ) -> Resp {
+        let auth = format!("Bearer {token}");
+        let mut form = reqwest::multipart::Form::new();
+        for (key, value) in fields {
+            form = form.text((*key).to_owned(), (*value).to_owned());
+        }
+        if let Some(file) = file {
+            let part = reqwest::multipart::Part::bytes(file.bytes.to_vec())
+                .file_name(file.filename.to_owned())
+                .mime_str(file.content_type)
+                .expect("content type");
+            form = form.part(file.field.to_owned(), part);
+        }
+        let req = self
+            .http
+            .request(Method::POST, self.url(path))
+            .header(
+                "Authorization",
+                HeaderValue::from_str(&auth).expect("authorization header"),
+            )
+            .multipart(form);
+        read(req.send().await.expect("send multipart")).await
+    }
+}
+
+/// One file part of a multipart request.
+pub struct FilePart<'a> {
+    pub field: &'a str,
+    pub filename: &'a str,
+    pub content_type: &'a str,
+    pub bytes: &'a [u8],
 }
 
 pub(crate) async fn read(resp: reqwest::Response) -> Resp {
