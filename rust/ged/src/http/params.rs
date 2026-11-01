@@ -25,10 +25,20 @@ use super::error::ApiError;
 pub const PARAM_DEPTH_LIMIT: usize = 100;
 /// ActiveSupport's `JSON.parse` `max_nesting`.
 pub const JSON_MAX_NESTING: usize = 100;
-/// Largest form or JSON body the extractor reads into memory. Rack caps
-/// urlencoded input lower (4 MiB, 4096 keys; see `docs/migration/parity-gaps.md`),
-/// so this is the more permissive side; uploads are multipart and stream elsewhere.
-pub const BODY_LIMIT: usize = 8 * 1024 * 1024;
+/// Rack 3.2 `bytesize_limit`: the largest urlencoded body that is parsed;
+/// one byte more is a 400 (measured on the Rails stack).
+pub const FORM_BYTES_LIMIT: usize = 4 * 1024 * 1024;
+/// Rack 3.2 `params_limit`: a urlencoded body may hold at most this many
+/// `&`-separated parts (empty ones and duplicates included, `;` is not a
+/// separator); one more is a 400.
+pub const FORM_PARTS_LIMIT: usize = 4096;
+/// The web server's cap on a query string (Puma `MAX_QUERY_STRING`): one byte
+/// more is an empty 400 sent before any routing. A query has no part limit.
+pub const QUERY_BYTES_LIMIT: usize = 10 * 1024;
+/// Largest JSON body the extractor reads into memory. Rails does not cap JSON
+/// (it is parsed on demand); this is the more restrictive side, see
+/// `docs/migration/parity-gaps.md`. Uploads are multipart and stream elsewhere.
+pub const JSON_BODY_LIMIT: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParamsError {
@@ -167,6 +177,17 @@ impl RackParams {
 
     /// Parses a JSON request body the way Rails' JSON params parser does:
     /// an object is the parameter hash, anything else becomes `{"_json": …}`.
+    /// A urlencoded **body**: [`Self::parse`] after Rack's size checks.
+    pub fn parse_form_body(body: &[u8]) -> Result<Self, ParamsError> {
+        let parts = body.iter().filter(|&&b| b == b'&').count() + 1;
+        if body.len() > FORM_BYTES_LIMIT || parts > FORM_PARTS_LIMIT {
+            return Err(ParamsError::Invalid("form body over Rack's limits".into()));
+        }
+        let text = std::str::from_utf8(body)
+            .map_err(|_| ParamsError::Invalid("form body is not UTF-8".into()))?;
+        Self::parse(text)
+    }
+
     pub fn parse_json(body: &[u8]) -> Result<Self, ParamsError> {
         let cleaned = strip_json_comments(body).ok_or(ParamsError::MalformedJson)?;
         let value: serde_json::Value =
@@ -226,7 +247,7 @@ impl<S: Send + Sync> FromRequestParts<S> for RackParams {
 }
 
 /// Query **and** body: urlencoded forms and JSON are read (bounded by
-/// [`BODY_LIMIT`]); multipart bodies are not parsed here.
+/// [`FORM_BYTES_LIMIT`] / [`JSON_BODY_LIMIT`]); multipart bodies are not parsed here.
 pub struct RequestParams(pub RackParams);
 
 impl<S: Send + Sync> FromRequest<S> for RequestParams {
@@ -239,23 +260,25 @@ impl<S: Send + Sync> FromRequest<S> for RequestParams {
         if matches!(kind, BodyKind::Other) {
             return Ok(Self(query));
         }
-        let bytes = read_body(body).await?;
+        let limit = match kind {
+            BodyKind::Form => FORM_BYTES_LIMIT,
+            _ => JSON_BODY_LIMIT,
+        };
+        let bytes = read_body(body, limit).await?;
         if bytes.is_empty() {
             return Ok(Self(query));
         }
         let body_params = match kind {
             BodyKind::Json => RackParams::parse_json(&bytes)?,
-            BodyKind::Form => RackParams::parse(
-                std::str::from_utf8(&bytes).map_err(|_| ApiError::bad_request())?,
-            )?,
+            BodyKind::Form => RackParams::parse_form_body(&bytes)?,
             BodyKind::Other => return Ok(Self(query)),
         };
         Ok(Self(RackParams::merged(body_params, query)))
     }
 }
 
-async fn read_body(body: Body) -> Result<bytes::Bytes, ApiError> {
-    let limited = http_body_util::Limited::new(body, BODY_LIMIT);
+async fn read_body(body: Body, limit: usize) -> Result<bytes::Bytes, ApiError> {
+    let limited = http_body_util::Limited::new(body, limit);
     limited
         .collect()
         .await

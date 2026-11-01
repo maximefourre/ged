@@ -83,35 +83,40 @@ valeurs (`%` littéral non échappé) casserait à ce moment-là.
 Le traitement de `;` dans la requête n'a pas été observé : le port suit Rails
 (`a=1;b=2` est un seul paramètre `a` valant `1;b=2`).
 
-## Taille et nombre des paramètres urlencoded (limite de 8 Mio du Rust)
+## Taille et nombre des paramètres
 
-Le garde du Rust (`rust/ged/src/http/params.rs`, `BODY_LIMIT`) lit un corps urlencoded
-en mémoire jusqu'à **8 Mio** et répond `400 {"error":"bad request"}` au-delà, avant
-l'authentification. Rails n'a pas ce plafond-là : il en a de plus bas, observés le
-2026-11-01 sur le stack (Thruster, `POST /api/v1/documents` sans jeton, corps
-`application/x-www-form-urlencoded`) :
+Observé le 2026-11-01 sur le stack Rails (Thruster, port publié), puis reproduit à
+l'octet près par le Rust (`api_errors.rs`, `http_edge.rs`) :
 
-| Corps | Réponse Rails |
+| Entrée | Réponse Rails |
 |---|---|
-| `a=1` | 401 `missing bearer token` |
-| 4096 clés distinctes (`k0=1&k1=1…`) | 401 |
-| 4097 clés distinctes, 5000, 80 000 | **400** `{"error":"bad request"}` |
-| une clé de 4 194 304 octets (4 Mio exactement) | 401 |
-| 4 194 305 octets, 5 Mio, 8 Mio, 9 Mio | **400** `{"error":"bad request"}` |
-| 5000 clés en *query string* (`GET /up?…`) | **400** |
+| corps urlencoded de 4 194 304 octets (4 Mio pile), clé seule ou `a=` + valeur | 401 `missing bearer token` (analysé) |
+| corps urlencoded de 4 194 305 octets, 5, 8, 9 Mio | **400** `{"error":"bad request"}` (JSON sous `/api/v1`, page HTML ailleurs) |
+| corps de 4096 parties séparées par `&` (clés distinctes, doublons, `a[]`) | 401 (analysé) |
+| corps de 4097 parties | **400** |
+| `&` × 4095 puis `&` × 4096 (parties vides comptées) | 200/401 puis **400** |
+| 4097 parties séparées par `;` | 200/401 : `;` ne sépare pas, une seule partie |
+| query de 10 240 octets | analysée (200 sur `/up`) |
+| query de 10 241 octets, sur **n'importe quel chemin ou verbe** (même `/nope`, `POST /up`) | **400 à corps vide, sans `Content-Type`** |
+| query de 5000 parties (`a&a&…`, < 10 Kio) | 200 : pas de plafond de parties sur la query |
 | corps **JSON** de 9 Mio | 401 (analysé à la demande, voir plus bas) |
 
-Ce sont les limites par défaut de Rack 3.2 (`params_limit` 4096, `bytesize_limit`
-4 Mio), non surchargées dans l'app. Le Rust ne les reproduit pas : il accepte jusqu'à
-8 Mio et un nombre de clés illimité dans cette enveloppe ; entre 4 Mio et 8 Mio (ou
-au-delà de 4096 clés) Rails répond 400 là où le Rust analyse et laisse passer. L'écart
-est donc **plus permissif côté Rust**, jamais plus strict, et le statut au-delà de
-8 Mio (400) est identique. Le garde bufferise jusqu'à 8 Mio par requête avant
-l'authentification ; le coût d'analyse est linéaire (index `HashMap` dans `ParamMap`,
-voir la revue T4 B1 : 80 000 clés passaient de 4,7 s à 17 ms en release) et, au-delà de
-64 Kio, déporté sur le pool bloquant pour ne pas retenir un thread du runtime async.
-Aligner le Rust sur les plafonds de Rack (4096 clés, 4 Mio) reste possible si l'on veut
-la parité stricte ; non fait ici.
+Les plafonds du corps sont les défauts de Rack 3.2 (`bytesize_limit` 4 Mio,
+`params_limit` 4096 ; le décompte est celui de `&`), non surchargés dans l'app. Le
+plafond de la query n'est **pas** celui de Rack : c'est la limite de ligne de requête
+de Puma (10 Kio), qui répond avant Rails, d'où la réponse vide ; l'ancienne observation
+« 5000 clés en query → 400 » venait de cette limite d'octets, pas d'un compte de clés.
+Le Rust applique les trois : `FORM_BYTES_LIMIT`, `FORM_PARTS_LIMIT` et
+`QUERY_BYTES_LIMIT` (`rust/ged/src/http/params.rs`), le dernier dans la couche la plus
+externe (avant le routage). Le corps urlencoded n'est lu que si une route correspond
+(404 sur un chemin sans route, quelle que soit sa taille) ; un corps que le handler n'a
+pas lu est vidé avant de répondre (jusqu'à 64 Mio / 5 s), comme le fait le proxy, pour ne
+pas réinitialiser la connexion d'un client en train d'envoyer.
+
+Écarts restants, volontairement non reproduits : (a) un corps **JSON** est plafonné à
+8 Mio côté Rust (`JSON_BODY_LIMIT`) alors que Rails n'en a pas ; (b) les autres limites
+de Puma/Thruster sur la ligne de requête (chemin au-delà de 8192 octets → 400 vide ;
+en-têtes au-delà d'~1 Mio → 431 de Thruster) ne sont pas répliquées.
 
 ## Analyse des paramètres : ce qui est eager, ce qui est lazy
 

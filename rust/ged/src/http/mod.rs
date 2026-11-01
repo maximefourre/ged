@@ -8,7 +8,7 @@ pub mod state;
 use std::panic::AssertUnwindSafe;
 
 use axum::Router;
-use axum::body::Body;
+use axum::body::{Body, HttpBody as _};
 use axum::extract::Request;
 use axum::http::header::{CONTENT_TYPE, HeaderValue};
 use axum::http::{Method, StatusCode, Uri};
@@ -102,17 +102,14 @@ async fn guard_params(req: Request, next: Next) -> Response {
     }
     // Buffer the form to validate it, then hand the same bytes on.
     let (parts, body) = req.into_parts();
-    let limited = http_body_util::Limited::new(body, params::BODY_LIMIT);
+    let limited = http_body_util::Limited::new(body, params::FORM_BYTES_LIMIT);
     let bytes = match http_body_util::BodyExt::collect(limited).await {
         Ok(collected) => collected.to_bytes(),
         Err(_) => {
             return reject_or_unrouted(Request::from_parts(parts, Body::empty()), next, api).await;
         }
     };
-    let valid = match String::from_utf8(bytes.to_vec()) {
-        Ok(text) => parses(text).await,
-        Err(_) => false,
-    };
+    let valid = parses_form_body(bytes.clone()).await;
     if !valid {
         return reject_or_unrouted(Request::from_parts(parts, Body::empty()), next, api).await;
     }
@@ -121,7 +118,7 @@ async fn guard_params(req: Request, next: Next) -> Response {
 }
 
 /// Above this size a parse (linear, ~30 ms per MiB in release) moves to the
-/// blocking pool so that an 8 MiB pre-auth body never holds an async worker
+/// blocking pool so that a 4 MiB pre-auth body never holds an async worker
 /// thread for hundreds of milliseconds.
 const BLOCKING_PARSE_THRESHOLD: usize = 64 * 1024;
 
@@ -132,6 +129,16 @@ async fn parses(text: String) -> bool {
     }
     // A failed join (the parse panicked) is not "valid": fail closed.
     tokio::task::spawn_blocking(move || RackParams::parse(&text).is_ok())
+        .await
+        .unwrap_or(false)
+}
+
+/// Whether Rails could parse this urlencoded body (size limits included).
+async fn parses_form_body(body: bytes::Bytes) -> bool {
+    if body.len() <= BLOCKING_PARSE_THRESHOLD {
+        return RackParams::parse_form_body(&body).is_ok();
+    }
+    tokio::task::spawn_blocking(move || RackParams::parse_form_body(&body).is_ok())
         .await
         .unwrap_or(false)
 }
@@ -170,6 +177,80 @@ async fn reject_or_unrouted(req: Request, next: Next, api: bool) -> Response {
 /// reaches the client as anything but the JSON error contract, and no
 /// internal detail is ever put in the body.
 async fn shield(req: Request, next: Next) -> Response {
+    let (req, unread) = share_body(req);
+    let response = shield_inner(req, next).await;
+    drain(unread).await;
+    response
+}
+
+/// The request body, shared so that [`drain`] can finish reading what a
+/// handler left unread. Answering a request early (a 404 on a path that reads
+/// nothing, say) while the client is still sending a large body would reset
+/// the connection under it; the proxy in front of Rails reads it out, and so
+/// does this.
+type SharedBody = std::sync::Arc<std::sync::Mutex<Body>>;
+
+struct Shared(SharedBody);
+
+impl axum::body::HttpBody for Shared {
+    type Data = bytes::Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        let mut body = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        std::pin::Pin::new(&mut *body).poll_frame(cx)
+    }
+}
+
+fn share_body(req: Request) -> (Request, SharedBody) {
+    let (parts, body) = req.into_parts();
+    let shared: SharedBody = std::sync::Arc::new(std::sync::Mutex::new(body));
+    (
+        Request::from_parts(parts, Body::new(Shared(shared.clone()))),
+        shared,
+    )
+}
+
+/// Longest wait, and most bytes, spent reading out an unread body.
+const DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const DRAIN_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+async fn drain(unread: SharedBody) {
+    let read_out = async {
+        let mut total = 0usize;
+        loop {
+            let frame = std::future::poll_fn(|cx| {
+                let mut body = unread.lock().unwrap_or_else(|e| e.into_inner());
+                std::pin::Pin::new(&mut *body).poll_frame(cx)
+            })
+            .await;
+            match frame {
+                Some(Ok(frame)) => {
+                    total += frame.data_ref().map_or(0, |d| d.len());
+                    if total > DRAIN_MAX_BYTES {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+    };
+    let _ = tokio::time::timeout(DRAIN_TIMEOUT, read_out).await;
+}
+
+async fn shield_inner(req: Request, next: Next) -> Response {
+    // The web server in front of Rails refuses an over-long query before any
+    // routing: an empty 400 with no content type, whatever path or verb.
+    if req
+        .uri()
+        .query()
+        .is_some_and(|q| q.len() > params::QUERY_BYTES_LIMIT)
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     let api = is_api(req.uri());
     let response = match AssertUnwindSafe(next.run(req)).catch_unwind().await {
         Ok(response) => response,

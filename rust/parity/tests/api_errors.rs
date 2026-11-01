@@ -13,7 +13,11 @@
 //! - that routing miss comes before the parameter check: an unparsable query
 //!   on a verb the route does not serve is the 404, not a 400;
 //! - shapes that are odd but parseable (`limit[]=1`, last duplicate wins, …)
-//!   are not errors.
+//!   are not errors;
+//! - input size, measured at both edges of each limit: an urlencoded body is
+//!   capped at 4 MiB and 4096 `&`-separated parts (Rack 3.2 defaults), the
+//!   query string at 10 240 bytes (the web server's own line limit, which
+//!   answers before Rails with an empty 400) and has no part-count limit.
 //!
 //! Not asserted here, on purpose: a `%` that is not followed by two hex
 //! digits. The Rails stack answers 200 because its front proxy drops the
@@ -154,4 +158,132 @@ async fn api_errors_an_unparsable_form_body_on_an_unrouted_path_is_still_a_404()
         )
         .await;
     assert_error(&resp, 404, "not found");
+}
+
+// --- input size ------------------------------------------------------------
+//
+// Observed on the Rails stack (2026-11-01, through Thruster):
+//   body, 4 MiB exactly            -> parsed        (4 MiB + 1 byte -> 400)
+//   body, 4096 `&`-separated parts -> parsed        (4097 parts     -> 400)
+//   query, 10 240 bytes            -> parsed        (10 241 bytes   -> 400,
+//                                     empty body, no content-type)
+//   query, 5000 parts in < 10 KiB  -> parsed (no part-count limit)
+// A body is only read once a route matches, so `GET /up` with a form body
+// stands in for a routed business endpoint (Rack parses a GET form too).
+
+const FORM: [(&str, &str); 1] = [("Content-Type", "application/x-www-form-urlencoded")];
+const MIB4: usize = 4 * 1024 * 1024;
+const QUERY_MAX: usize = 10 * 1024;
+
+fn parts(n: usize) -> String {
+    vec!["a"; n].join("&")
+}
+
+async fn form_get(api: &Api, path: &str, body: String) -> parity::http::Resp {
+    api.send(Method::GET, path, &FORM, Some(body.into_bytes()))
+        .await
+}
+
+#[tokio::test]
+async fn api_errors_a_form_body_of_exactly_4_mib_is_parsed_and_one_more_byte_is_a_400() {
+    let api = api().await;
+    assert_status(&form_get(&api, "/up", "k".repeat(MIB4)).await, 200);
+    let over = form_get(&api, "/up", "k".repeat(MIB4 + 1)).await;
+    assert_status(&over, 400);
+    let content_type = over.header("content-type").unwrap_or_default();
+    assert!(content_type.starts_with("text/html"), "{content_type}");
+    // `a=` + value, so the limit is on bytes, not on the key.
+    assert_status(
+        &form_get(&api, "/up", format!("a={}", "x".repeat(MIB4 - 2))).await,
+        200,
+    );
+    assert_status(
+        &form_get(&api, "/up", format!("a={}", "x".repeat(MIB4 - 1))).await,
+        400,
+    );
+}
+
+#[tokio::test]
+async fn api_errors_a_form_body_of_4096_parts_is_parsed_and_4097_is_a_400() {
+    let api = api().await;
+    for (body, expected, what) in [
+        (parts(4095), 200, "4095 parts"),
+        (parts(4096), 200, "4096 parts"),
+        (parts(4097), 400, "4097 parts"),
+        // every `&` counts, empty parts and duplicates included
+        ("&".repeat(4095), 200, "4095 `&`"),
+        ("&".repeat(4096), 400, "4096 `&`"),
+        (vec!["a=1"; 4096].join("&"), 200, "4096 duplicate keys"),
+        (vec!["a=1"; 4097].join("&"), 400, "4097 duplicate keys"),
+        (vec!["a[]=1"; 4097].join("&"), 400, "4097 array items"),
+        // only `&` separates for this count: `;` does not
+        (vec!["a"; 4097].join(";"), 200, "4097 `;`-separated"),
+    ] {
+        let resp = form_get(&api, "/up", body).await;
+        assert_eq!(resp.status, expected, "{what}");
+    }
+}
+
+#[tokio::test]
+async fn api_errors_the_form_size_limits_never_turn_an_unrouted_path_into_a_400() {
+    let api = api().await;
+    for path in ["/nope", "/api/v1/nope"] {
+        for body in ["k".repeat(MIB4 + 1), parts(4097)] {
+            assert_status(&form_get(&api, path, body).await, 404);
+        }
+    }
+    // and only a *form* is subject to them
+    let json = api
+        .send(
+            Method::GET,
+            "/up",
+            &[("Content-Type", "application/json")],
+            Some(vec![b' '; MIB4 + 1]),
+        )
+        .await;
+    assert_status(&json, 200);
+}
+
+#[tokio::test]
+async fn api_errors_a_query_of_10240_bytes_is_parsed_and_one_more_byte_is_an_empty_400() {
+    let api = api().await;
+    assert_status(
+        &api.get(&format!("/up?{}", "k".repeat(QUERY_MAX)), &[])
+            .await,
+        200,
+    );
+    for path in ["/up", "/nope", "/api/v1/nope", "/api/v1/documents"] {
+        let resp = api
+            .get(&format!("{path}?{}", "k".repeat(QUERY_MAX + 1)), &[])
+            .await;
+        assert_status(&resp, 400);
+        assert!(resp.body.is_empty(), "{path}: {:?}", resp.text());
+        assert_eq!(resp.header("content-type"), None, "{path}");
+    }
+    // the server rejects before any routing, so the verb does not matter
+    for verb in [Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
+        let resp = api
+            .send(
+                verb.clone(),
+                &format!("/up?{}", "k".repeat(QUERY_MAX + 1)),
+                &[],
+                None,
+            )
+            .await;
+        assert_status(&resp, 400);
+        assert!(resp.body.is_empty(), "{verb}");
+    }
+}
+
+#[tokio::test]
+async fn api_errors_a_query_has_no_part_count_limit_below_its_byte_limit() {
+    let api = api().await;
+    for n in [4096, 4097, 5000] {
+        assert_status(&api.get(&format!("/up?{}", parts(n)), &[]).await, 200);
+    }
+    assert_status(
+        &api.get(&format!("/up?{}", "&".repeat(QUERY_MAX)), &[])
+            .await,
+        200,
+    );
 }

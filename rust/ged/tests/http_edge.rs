@@ -178,35 +178,121 @@ async fn wrong_verb_outside_the_api_is_a_404_page_not_a_405() {
 /// Pre-auth DoS guard, end to end: the guard buffers and parses an urlencoded
 /// body before any handler or authentication, so many distinct keys must not
 /// cost quadratic time (80 000 keys took ~4.9 s in release before the index).
+/// Rack caps a form at 4096 parts, so the largest body that is still parsed
+/// has 4096 keys and anything bigger is refused without being parsed at all.
 #[tokio::test]
 async fn a_form_body_of_many_distinct_keys_is_guarded_in_linear_time() {
-    let body = (0..80_000)
-        .map(|i| format!("k{i}=1"))
-        .collect::<Vec<_>>()
-        .join("&");
+    let form = Some("application/x-www-form-urlencoded");
+    let keys = |n: usize| {
+        (0..n)
+            .map(|i| format!("k{i}=1"))
+            .collect::<Vec<_>>()
+            .join("&")
+    };
     let started = std::time::Instant::now();
     let r = request(
         "POST",
         "/admin/probe",
-        Some("application/x-www-form-urlencoded"),
-        &format!("{body}&name=x"),
+        form,
+        &format!("{}&name=x", keys(4095)),
     )
     .await;
+    let refused = request("POST", "/admin/probe", form, &keys(80_000)).await;
     let elapsed = started.elapsed();
-    eprintln!("guard of 80000 distinct keys: {elapsed:?}");
+    eprintln!("guard of 4096 then 80000 distinct keys: {elapsed:?}");
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(r.body, r#"name=Some("x")"#);
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
     assert!(elapsed < std::time::Duration::from_secs(5), "{elapsed:?}");
 }
 
+const FORM: Option<&str> = Some("application/x-www-form-urlencoded");
+const MIB4: usize = 4 * 1024 * 1024;
+
+fn is_bad_request_json(r: &support::Reply) -> bool {
+    r.status == StatusCode::BAD_REQUEST
+        && r.content_type == JSON_CT
+        && r.body == r#"{"error":"bad request"}"#
+}
+
+/// Rack 3.2 (measured on the Rails stack): 4096 `&`-separated parts are
+/// parsed, 4097 are a 400 — every `&` counts, empty parts included.
 #[tokio::test]
-async fn an_unserved_verb_with_an_unparsable_query_is_a_404_not_a_400() {
-    for uri in ["/up?a=%ff", "/up?a=1&a[b]=2"] {
-        for method in ["POST", "PUT", "PATCH", "DELETE"] {
-            let r = request(method, uri, None, "").await;
-            assert_eq!(r.status, StatusCode::NOT_FOUND, "{method} {uri}");
-        }
+async fn a_form_body_is_capped_at_4096_parts() {
+    let at = format!("name=x{}", "&a".repeat(4095));
+    let r = request("POST", "/api/v1/probe", FORM, &at).await;
+    assert_eq!(r.body, r#"name=Some("x")"#);
+    let over = format!("name=x{}", "&a".repeat(4096));
+    assert!(is_bad_request_json(
+        &request("POST", "/api/v1/probe", FORM, &over).await
+    ));
+    // empty parts count; `;` does not separate
+    let amps = "&".repeat(4095);
+    assert_eq!(
+        request("POST", "/api/v1/probe", FORM, &amps).await.status,
+        StatusCode::OK
+    );
+    let amps = "&".repeat(4096);
+    assert!(is_bad_request_json(
+        &request("POST", "/api/v1/probe", FORM, &amps).await
+    ));
+    let semis = format!("name=x{}", ";a".repeat(5000));
+    assert_eq!(
+        request("POST", "/api/v1/probe", FORM, &semis).await.status,
+        StatusCode::OK
+    );
+    // outside the API: the HTML 400, not JSON
+    let r = request("POST", "/admin/probe", FORM, &over).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert!(
+        r.content_type.starts_with("text/html"),
+        "{}",
+        r.content_type
+    );
+}
+
+/// Rack 3.2 (measured): a form of exactly 4 MiB is parsed, one byte more is a
+/// 400 (JSON under the API) — before the handler, on the guard and the extractor.
+#[tokio::test]
+async fn a_form_body_is_capped_at_4_mib() {
+    let at = format!("name={}", "x".repeat(MIB4 - 5));
+    assert_eq!(at.len(), MIB4);
+    let r = request("POST", "/api/v1/probe", FORM, &at).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.starts_with("name=Some(\"xxx"), "{}", &r.body[..40]);
+    let over = format!("{at}x");
+    assert!(is_bad_request_json(
+        &request("POST", "/api/v1/probe", FORM, &over).await
+    ));
+    assert_eq!(
+        request("POST", "/admin/probe", FORM, &over).await.status,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+/// The query is limited by the web server in front of Rails (Puma: 10 240
+/// bytes), which answers before routing with an empty 400 — no content type,
+/// whatever the path or verb. There is no part-count limit on a query.
+#[tokio::test]
+async fn a_query_is_capped_at_10240_bytes_with_an_empty_400() {
+    let at = "k".repeat(10 * 1024);
+    assert_eq!(get_(&format!("/up?{at}")).await.status, StatusCode::OK);
+    let over = format!("{at}k");
+    for (method, path) in [
+        ("GET", "/up"),
+        ("GET", "/api/v1/probe"),
+        ("GET", "/nope"),
+        ("GET", "/api/v1/nope"),
+        ("POST", "/up"),
+        ("DELETE", "/api/v1/probe"),
+    ] {
+        let r = request(method, &format!("{path}?{over}"), None, "").await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{method} {path}");
+        assert_eq!(r.body, "", "{method} {path}");
+        assert_eq!(r.content_type, "", "{method} {path}");
     }
-    // The served verb still gets the parameter check.
-    assert_eq!(get_("/up?a=%ff").await.status, StatusCode::BAD_REQUEST);
+    let many = "a&".repeat(5000);
+    assert_eq!(get_(&format!("/up?{many}")).await.status, StatusCode::OK);
+    let amps = "&".repeat(10 * 1024);
+    assert_eq!(get_(&format!("/up?{amps}")).await.status, StatusCode::OK);
 }
