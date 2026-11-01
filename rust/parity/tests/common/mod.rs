@@ -435,6 +435,46 @@ fn strip_tags(html: &str) -> String {
     out
 }
 
+/// Words inside the `.queue` banner, tags removed. The badge and the
+/// Pause/Resume control are visible labels; the tags around them are not.
+pub fn queue_words(html: &str) -> Vec<String> {
+    let Some(start) = html.find("class=\"queue") else {
+        return Vec::new();
+    };
+    let after = &html[start..];
+    let content_at = after.find('>').map_or(0, |i| i + 1);
+    let rest = &after[content_at..];
+    let end = rest.find("</div>").unwrap_or(rest.len());
+    strip_tags(&rest[..end])
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+pub fn queue_has_word(html: &str, word: &str) -> bool {
+    queue_words(html).iter().any(|w| w == word)
+}
+
+/// Tag-stripped body with whitespace collapsed, so a count and its label
+/// read as one phrase (`3 pending requests`).
+pub fn visible_text(html: &str) -> String {
+    let mut out = String::new();
+    let mut space = false;
+    for c in strip_tags(html).chars() {
+        if c.is_whitespace() {
+            space = true;
+        } else {
+            if space && !out.is_empty() {
+                out.push(' ');
+            }
+            space = false;
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn excerpt(body: &str) -> String {
     let max = 800;
     if body.chars().count() <= max {
@@ -573,7 +613,7 @@ pub async fn access_id(db: &sqlx::PgPool, client_id: i64, department_id: i64) ->
 
 pub async fn ensure_queue_active(admin: &AdminSession) {
     let page = admin.get("/admin/upload_requests").await;
-    if page.status == 200 && page.text().contains(">Resume<") {
+    if page.status == 200 && queue_has_word(&page.text(), "Resume") {
         let resp = admin
             .submit(Method::DELETE, "/admin/upload_queue_pause", &[])
             .await;

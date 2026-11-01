@@ -125,11 +125,15 @@ async fn admin_resaving_keeps_an_untouched_grant_to_a_trashed_department() {
 #[tokio::test]
 async fn admin_app_clients_index_shows_an_empty_state_when_there_are_no_clients() {
     let w = AdminWorld::new().await;
+    // The empty copy is the unfiltered index. AdminWorld holds SuiteLock, so
+    // this reset is exclusive among admin tests and does not depend on a
+    // freshly seeded stack. Other tests keep isolating with unique names.
+    w.backend.reset().await.expect("reset business tables");
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM app_clients")
         .fetch_one(w.db())
         .await
         .unwrap();
-    assert_eq!(n, 0, "shared stack still has app clients; cleanup leaked");
+    assert_eq!(n, 0, "reset left app clients behind");
     let page = w.admin.get("/admin/app_clients").await;
     assert_eq!(page.status, 200);
     assert_see(&page, "No registered clients.");

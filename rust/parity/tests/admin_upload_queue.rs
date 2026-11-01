@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{AdminWorld, assert_login_redirect, assert_see, name};
+use common::{AdminWorld, assert_login_redirect, assert_see, name, queue_has_word, queue_words};
 use parity::admin::{AdminSession, csrf_token};
 use reqwest::Method;
 
@@ -34,14 +34,7 @@ async fn admin_upload_queue_pauses_and_resumes() {
         paused.header("location")
     );
     assert_see(&during, "Upload queue paused.");
-    assert!(
-        during.text().contains(">paused<"),
-        "banner did not show paused"
-    );
-    assert!(
-        during.text().contains(">Resume<"),
-        "banner did not offer Resume"
-    );
+    assert_banner(&during.text(), "paused", "Resume");
 
     assert!(
         matches!(resumed.status, 302 | 303),
@@ -57,14 +50,7 @@ async fn admin_upload_queue_pauses_and_resumes() {
         resumed.header("location")
     );
     assert_see(&after, "Upload queue resumed.");
-    assert!(
-        after.text().contains(">active<"),
-        "banner did not show active"
-    );
-    assert!(
-        after.text().contains(">Pause<"),
-        "banner did not offer Pause"
-    );
+    assert_banner(&after.text(), "active", "Pause");
 }
 
 #[tokio::test]
@@ -81,7 +67,7 @@ async fn admin_upload_queue_banner_reflects_state_and_request_counts() {
 
     let page = w.admin.get("/admin/upload_requests").await;
     assert_eq!(page.status, 200, "{}", page.text());
-    assert!(page.text().contains(">active<"), "banner was not active");
+    assert_banner(&page.text(), "active", "Pause");
     assert_see(&page, &format!("{pending} pending"));
 
     let paused = w
@@ -99,14 +85,7 @@ async fn admin_upload_queue_banner_reflects_state_and_request_counts() {
         "pause: HTTP {}",
         paused.status
     );
-    assert!(
-        during.text().contains(">paused<"),
-        "banner did not show paused"
-    );
-    assert!(
-        during.text().contains(">Resume<"),
-        "banner did not offer Resume"
-    );
+    assert_banner(&during.text(), "paused", "Resume");
 }
 
 #[tokio::test]
@@ -124,9 +103,22 @@ async fn admin_upload_queue_pause_requires_an_admin_session() {
 
     let page = w.admin.get("/admin/upload_requests").await;
     assert_eq!(page.status, 200, "{}", page.text());
+    assert_banner(&page.text(), "active", "Pause");
     assert!(
-        page.text().contains(">Pause<") && !page.text().contains(">Resume<"),
-        "anonymous POST paused the queue:\n{}",
-        page.text()
+        !queue_has_word(&page.text(), "Resume"),
+        "anonymous POST paused the queue: {:?}",
+        queue_words(&page.text())
+    );
+}
+
+fn assert_banner(body: &str, state: &str, action: &str) {
+    let words = queue_words(body);
+    assert!(
+        queue_has_word(body, state),
+        "banner did not show {state}, words={words:?}"
+    );
+    assert!(
+        queue_has_word(body, action),
+        "banner did not offer {action}, words={words:?}"
     );
 }

@@ -8,7 +8,7 @@ mod common;
 
 use common::{
     AdminWorld, admin_upload as upload, assert_login_redirect, assert_see, name, pdf_bytes,
-    td_texts, tr_containing,
+    queue_has_word, queue_words, td_texts, tr_containing, visible_text,
 };
 use parity::admin::AdminSession;
 use reqwest::Method;
@@ -57,7 +57,17 @@ async fn admin_status_renders_the_three_sections_with_live_counts() {
             || body.contains("serving stale keys"),
         "JWKS detail is outside the closed set SystemHealth emits:\n{body}"
     );
-    assert_see(&page, "pending");
+    let pending: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM upload_requests WHERE status = 'pending'")
+            .fetch_one(w.db())
+            .await
+            .expect("pending count");
+    assert!(pending >= 1, "the pending fixture is missing");
+    let visible = visible_text(&body);
+    assert!(
+        visible.contains(&format!("{pending} pending requests")),
+        "pipeline count is not the live pending total {pending}: {visible}"
+    );
     assert_see(&page, &dept_name);
 }
 
@@ -79,27 +89,26 @@ async fn admin_status_reflects_the_uploads_queue_pause_state() {
         .await;
     let after = w.admin.get("/admin/status").await;
 
-    assert!(
-        before.text().contains(">active<"),
-        "queue badge was not active"
-    );
+    assert_queue_state(&before.text(), "active");
     assert!(
         matches!(paused.status, 302 | 303),
         "pause: HTTP {}",
         paused.status
     );
-    assert!(
-        during.text().contains(">paused<"),
-        "status page did not show paused"
-    );
+    assert_queue_state(&during.text(), "paused");
     assert!(
         matches!(resumed.status, 302 | 303),
         "resume: HTTP {}",
         resumed.status
     );
+    assert_queue_state(&after.text(), "active");
+}
+
+fn assert_queue_state(body: &str, state: &str) {
     assert!(
-        after.text().contains(">active<"),
-        "queue badge stayed paused"
+        queue_has_word(body, state),
+        "queue banner did not show {state}, words={:?}",
+        queue_words(body)
     );
 }
 

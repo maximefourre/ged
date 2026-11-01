@@ -450,11 +450,15 @@ async fn admin_departments_index_greys_a_trashed_department_and_offers_restore()
 #[tokio::test]
 async fn admin_departments_index_shows_an_empty_state_when_there_are_no_departments() {
     let w = AdminWorld::new().await;
+    // The empty copy is the unfiltered index. AdminWorld holds SuiteLock, so
+    // this reset is exclusive among admin tests and does not depend on a
+    // freshly seeded stack. Other tests keep isolating with unique names.
+    w.backend.reset().await.expect("reset business tables");
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM departments")
         .fetch_one(w.db())
         .await
         .unwrap();
-    assert_eq!(n, 0, "shared stack still has departments; cleanup leaked");
+    assert_eq!(n, 0, "reset left departments behind");
     let page = w.admin.get("/admin/departments").await;
     assert_eq!(page.status, 200);
     assert_see(&page, "No departments yet.");
