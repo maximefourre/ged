@@ -20,9 +20,14 @@ serde_json = { version = "1.0.154", features = ["preserve_order"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
 uuid = "1.29.0"
+opentelemetry = "0.33"
+opentelemetry_sdk = "0.33"
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace", "metrics"] }
+regex = "1"
 
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3.27.0"
 tower = { version = "0.5", features = ["util"] }
 uuid = { version = "1.29.0", features = ["v7"] }
+opentelemetry_sdk = { version = "0.33", features = ["testing"] }

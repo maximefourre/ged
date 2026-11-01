@@ -5,5 +5,6 @@ pub mod db;
 pub mod domain;
 pub mod http;
 pub mod seed;
+pub mod telemetry;
 
 pub use http::{AppState, router, router_with};

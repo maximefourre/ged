@@ -25,6 +25,7 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    let _telemetry = ged::telemetry::install_from_env();
     let cli = Cli::parse();
     let name = match cli.command {
         Command::Serve => "serve",
@@ -70,7 +71,11 @@ async fn serve() -> Result<(), Failure> {
     let pool = db::connect_lazy(database_url(&config)?)?;
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".into());
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
-    axum::serve(listener, ged::router(AppState::new(config, pool))).await?;
+    axum::serve(
+        listener,
+        ged::telemetry::wrap(ged::router(AppState::new(config, pool))),
+    )
+    .await?;
     Ok(())
 }
 
