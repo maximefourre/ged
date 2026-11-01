@@ -287,3 +287,14 @@ réécriture de `AGENTS.md`, `docs/architecture/c4.md`.
 - [ ] ADR de clôture dans codebase memory, réindexation.
 - [ ] Vérifier : `bin/ci` vert sans Rails, `bin/worktree-stack up` prêt pour ta
   validation. Le merge vers `main` attend ta confirmation explicite.
+
+## Reports de la relecture de la vague 3
+
+- **T4 :** ajouter l'adaptateur `GED_BACKEND=rust`, sortir les détails Rails hors de
+  l'adaptateur (`security_purge.rs`, `assert_rails_*`, message de `admin_documents.rs`).
+  Noter dans `parity-gaps.md` l'état JWKS admis par `admin_status.rs`. Renforcer les
+  trois tests de `admin_departments.rs` qui ne vérifient pas le statut.
+- **T6/T9 :** test unitaire de suppression physique du fichier à la purge.
+- **T7 :** test d'upload exactement à la limite, 413 à corps vide reproduit et documenté
+  dans `docs/api/openapi.yaml`.
+- **T9 :** cas SSRF `999.1.1.1` et `[::1]`.
