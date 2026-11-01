@@ -1,0 +1,21 @@
+[package]
+name = "parity"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Black-box parity suite: HTTP + business-table SQL, backend-independent"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = "0.1.92"
+base64 = "0.23.1"
+chrono = "0.4.45"
+jsonwebtoken = { version = "11.1.0", features = ["rust_crypto"] }
+regex = "1.13.1"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "cookies", "multipart", "form"] }
+serde_json = "1.0.154"
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync"] }
+uuid = { version = "1.29.0", features = ["v4"] }
