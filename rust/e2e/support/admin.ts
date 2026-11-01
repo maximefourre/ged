@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { crc32, inflateRawSync } from 'node:zlib';
 
-export const PDF_PATH = path.resolve(__dirname, '../../../test/fixtures/files/report.pdf');
+/** Upload bytes owned by this suite. Do not point at Rails `test/fixtures` (removed in T16). */
+export const PDF_PATH = path.resolve(__dirname, '../fixtures/report.pdf');
 
 /** Prefix plus 8 hex chars, so parallel leftovers on a shared stack cannot collide. */
 export function unique(prefix: string): string {
@@ -52,11 +53,23 @@ export function deptRow(page: Page, name: string): Locator {
 
 /** Accept the next `window.confirm`. Register this before the click. */
 export function armConfirm(page: Page, message: string): Promise<void> {
+  return armDialog(page, message, (dialog) => dialog.accept());
+}
+
+/** Refuse the next `window.confirm`. Register this before the click. */
+export function armDismiss(page: Page, message: string): Promise<void> {
+  return armDialog(page, message, (dialog) => dialog.dismiss());
+}
+
+function armDialog(
+  page: Page,
+  message: string,
+  settle: (dialog: { accept: () => Promise<void>; dismiss: () => Promise<void> }) => Promise<void>,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     page.once('dialog', (dialog) => {
       const seen = dialog.message();
-      dialog
-        .accept()
+      settle(dialog)
         .then(() => {
           if (seen !== message) {
             reject(new Error(`confirm was ${JSON.stringify(seen)}, expected ${JSON.stringify(message)}`));

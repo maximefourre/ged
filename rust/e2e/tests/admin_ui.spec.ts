@@ -7,12 +7,14 @@
  * AdminSession::cached (see global-setup.ts); the three login-form tests
  * sign in themselves and never log out the cached session.
  */
-import { expect, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { test } from '../fixtures';
 import {
   adminPassword,
   adminUsername,
   armConfirm,
+  armDismiss,
   createDepartment,
   deptRow,
   docRow,
@@ -31,6 +33,43 @@ const anonymous = { cookies: [], origins: [] };
 
 function pdfFile(name: string): UploadFile {
   return { name, mimeType: 'application/pdf', buffer: pdfBytes() };
+}
+
+/** Document id from the row's Download link, not from `data-preview-url`. */
+async function documentId(row: Locator): Promise<string> {
+  const href = await row.getByRole('link', { name: 'Download' }).getAttribute('href');
+  const id = href?.match(/\/admin\/documents\/([^/]+)\/download\/?$/)?.[1];
+  expect(id, `Download href ${JSON.stringify(href)}`).toBeTruthy();
+  return id!;
+}
+
+function previewPath(id: string): RegExp {
+  return new RegExp(`/admin/documents/${id}/preview/?$`);
+}
+
+/** Preview URL shape plus the bytes the endpoint actually returns. */
+async function expectServedPreview(
+  page: Page,
+  src: string | null,
+  id: string,
+  contentType: RegExp,
+  bytes: Buffer,
+): Promise<void> {
+  expect(src).toMatch(previewPath(id));
+  const response = await page.request.get(src!);
+  expect(response.status()).toBe(200);
+  expect(response.headers()['content-type'] ?? '').toMatch(contentType);
+  expect(Buffer.from(await response.body())).toEqual(bytes);
+}
+
+/** Click, then read the file the browser saved. */
+async function downloadBytes(page: Page, click: () => Promise<void>): Promise<Buffer> {
+  const pending = page.waitForEvent('download');
+  await click();
+  const download = await pending;
+  const filePath = await download.path();
+  expect(filePath, 'browser download path').toBeTruthy();
+  return readFileSync(filePath!);
 }
 
 async function openRowPreview(page: Page, filename: string): Promise<void> {
@@ -223,13 +262,20 @@ test.describe('authenticated admin', () => {
     await uploadDocument(page, finance, pdfFile(filename));
 
     const row = docRow(page, filename);
-    const previewUrl = await row.getAttribute('data-preview-url');
+    const id = await documentId(row);
+    expect(await row.getAttribute('data-preview-url')).toMatch(previewPath(id));
     expect(await row.getAttribute('data-content-type')).toBe('application/pdf');
     await openRowPreview(page, filename);
 
     const frame = page.locator('.doc-preview iframe.doc-preview-frame');
     await expect(frame).toBeVisible();
-    expect(await frame.getAttribute('src')).toContain(previewUrl);
+    await expectServedPreview(
+      page,
+      await frame.getAttribute('src'),
+      id,
+      /^application\/pdf(?:;|$)/i,
+      pdfBytes(),
+    );
     expect(await frame.getAttribute('sandbox')).toBeNull();
   });
 
@@ -240,13 +286,14 @@ test.describe('authenticated admin', () => {
     await uploadDocument(page, finance, { name: filename, mimeType: 'image/png', buffer: pngBytes() });
 
     const row = docRow(page, filename);
-    const previewUrl = await row.getAttribute('data-preview-url');
+    const id = await documentId(row);
+    expect(await row.getAttribute('data-preview-url')).toMatch(previewPath(id));
     expect(await row.getAttribute('data-content-type')).toBe('image/png');
     await openRowPreview(page, filename);
 
     const img = page.locator('.doc-preview img.doc-preview-img');
     await expect(img).toBeVisible();
-    expect(await img.getAttribute('src')).toContain(previewUrl);
+    await expectServedPreview(page, await img.getAttribute('src'), id, /^image\/png(?:;|$)/i, pngBytes());
     await expect(page.locator('.doc-preview iframe')).toHaveCount(0);
   });
 
@@ -290,8 +337,22 @@ test.describe('authenticated admin', () => {
     await createDepartment(page, finance);
     await uploadDocument(page, finance, pdfFile(filename));
 
-    await docRow(page, filename).getByRole('link', { name: 'Tags' }).click();
+    const row = docRow(page, filename);
+    const saved = await downloadBytes(page, () => row.getByRole('link', { name: 'Download' }).click());
+    expect(saved).toEqual(pdfBytes());
+    await expect(page).toHaveURL(/\/admin\/documents\/?$/);
+    await expect(page.locator('.doc-split.is-open')).toHaveCount(0);
+    await expect(row).toBeVisible();
 
+    const dismissed = armDismiss(page, `Delete ${filename}?`);
+    await row.getByRole('button', { name: 'Delete' }).click();
+    await dismissed;
+    await expect(page).toHaveURL(/\/admin\/documents\/?$/);
+    await expect(page.locator('.doc-split.is-open')).toHaveCount(0);
+    await expect(docRow(page, filename)).toBeVisible();
+    await expect(page.getByText('Document moved to trash.')).toHaveCount(0);
+
+    await docRow(page, filename).getByRole('link', { name: 'Tags' }).click();
     await expect(page).toHaveURL(/\/admin\/documents\/[^/]+\/edit/);
     await expect(page.locator('.doc-split.is-open')).toHaveCount(0);
   });
@@ -337,20 +398,26 @@ test.describe('authenticated admin', () => {
     await filterDocuments(page, { department: finance });
     await expect(page.locator('tr[data-doc-row]')).toHaveCount(2);
     await page.locator('#select-all').check();
+    const boxes = page.locator('tr[data-doc-row] .row-select');
+    await expect(boxes).toHaveCount(2);
+    await expect(boxes.nth(0)).toBeChecked();
+    await expect(boxes.nth(1)).toBeChecked();
+    await expect(page.getByRole('button', { name: 'Download ZIP' })).toBeEnabled();
+
     const selected = await page.locator('tr[data-doc-row]').evaluateAll((rows) =>
       rows.map((row) => {
         const box = row.querySelector('.row-select') as HTMLInputElement | null;
         const id = box?.value ?? '';
         const filename = row.getAttribute('data-filename') ?? '';
-        return { id, entry: `${id}-${filename}` };
+        return { id, entry: `${id}-${filename}`, checked: box?.checked === true };
       }),
     );
+    expect(selected.every((row) => row.checked && row.id.length > 0)).toBe(true);
 
-    const params = new URLSearchParams();
-    for (const row of selected) params.append('document_ids[]', row.id);
-    const response = await page.request.get(`/admin/documents/bulk_download?${params.toString()}`);
-    expect(response.status()).toBe(200);
-    const entries = unzip(Buffer.from(await response.body()));
+    const entries = unzip(
+      await downloadBytes(page, () => page.getByRole('button', { name: 'Download ZIP' }).click()),
+    );
+    expect(entries.size).toBe(2);
     for (const row of selected) {
       expect(entries.has(row.entry), `expected entry ${row.entry}, got ${[...entries.keys()].join(', ')}`).toBe(
         true,
@@ -379,6 +446,16 @@ test.describe('authenticated admin', () => {
     await expect(page.getByRole('button', { name: 'Trash department and its documents' })).toBeVisible();
     await expect(page.getByRole('heading', { level: 1, name: `Delete ${finance}` })).toBeVisible();
 
+    const listing = await page.context().newPage();
+    try {
+      await listing.goto('/admin/departments');
+      const live = deptRow(listing, finance);
+      await expect(live).toHaveCount(1);
+      expect(await live.getAttribute('class') ?? '').not.toContain('trashed');
+    } finally {
+      await listing.close();
+    }
+
     await page.getByRole('button', { name: 'Trash department and its documents' }).click();
 
     const trashed = page.locator('tr.trashed', { hasText: finance });
@@ -389,6 +466,11 @@ test.describe('authenticated admin', () => {
 
     await expect(page.locator('tr.trashed', { hasText: finance })).toHaveCount(0);
     await expect(deptRow(page, finance).getByRole('link', { name: 'Rename' })).toBeVisible();
+
+    await page.goto('/admin/documents');
+    await page.locator('input[name="filename"]').fill(filename);
+    await page.getByRole('button', { name: 'Filter' }).click();
+    await expect(docRow(page, filename)).toBeVisible();
   });
 });
 
