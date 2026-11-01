@@ -294,8 +294,8 @@ async fn api_async_metadata_is_null_while_pending_and_populated_once_completed()
     let done = poll_upload(&w.api, &w.token, &request_id, "completed").await;
     let meta = &done["metadata"];
     assert_eq!(meta["upload_mode"], json!("async"));
-    common::assert_rails_time(&meta["uploaded_at"]);
-    common::assert_rails_time(&meta["updated_at"]);
+    common::assert_api_time(&meta["uploaded_at"]);
+    common::assert_api_time(&meta["updated_at"]);
 }
 
 #[tokio::test]
@@ -310,8 +310,8 @@ async fn api_polling_payload_carries_the_document_metadata() {
     let request_id = resp.json()["request_id"].as_str().expect("id").to_owned();
     let done = poll_upload(&w.api, &w.token, &request_id, "completed").await;
     assert_eq!(done["metadata"]["upload_mode"], json!("async"));
-    common::assert_rails_time(&done["metadata"]["uploaded_at"]);
-    common::assert_rails_time(&done["metadata"]["updated_at"]);
+    common::assert_api_time(&done["metadata"]["uploaded_at"]);
+    common::assert_api_time(&done["metadata"]["updated_at"]);
 }
 
 #[tokio::test]

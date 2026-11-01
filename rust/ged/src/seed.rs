@@ -1,9 +1,9 @@
 //! `ged seed`: port of `db/seeds.rb`. Idempotent, and keeps the admin
 //! password in step with `GED_ADMIN_PASSWORD`.
 
+use argon2::Argon2;
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
-use argon2::Argon2;
 use sqlx::PgPool;
 
 use crate::config::{Config, Environment};
@@ -42,8 +42,11 @@ fn hash(password: &str) -> Result<String, SeedError> {
 }
 
 fn matches(stored: &str, password: &str) -> bool {
-    PasswordHash::new(stored)
-        .is_ok_and(|parsed| Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
+    PasswordHash::new(stored).is_ok_and(|parsed| {
+        Argon2::default()
+            .verify_password(password.as_bytes(), &parsed)
+            .is_ok()
+    })
 }
 
 /// Creates the admin, or re-hashes its password when it changed.

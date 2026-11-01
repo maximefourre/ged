@@ -188,8 +188,10 @@ mod tests {
     use std::collections::HashMap;
 
     fn load(pairs: &[(&str, &str)]) -> Result<Config, ConfigError> {
-        let map: HashMap<String, String> =
-            pairs.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).into(), (*v).into()))
+            .collect();
         Config::from_lookup(&|k| map.get(k).cloned())
     }
 
@@ -224,8 +226,11 @@ mod tests {
 
     #[test]
     fn scope_binding_requires_a_scope_not_an_audience() {
-        let err = prod_with(&[("GED_OIDC_TOKEN_BINDING", "scope"), ("GED_OIDC_AUDIENCE", "ged")])
-            .unwrap_err();
+        let err = prod_with(&[
+            ("GED_OIDC_TOKEN_BINDING", "scope"),
+            ("GED_OIDC_AUDIENCE", "ged"),
+        ])
+        .unwrap_err();
         assert_eq!(
             err.0,
             "Missing OIDC config: GED_OIDC_REQUIRED_SCOPE — API bearer auth cannot work"
@@ -246,8 +251,11 @@ mod tests {
 
     #[test]
     fn unknown_binding_is_refused_and_named() {
-        let err = prod_with(&[("GED_OIDC_TOKEN_BINDING", "both"), ("GED_OIDC_AUDIENCE", "ged")])
-            .unwrap_err();
+        let err = prod_with(&[
+            ("GED_OIDC_TOKEN_BINDING", "both"),
+            ("GED_OIDC_AUDIENCE", "ged"),
+        ])
+        .unwrap_err();
         assert_eq!(
             err.0,
             "Invalid GED_OIDC_TOKEN_BINDING=both (must be 'audience' or 'scope') — API bearer auth cannot work"
@@ -291,14 +299,25 @@ mod tests {
         assert_eq!(config.oidc.client_id_claim, "sub");
         assert_eq!(config.admin_username, "admin");
         assert_eq!(config.max_upload_bytes, 52_428_800);
-        let config = load(&[("RAILS_ENV", "test"), ("GED_MAX_UPLOAD_BYTES", "1024"), ("GED_CLIENT_ID_CLAIM", "azp")]).unwrap();
+        let config = load(&[
+            ("RAILS_ENV", "test"),
+            ("GED_MAX_UPLOAD_BYTES", "1024"),
+            ("GED_CLIENT_ID_CLAIM", "azp"),
+        ])
+        .unwrap();
         assert_eq!(config.max_upload_bytes, 1024);
         assert_eq!(config.oidc.client_id_claim, "azp");
     }
 
     #[test]
     fn upload_limit_parses_like_ruby_to_i() {
-        for (raw, want) in [("12abc", 12), ("abc", 0), (" 7", 7), ("", 0), ("1_000", 1000)] {
+        for (raw, want) in [
+            ("12abc", 12),
+            ("abc", 0),
+            (" 7", 7),
+            ("", 0),
+            ("1_000", 1000),
+        ] {
             let config = load(&[("RAILS_ENV", "test"), ("GED_MAX_UPLOAD_BYTES", raw)]).unwrap();
             assert_eq!(config.max_upload_bytes, want, "{raw:?}");
         }

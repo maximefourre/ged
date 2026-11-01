@@ -167,8 +167,9 @@ pub fn document_id(resp: &Resp) -> String {
         .to_owned()
 }
 
-/// Rails `as_json` for a UTC time: `YYYY-MM-DDTHH:MM:SS.mmmZ` (precision 3).
-pub fn assert_rails_time(value: &Value) {
+/// The API time format, fixed once by T4: a UTC time as `YYYY-MM-DDTHH:MM:SS.mmmZ`
+/// (three fractional digits, truncated, always `Z`).
+pub fn assert_api_time(value: &Value) {
     let s = value
         .as_str()
         .unwrap_or_else(|| panic!("expected a time string, got {value}"));
@@ -184,7 +185,7 @@ pub fn assert_rails_time(value: &Value) {
         && b.iter()
             .enumerate()
             .all(|(i, c)| matches!(i, 4 | 7 | 10 | 13 | 16 | 19 | 23) || c.is_ascii_digit());
-    assert!(shape, "expected Rails UTC millisecond time, got {s:?}");
+    assert!(shape, "expected a UTC millisecond time, got {s:?}");
 }
 
 pub fn assert_document_keys(doc: &Value) {

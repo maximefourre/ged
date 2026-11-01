@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 
 fn ged(args: &[&str], env: &[(&str, &str)]) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_ged"));
-    cmd.args(args).env_clear().stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(args)
+        .env_clear()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -28,7 +31,10 @@ fn refuses(extra: &[(&str, &str)], needle: &str) {
     env.extend_from_slice(extra);
     let out = ged(&["serve"], &env).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "must refuse to boot; stderr: {stderr}");
+    assert!(
+        !out.status.success(),
+        "must refuse to boot; stderr: {stderr}"
+    );
     assert!(stderr.contains(needle), "{needle:?} not in {stderr:?}");
 }
 
@@ -40,7 +46,10 @@ fn production_without_an_audience_does_not_boot() {
 #[test]
 fn production_in_scope_mode_without_a_scope_does_not_boot() {
     refuses(
-        &[("GED_OIDC_TOKEN_BINDING", "scope"), ("GED_OIDC_AUDIENCE", "ged")],
+        &[
+            ("GED_OIDC_TOKEN_BINDING", "scope"),
+            ("GED_OIDC_AUDIENCE", "ged"),
+        ],
         "Missing OIDC config: GED_OIDC_REQUIRED_SCOPE",
     );
 }
@@ -55,13 +64,21 @@ impl Drop for Server {
 }
 
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
 }
 
 fn http_status(port: u16, path: &str) -> Option<String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    write!(stream, "GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").ok()?;
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+    )
+    .ok()?;
     let mut text = String::new();
     stream.read_to_string(&mut text).ok()?;
     text.lines().next().map(str::to_owned)

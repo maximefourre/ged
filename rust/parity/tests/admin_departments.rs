@@ -183,6 +183,7 @@ async fn admin_destroy_with_live_documents_opens_resolution() {
         .admin
         .submit(Method::DELETE, &format!("/admin/departments/{dept}"), &[])
         .await;
+    assert!(matches!(resp.status, 302 | 303), "{resp:?}");
     assert!(
         resp.header("location")
             .unwrap_or("")
@@ -203,6 +204,7 @@ async fn admin_destroy_with_all_documents_trashed_opens_resolution() {
         .admin
         .submit(Method::DELETE, &format!("/admin/departments/{dept}"), &[])
         .await;
+    assert!(matches!(resp.status, 302 | 303), "{resp:?}");
     assert!(
         resp.header("location")
             .unwrap_or("")
@@ -220,6 +222,7 @@ async fn admin_destroy_with_pending_upload_requests_opens_resolution() {
         .admin
         .submit(Method::DELETE, &format!("/admin/departments/{dept}"), &[])
         .await;
+    assert!(matches!(resp.status, 302 | 303), "{resp:?}");
     assert!(
         resp.header("location")
             .unwrap_or("")

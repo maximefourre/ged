@@ -4,14 +4,14 @@
 //!
 //! The HTTP test uploads a real file. Download must return those bytes, and
 //! after the purge the same URL is `404 not found`. If that first response
-//! carries a disk or Active Storage locator, the test requests it again and
+//! carries a stored-file locator (`Backend::storage_locators`), the test requests it again and
 //! the bytes must be gone. The job purges every due row, not one caller's, so
 //! these tests hold a process-wide lock across the mutation and the job.
 
 use parity::fixtures::{self};
 use parity::json::{assert_error, assert_json_content_type, assert_status};
 use parity::oauth::{self};
-use parity::{Api, Resp, backend};
+use parity::{Api, backend};
 
 const NOT_FOUND: &str = "not found";
 const JOB: &str = "PurgeDeletedDocumentsJob";
@@ -28,41 +28,6 @@ async fn gate() -> tokio::sync::MutexGuard<'static, ()> {
 
 async fn run_purge(backend: &dyn parity::Backend) {
     backend.run_job(JOB).await.expect("purge job");
-}
-
-/// Header values that point at the stored file: an `X-Sendfile` /
-/// `X-Accel-Redirect` path, or an Active Storage URL. A plain download body
-/// is not a locator.
-fn disk_locators(resp: &Resp) -> Vec<String> {
-    let mut found = Vec::new();
-    for (name, value) in resp.headers.iter() {
-        let Ok(raw) = value.to_str() else {
-            continue;
-        };
-        let header = name.as_str();
-        let sendfile = header.eq_ignore_ascii_case("x-sendfile")
-            || header.eq_ignore_ascii_case("x-accel-redirect");
-        let mentions_storage = raw.contains("/rails/storage")
-            || raw.contains("/rails/active_storage/")
-            || raw.contains("active_storage");
-        if sendfile || mentions_storage {
-            found.push(format!("{header}: {raw}"));
-        }
-    }
-    found
-}
-
-/// Active Storage HTTP paths mentioned by a locator. A filesystem path such
-/// as `/rails/storage/<key>` is not a route, so it is not requested.
-fn http_disk_paths(locator: &str) -> Vec<String> {
-    let mut paths = Vec::new();
-    for token in locator.split_whitespace() {
-        if let Some(idx) = token.find("/rails/active_storage/") {
-            let path = token[idx..].trim_matches(|c: char| c == '"' || c == '\'');
-            paths.push(path.to_owned());
-        }
-    }
-    paths
 }
 
 #[tokio::test]
@@ -100,7 +65,7 @@ async fn security_purge_http_soft_delete_hides_the_document_until_the_job() {
         "download did not return the stored file: {:?}",
         downloaded.text()
     );
-    let locators = disk_locators(&downloaded);
+    let locators = backend.storage_locators(&downloaded.headers);
 
     let deleted = api.delete_bearer(&path, &token).await;
     assert_eq!(deleted.status, 204, "{}", deleted.text());
@@ -163,7 +128,7 @@ async fn security_purge_http_soft_delete_hides_the_document_until_the_job() {
             !after.text().contains(locator),
             "purged download still names the disk locator {locator}"
         );
-        for disk_path in http_disk_paths(locator) {
+        for disk_path in backend.locator_http_paths(locator) {
             let again = api.get(&disk_path, &[]).await;
             assert_ne!(
                 again.status, 200,

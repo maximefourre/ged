@@ -30,7 +30,8 @@ mod tests {
     use chrono::TimeZone;
 
     fn at(micros: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 11, 1, 21, 12, 39).unwrap() + chrono::Duration::microseconds(micros as i64)
+        Utc.with_ymd_and_hms(2026, 11, 1, 21, 12, 39).unwrap()
+            + chrono::Duration::microseconds(micros as i64)
     }
 
     #[test]
@@ -48,7 +49,8 @@ mod tests {
 
     #[test]
     fn naive_columns_are_utc() {
-        let naive = NaiveDateTime::parse_from_str("2026-01-02 03:04:05.5", "%Y-%m-%d %H:%M:%S%.f").unwrap();
+        let naive =
+            NaiveDateTime::parse_from_str("2026-01-02 03:04:05.5", "%Y-%m-%d %H:%M:%S%.f").unwrap();
         assert_eq!(rails_json_naive(naive), "2026-01-02T03:04:05.500Z");
     }
 
@@ -56,6 +58,9 @@ mod tests {
     fn serde_helper() {
         #[derive(serde::Serialize)]
         struct T(#[serde(with = "serde_rails")] DateTime<Utc>);
-        assert_eq!(serde_json::to_string(&T(at(1_000))).unwrap(), "\"2026-11-01T21:12:39.001Z\"");
+        assert_eq!(
+            serde_json::to_string(&T(at(1_000))).unwrap(),
+            "\"2026-11-01T21:12:39.001Z\""
+        );
     }
 }

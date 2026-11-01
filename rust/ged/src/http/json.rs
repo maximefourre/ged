@@ -57,7 +57,10 @@ mod tests {
     fn escapes_like_active_support() {
         let input = format!("a<b>&c{}d{}", '\u{2028}', '\u{2029}');
         let body = to_rails_json(&json!({"error": input})).unwrap();
-        let want = format!("{{\"error\":\"a{bs}u003cb{bs}u003e{bs}u0026c{bs}u2028d{bs}u2029\"}}", bs = '\\');
+        let want = format!(
+            "{{\"error\":\"a{bs}u003cb{bs}u003e{bs}u0026c{bs}u2028d{bs}u2029\"}}",
+            bs = '\\'
+        );
         assert_eq!(body, want);
     }
 

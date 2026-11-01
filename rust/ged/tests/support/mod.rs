@@ -74,7 +74,11 @@ pub async fn send(app: Router, req: Request<Body>) -> Reply {
 }
 
 pub async fn get_(uri: &str) -> Reply {
-    send(app_with_probes(), Request::get(uri).body(Body::empty()).unwrap()).await
+    send(
+        app_with_probes(),
+        Request::get(uri).body(Body::empty()).unwrap(),
+    )
+    .await
 }
 
 pub async fn request(method: &str, uri: &str, content_type: Option<&str>, body: &str) -> Reply {
@@ -82,7 +86,11 @@ pub async fn request(method: &str, uri: &str, content_type: Option<&str>, body: 
     if let Some(ct) = content_type {
         builder = builder.header(header::CONTENT_TYPE, ct);
     }
-    send(app_with_probes(), builder.body(Body::from(body.to_owned())).unwrap()).await
+    send(
+        app_with_probes(),
+        builder.body(Body::from(body.to_owned())).unwrap(),
+    )
+    .await
 }
 
 pub const JSON_CT: &str = "application/json; charset=utf-8";
@@ -103,7 +111,10 @@ pub fn server_url() -> String {
         .output()
         .expect("run bin/worktree-stack db-port");
     let port = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    assert!(!port.is_empty(), "bin/worktree-stack db-port printed nothing");
+    assert!(
+        !port.is_empty(),
+        "bin/worktree-stack db-port printed nothing"
+    );
     format!("postgres://postgres:postgres@localhost:{port}/postgres")
 }
 
@@ -139,9 +150,12 @@ impl ScratchDb {
 
     pub async fn drop_db(self) {
         let mut conn = PgConnection::connect(&self.server).await.unwrap();
-        sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", self.name)))
-            .execute(&mut conn)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS {} WITH (FORCE)",
+            self.name
+        )))
+        .execute(&mut conn)
+        .await
+        .unwrap();
     }
 }

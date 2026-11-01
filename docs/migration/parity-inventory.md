@@ -69,6 +69,12 @@ Règles de classement :
   Statut HTTP et libellés visibles. Le budget login Rails (10/3 min) est partagé :
   une seule session admin pour la suite, les deux tests de rate-limit attendent
   une fenêtre libre.
+- Ajouté (T4), hors inventaire Ruby : `rust/parity/tests/api_errors.rs` (7 tests, erreurs
+  observables sans jeton ni route métier : `/up` et chemins inexistants) et
+  `rust/parity/tests/parity_schema.rs` (2 tests : `pg_dump --schema-only` des tables
+  métier Rust contre `rust/parity/fixtures/rails_business_schema.sql`, puis ce fichier contre
+  la base Rails vivante). Les deux tournent contre `GED_BACKEND=rails` et `GED_BACKEND=rust`
+  (le second test de `parity_schema` s'ignore hors Rails).
 - Tout le reste : unitaire Rust (T4+), sauf mention contraire ci-dessus.
 
 ## Répartition par fichier Ruby

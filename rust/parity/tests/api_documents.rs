@@ -6,8 +6,8 @@
 mod common;
 
 use common::{
-    PDF, Tree, World, assert_document_keys, assert_rails_time, document_id, documents_of,
-    filenames, pagination_of, query, upload,
+    PDF, Tree, World, assert_api_time, assert_document_keys, document_id, documents_of, filenames,
+    pagination_of, query, upload,
 };
 use parity::admin::AdminSession;
 use parity::http::FilePart;
@@ -33,7 +33,7 @@ async fn api_sync_upload_returns_201_with_the_document_uuid() {
     let body = resp.json();
     assert_document_keys(&body);
     let id = body["id"].as_str().expect("id");
-    assert_rails_uuid(id);
+    assert_api_uuid(id);
     assert_json_includes(
         &body,
         &json!({
@@ -69,9 +69,9 @@ async fn api_documents_expose_a_readonly_metadata_block() {
     keys.sort_unstable();
     assert_eq!(keys, ["updated_at", "upload_mode", "uploaded_at"]);
     assert_eq!(meta["upload_mode"], json!("sync"));
-    assert_rails_time(&meta["uploaded_at"]);
-    assert_rails_time(&meta["updated_at"]);
-    assert_rails_time(&body["created_at"]);
+    assert_api_time(&meta["uploaded_at"]);
+    assert_api_time(&meta["updated_at"]);
+    assert_api_time(&body["created_at"]);
     assert!(meta.get("indexed_at").is_none());
 }
 
@@ -566,13 +566,13 @@ async fn api_delete_soft_deletes_the_document_and_keeps_it_for_the_retention_win
     assert_eq!(kept.body, PDF, "soft-delete must keep the file bytes");
 }
 
-/// Rails `SecureRandom.uuid`: 36 lowercase hex-or-dash characters, and a real UUID.
-fn assert_rails_uuid(id: &str) {
+/// A canonical UUID: 36 lowercase hex-or-dash characters, and a real UUID.
+fn assert_api_uuid(id: &str) {
     assert!(
         id.len() == 36
             && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
             && id.bytes().all(|b| !b.is_ascii_uppercase()),
-        "expected a Rails uuid, got {id}"
+        "expected a canonical uuid, got {id}"
     );
     uuid::Uuid::parse_str(id).unwrap_or_else(|e| panic!("{id} is not a uuid ({e})"));
 }

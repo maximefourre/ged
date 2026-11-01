@@ -372,7 +372,10 @@ async fn admin_preview_hardens_non_pdf_types_with_a_scriptless_sandbox_csp() {
         .fetch_one(w.db())
         .await
         .unwrap();
-    assert_eq!(stored, "text/plain", "Rails stored a different type");
+    assert_eq!(
+        stored, "text/plain",
+        "the stored content type differs from the uploaded one"
+    );
     let resp = w.admin.get(&format!("/admin/documents/{id}/preview")).await;
     assert_eq!(resp.status, 200, "{}", resp.text());
     let csp = resp.header("content-security-policy").unwrap_or("");

@@ -45,7 +45,11 @@ async fn migrate_creates_the_business_tables_and_is_idempotent() {
     let db = ScratchDb::create().await;
     for run in 1..=2 {
         let out = ged(&["migrate"], &db.url, &[]);
-        assert!(out.status.success(), "run {run}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "run {run}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     assert_eq!(tables(&db.pool().await).await, BUSINESS_TABLES);
     db.drop_db().await;
@@ -72,7 +76,9 @@ async fn admin(pool: &sqlx::PgPool) -> Vec<(String, String)> {
 
 fn verifies(hash: &str, password: &str) -> bool {
     let parsed = PasswordHash::new(hash).unwrap();
-    Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok()
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok()
 }
 
 #[tokio::test]
@@ -94,7 +100,11 @@ async fn seed_creates_the_admin_once_and_follows_a_changed_password() {
     assert_eq!(admin(&pool).await, rows);
 
     // Changed password: the hash follows.
-    assert!(ged(&["seed"], &db.url, &env("second-pass")).status.success());
+    assert!(
+        ged(&["seed"], &db.url, &env("second-pass"))
+            .status
+            .success()
+    );
     let after = admin(&pool).await;
     assert_eq!(after.len(), 1);
     assert!(verifies(&after[0].1, "second-pass"));
@@ -127,7 +137,11 @@ async fn seed_in_production_requires_the_admin_password() {
 async fn seed_in_development_defaults_the_password_like_rails() {
     let db = ScratchDb::create().await;
     assert!(ged(&["migrate"], &db.url, &[]).status.success());
-    assert!(ged(&["seed"], &db.url, &[("GED_ADMIN_USERNAME", "dev")]).status.success());
+    assert!(
+        ged(&["seed"], &db.url, &[("GED_ADMIN_USERNAME", "dev")])
+            .status
+            .success()
+    );
     let rows = admin(&db.pool().await).await;
     assert!(verifies(&rows[0].1, "changeme"));
     db.drop_db().await;

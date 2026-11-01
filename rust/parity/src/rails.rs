@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use reqwest::header::HeaderMap;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
@@ -45,31 +46,41 @@ impl Backend for RailsBackend {
     }
 
     async fn reset(&self) -> Result<(), String> {
-        // Children first; `upload_requests.document_id` is ON DELETE NULLIFY.
-        for sql in [
-            "DELETE FROM upload_requests",
-            "DELETE FROM documents",
-            "DELETE FROM client_department_accesses",
-            "DELETE FROM app_clients",
-        ] {
-            sqlx::query(sql)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| format!("{sql}: {e}"))?;
-        }
-        // Departments reference themselves: delete leaves until none remain.
-        loop {
-            let n = sqlx::query(
-                "DELETE FROM departments d WHERE NOT EXISTS \
-                 (SELECT 1 FROM departments c WHERE c.parent_id = d.id)",
-            )
-            .execute(&self.pool)
-            .await
-            .map_err(|e| format!("delete departments: {e}"))?
-            .rows_affected();
-            if n == 0 {
-                return Ok(());
+        crate::backend::reset_business_tables(&self.pool).await
+    }
+
+    /// Active Storage: sendfile headers, plus `/rails/storage/…` and
+    /// `/rails/active_storage/…` locations.
+    fn storage_locators(&self, headers: &HeaderMap) -> Vec<String> {
+        let mut found = crate::backend::sendfile_locators(headers);
+        for (name, value) in headers.iter() {
+            let Ok(raw) = value.to_str() else {
+                continue;
+            };
+            let mentions_storage = raw.contains("/rails/storage")
+                || raw.contains("/rails/active_storage/")
+                || raw.contains("active_storage");
+            let line = format!("{}: {raw}", name.as_str());
+            if mentions_storage && !found.contains(&line) {
+                found.push(line);
             }
         }
+        found
+    }
+
+    /// Active Storage HTTP routes mentioned by a locator. A filesystem path
+    /// such as `/rails/storage/<key>` is not a route, so it is not requested.
+    fn locator_http_paths(&self, locator: &str) -> Vec<String> {
+        locator
+            .split_whitespace()
+            .filter_map(|token| {
+                let idx = token.find("/rails/active_storage/")?;
+                Some(
+                    token[idx..]
+                        .trim_matches(|c: char| c == '"' || c == '\'')
+                        .to_owned(),
+                )
+            })
+            .collect()
     }
 }

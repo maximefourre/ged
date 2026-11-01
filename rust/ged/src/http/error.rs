@@ -17,7 +17,7 @@ pub const JSON_CONTENT_TYPE: &str = "application/json; charset=utf-8";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {
-    /// 400. Handler-chosen text, or `"bad request"` for framework-level
+    /// Status 400: handler-chosen text, or `"bad request"` for framework-level
     /// rejections (malformed JSON, invalid query encoding, …).
     BadRequest(String),
     /// 401.
@@ -146,32 +146,61 @@ mod tests {
             .unwrap_or_default()
             .to_owned();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
-        (status, content_type, String::from_utf8(bytes.to_vec()).unwrap())
+        (
+            status,
+            content_type,
+            String::from_utf8(bytes.to_vec()).unwrap(),
+        )
     }
 
     #[tokio::test]
     async fn renders_the_error_contract() {
         let cases = [
             (ApiError::bad_request(), 400, "bad request"),
-            (ApiError::BadRequest("limit must be a string".into()), 400, "limit must be a string"),
-            (ApiError::Unauthorized("missing bearer token".into()), 401, "missing bearer token"),
-            (ApiError::Forbidden("client not registered".into()), 403, "client not registered"),
+            (
+                ApiError::BadRequest("limit must be a string".into()),
+                400,
+                "limit must be a string",
+            ),
+            (
+                ApiError::Unauthorized("missing bearer token".into()),
+                401,
+                "missing bearer token",
+            ),
+            (
+                ApiError::Forbidden("client not registered".into()),
+                403,
+                "client not registered",
+            ),
             (ApiError::NotFound, 404, "not found"),
-            (ApiError::Unprocessable("Name can't be blank".into()), 422, "Name can't be blank"),
+            (
+                ApiError::Unprocessable("Name can't be blank".into()),
+                422,
+                "Name can't be blank",
+            ),
             (ApiError::Internal, 500, "internal server error"),
         ];
         for (error, status, message) in cases {
             let (got_status, content_type, body) = body_of(error.into_response()).await;
             assert_eq!(got_status.as_u16(), status);
             assert_eq!(content_type, "application/json; charset=utf-8");
-            assert_eq!(body, crate::http::json::to_rails_json(&json!({ "error": message })).unwrap());
+            assert_eq!(
+                body,
+                crate::http::json::to_rails_json(&json!({ "error": message })).unwrap()
+            );
         }
     }
 
     #[test]
     fn bare_statuses_use_rack_names() {
-        assert_eq!(status_message(StatusCode::PAYLOAD_TOO_LARGE), "content too large");
-        assert_eq!(status_message(StatusCode::UNPROCESSABLE_ENTITY), "unprocessable content");
+        assert_eq!(
+            status_message(StatusCode::PAYLOAD_TOO_LARGE),
+            "content too large"
+        );
+        assert_eq!(
+            status_message(StatusCode::UNPROCESSABLE_ENTITY),
+            "unprocessable content"
+        );
         assert_eq!(status_message(StatusCode::from_u16(599).unwrap()), "error");
     }
 }

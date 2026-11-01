@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use sqlx::PgPool;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 use crate::config::Config;
 
@@ -24,8 +25,9 @@ impl AppState {
     /// A state whose pool connects on first use, for code (and tests) that
     /// never touches the database.
     pub fn without_database(config: Config) -> Self {
-        let db = PgPool::connect_lazy("postgres://localhost/ged_unused")
-            .unwrap_or_else(|e| unreachable!("static URL is valid: {e}"));
-        Self::new(config, db)
+        let options = PgConnectOptions::new()
+            .host("localhost")
+            .database("ged_unused");
+        Self::new(config, PgPoolOptions::new().connect_lazy_with(options))
     }
 }

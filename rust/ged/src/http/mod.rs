@@ -7,6 +7,7 @@ pub mod state;
 
 use std::panic::AssertUnwindSafe;
 
+use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::header::{CONTENT_TYPE, HeaderValue};
@@ -14,7 +15,6 @@ use axum::http::{StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use futures_util::FutureExt;
 
 pub use error::ApiError;
@@ -121,7 +121,8 @@ async fn guard_params(req: Request, next: Next) -> Response {
     if !valid {
         return reject(api);
     }
-    next.run(Request::from_parts(parts, Body::from(bytes))).await
+    next.run(Request::from_parts(parts, Body::from(bytes)))
+        .await
 }
 
 /// Outermost layer: no panic or framework rejection under `/api/v1` ever
@@ -139,13 +140,18 @@ async fn shield(req: Request, next: Next) -> Response {
             };
         }
     };
+    let status = response.status();
+    // A known path with the wrong verb is a routing miss to Rails: 404,
+    // never 405, on every path.
+    if status == StatusCode::METHOD_NOT_ALLOWED {
+        return if api {
+            ApiError::NotFound.into_response()
+        } else {
+            plain_error(StatusCode::NOT_FOUND)
+        };
+    }
     if !api {
         return response;
-    }
-    let status = response.status();
-    // A known path with the wrong verb is a routing miss to Rails: 404.
-    if status == StatusCode::METHOD_NOT_ALLOWED {
-        return ApiError::NotFound.into_response();
     }
     // 413 keeps its empty body: that is the contract observed on the stack
     // (docs/migration/parity-gaps.md).

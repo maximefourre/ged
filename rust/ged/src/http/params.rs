@@ -147,8 +147,9 @@ impl RackParams {
     /// Parses a JSON request body the way Rails' JSON params parser does:
     /// an object is the parameter hash, anything else becomes `{"_json": …}`.
     pub fn parse_json(body: &[u8]) -> Result<Self, ParamsError> {
+        let cleaned = strip_json_comments(body).ok_or(ParamsError::MalformedJson)?;
         let value: serde_json::Value =
-            serde_json::from_slice(body).map_err(|_| ParamsError::MalformedJson)?;
+            serde_json::from_slice(&cleaned).map_err(|_| ParamsError::MalformedJson)?;
         if json_depth(&value) > JSON_MAX_NESTING {
             return Err(ParamsError::MalformedJson);
         }
@@ -223,8 +224,10 @@ impl<S: Send + Sync> FromRequest<S> for RequestParams {
         }
         let body_params = match kind {
             BodyKind::Json => RackParams::parse_json(&bytes)?,
-            BodyKind::Form => RackParams::parse(std::str::from_utf8(&bytes).map_err(|_| ApiError::bad_request())?)?,
-            BodyKind::Other => unreachable!("handled above"),
+            BodyKind::Form => RackParams::parse(
+                std::str::from_utf8(&bytes).map_err(|_| ApiError::bad_request())?,
+            )?,
+            BodyKind::Other => return Ok(Self(query)),
         };
         Ok(Self(RackParams::merged(body_params, query)))
     }
@@ -252,7 +255,11 @@ impl BodyKind {
     pub fn of(method: &Method, content_type: Option<&axum::http::HeaderValue>) -> Self {
         let Some(value) = content_type.and_then(|v| v.to_str().ok()) else {
             // POST without a content type is form data to Rack.
-            return if method == Method::POST { Self::Form } else { Self::Other };
+            return if method == Method::POST {
+                Self::Form
+            } else {
+                Self::Other
+            };
         };
         let media = value
             .split([',', ';'])
@@ -273,7 +280,9 @@ impl BodyKind {
 /// `ActionDispatch::QueryParser.each_pair`: split on `&` (swallowing spaces
 /// that follow it), skip empty parts, split once on `=`, URL-decode both.
 /// A part without `=` has a `nil` value.
-fn each_pair(query: &str) -> Result<Vec<(Vec<u8>, Option<Vec<u8>>)>, ParamsError> {
+type RawPair = (Vec<u8>, Option<Vec<u8>>);
+
+fn each_pair(query: &str) -> Result<Vec<RawPair>, ParamsError> {
     let mut pairs = Vec::new();
     let mut rest = query;
     while !rest.is_empty() {
@@ -310,7 +319,9 @@ fn decode(input: &str) -> Result<Vec<u8>, ParamsError> {
                     .and_then(hex)
                     .zip(bytes.get(i + 2).copied().and_then(hex));
                 let Some((hi, lo)) = digits else {
-                    return Err(ParamsError::Invalid(format!("invalid %-encoding ({input})")));
+                    return Err(ParamsError::Invalid(format!(
+                        "invalid %-encoding ({input})"
+                    )));
                 };
                 out.push(hi << 4 | lo);
                 i += 2;
@@ -382,7 +393,9 @@ fn store_nested(
     depth: usize,
 ) -> Result<Stored, ParamsError> {
     if depth >= PARAM_DEPTH_LIMIT {
-        return Err(ParamsError::Invalid("exceeded available parameter key space".into()));
+        return Err(ParamsError::Invalid(
+            "exceeded available parameter key space".into(),
+        ));
     }
 
     let (k, after): (&str, &str) = if depth == 0 {
@@ -424,18 +437,13 @@ fn store_nested(
         if !value.is_blank_slot() {
             array.push(value);
         }
-    } else if after.starts_with("[]") {
+    } else if let Some(rest) = after.strip_prefix("[]") {
         // `x[][y]`: a hash inside an array.
-        let child_key = match after.as_bytes().get(2) {
-            Some(b'[') if after.ends_with(']') && after.len() >= 4 => {
-                let inner = &after[3..after.len() - 1];
-                if !inner.is_empty() && !inner.contains('[') && !inner.contains(']') {
-                    inner
-                } else {
-                    &after[2..]
-                }
+        let child_key = match rest.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+            Some(inner) if !inner.is_empty() && !inner.contains('[') && !inner.contains(']') => {
+                inner
             }
-            _ => &after[2..],
+            _ => rest,
         };
         let array = array_slot(params, k)?;
         let reuse_last = matches!(
@@ -568,6 +576,48 @@ fn from_json(value: serde_json::Value) -> ParamValue {
     }
 }
 
+/// Ruby's JSON parser treats `/* … */` and `// …` comments outside strings as
+/// whitespace (observed on the Rails stack); `serde_json` does not. Returns
+/// `None` for an unterminated block comment.
+fn strip_json_comments(body: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
+    if !body.contains(&b'/') {
+        return Some(body.into());
+    }
+    let mut out = Vec::with_capacity(body.len());
+    let (mut i, mut in_string, mut escaped) = (0, false, false);
+    while i < body.len() {
+        let b = body[i];
+        if in_string {
+            out.push(b);
+            match (escaped, b) {
+                (true, _) => escaped = false,
+                (false, b'\\') => escaped = true,
+                (false, b'"') => in_string = false,
+                _ => {}
+            }
+            i += 1;
+        } else if b == b'"' {
+            in_string = true;
+            out.push(b);
+            i += 1;
+        } else if b == b'/' && body.get(i + 1) == Some(&b'*') {
+            let end = body[i + 2..].windows(2).position(|w| w == b"*/")?;
+            out.push(b' ');
+            i += 2 + end + 2;
+        } else if b == b'/' && body.get(i + 1) == Some(&b'/') {
+            out.push(b' ');
+            i += body[i..]
+                .iter()
+                .position(|c| *c == b'\n')
+                .unwrap_or(body.len() - i);
+        } else {
+            out.push(b);
+            i += 1;
+        }
+    }
+    Some(out.into())
+}
+
 fn json_depth(value: &serde_json::Value) -> usize {
     match value {
         serde_json::Value::Array(items) => 1 + items.iter().map(json_depth).max().unwrap_or(0),
@@ -593,7 +643,11 @@ mod tests {
     }
 
     fn map_to_json(map: &ParamMap) -> Value {
-        Value::Object(map.iter().map(|(k, v)| (k.to_owned(), to_json(v))).collect())
+        Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.to_owned(), to_json(v)))
+                .collect(),
+        )
     }
 
     fn parse(qs: &str) -> Value {
@@ -602,7 +656,10 @@ mod tests {
 
     #[test]
     fn nested_tags() {
-        assert_eq!(parse("tags[type]=facture&tags[urgent]"), json!({"tags": {"type": "facture", "urgent": null}}));
+        assert_eq!(
+            parse("tags[type]=facture&tags[urgent]"),
+            json!({"tags": {"type": "facture", "urgent": null}})
+        );
     }
 
     #[test]
@@ -626,7 +683,15 @@ mod tests {
 
     #[test]
     fn type_conflicts_and_bad_encodings_are_rejected() {
-        for qs in ["a=1&a[b]=2", "a[]=1&a[b]=2", "a=%zz", "a=%", "%ff=1", "a=%ff", "a[]=%ff"] {
+        for qs in [
+            "a=1&a[b]=2",
+            "a[]=1&a[b]=2",
+            "a=%zz",
+            "a=%",
+            "%ff=1",
+            "a=%ff",
+            "a[]=%ff",
+        ] {
             assert!(RackParams::parse(qs).is_err(), "{qs}");
         }
         let mut deep = String::from("a");
@@ -648,7 +713,8 @@ mod tests {
     #[test]
     fn matches_rails_param_builder_on_the_corpus() {
         let corpus: Vec<Value> =
-            serde_json::from_str(include_str!("../../tests/fixtures/rack_params_corpus.json")).unwrap();
+            serde_json::from_str(include_str!("../../tests/fixtures/rack_params_corpus.json"))
+                .unwrap();
         assert!(corpus.len() > 100, "corpus looks truncated");
         let mut failures = Vec::new();
         for entry in &corpus {
@@ -665,16 +731,46 @@ mod tests {
                 failures.push(format!("{shown:?}: got {got:?}"));
             }
         }
-        assert!(failures.is_empty(), "{} mismatches:\n{}", failures.len(), failures.join("\n"));
+        assert!(
+            failures.is_empty(),
+            "{} mismatches:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 
     #[test]
     fn json_object_body() {
-        let params = RackParams::parse_json(br#"{"name":"x","parent_id":8,"tags":{"type":"f"},"ids":[1,null,2]}"#).unwrap();
+        let params = RackParams::parse_json(
+            br#"{"name":"x","parent_id":8,"tags":{"type":"f"},"ids":[1,null,2]}"#,
+        )
+        .unwrap();
         assert_eq!(params.str("name"), Some("x"));
         assert_eq!(params.str("parent_id"), None, "an integer is not a string");
-        assert_eq!(map_to_json(params.map())["ids"], json!([1, 2]), "nil dropped from arrays");
+        assert_eq!(
+            map_to_json(params.map())["ids"],
+            json!([1, 2]),
+            "nil dropped from arrays"
+        );
         assert_eq!(map_to_json(params.map())["parent_id"], json!(8));
+    }
+
+    #[test]
+    fn json_comments_are_whitespace_like_in_ruby() {
+        let p = RackParams::parse_json(b"{\"name\": /* a */ \"x\" // tail\n}").unwrap();
+        assert_eq!(p.str("name"), Some("x"));
+        let p = RackParams::parse_json(br#"{"name":"/* not a comment */ // nor this"}"#).unwrap();
+        assert_eq!(p.str("name"), Some("/* not a comment */ // nor this"));
+        let p = RackParams::parse_json(br#"{"name":"a\"/*b*/"}"#).unwrap();
+        assert_eq!(p.str("name"), Some("a\"/*b*/"));
+        assert_eq!(
+            RackParams::parse_json(b"{} /* open"),
+            Err(ParamsError::MalformedJson)
+        );
+        assert_eq!(
+            RackParams::parse_json(b"{} / x"),
+            Err(ParamsError::MalformedJson)
+        );
     }
 
     #[test]
@@ -690,10 +786,17 @@ mod tests {
     #[test]
     fn malformed_json_is_an_error() {
         for body in [&b"{bad"[..], b"", b" ", b"{\"a\":", b"{\"a\":1,}", b"NaN"] {
-            assert_eq!(RackParams::parse_json(body), Err(ParamsError::MalformedJson), "{body:?}");
+            assert_eq!(
+                RackParams::parse_json(body),
+                Err(ParamsError::MalformedJson),
+                "{body:?}"
+            );
         }
         let nested = format!("{}{}", "[".repeat(101), "]".repeat(101));
-        assert_eq!(RackParams::parse_json(nested.as_bytes()), Err(ParamsError::MalformedJson));
+        assert_eq!(
+            RackParams::parse_json(nested.as_bytes()),
+            Err(ParamsError::MalformedJson)
+        );
         let ok = format!("{}{}", "[".repeat(100), "]".repeat(100));
         assert!(RackParams::parse_json(ok.as_bytes()).is_ok());
     }
@@ -712,12 +815,24 @@ mod tests {
         use axum::http::HeaderValue;
         let ct = |v: &'static str| Some(HeaderValue::from_static(v));
         let kind = |m: &Method, v: Option<HeaderValue>| BodyKind::of(m, v.as_ref());
-        assert_eq!(kind(&Method::POST, ct("Application/JSON; charset=utf-8")), BodyKind::Json);
+        assert_eq!(
+            kind(&Method::POST, ct("Application/JSON; charset=utf-8")),
+            BodyKind::Json
+        );
         assert_eq!(kind(&Method::POST, ct("text/x-json")), BodyKind::Json);
-        assert_eq!(kind(&Method::POST, ct("application/vnd.api+json")), BodyKind::Other);
-        assert_eq!(kind(&Method::POST, ct("application/x-www-form-urlencoded")), BodyKind::Form);
+        assert_eq!(
+            kind(&Method::POST, ct("application/vnd.api+json")),
+            BodyKind::Other
+        );
+        assert_eq!(
+            kind(&Method::POST, ct("application/x-www-form-urlencoded")),
+            BodyKind::Form
+        );
         assert_eq!(kind(&Method::POST, None), BodyKind::Form);
         assert_eq!(kind(&Method::PUT, None), BodyKind::Other);
-        assert_eq!(kind(&Method::POST, ct("multipart/form-data; boundary=x")), BodyKind::Other);
+        assert_eq!(
+            kind(&Method::POST, ct("multipart/form-data; boundary=x")),
+            BodyKind::Other
+        );
     }
 }
