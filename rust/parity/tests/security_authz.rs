@@ -1,9 +1,11 @@
-//! Port of the parity lines in `test/security/authz_idor_test.rb`.
+//! Port of the parity lines in `test/security/authz_idor_test.rb`, plus both
+//! directions of read ≠ write (the reader in that file is never exercised).
 //!
 //! Cross-department access is refused with the exact `no read|write access`
-//! body, a missing document is `not found`, and a write grant does not imply
-//! read. Documents are rows in the business tables; the file is never needed
-//! because every refusal happens before a download.
+//! body, a missing document is `not found`, and the two grants do not imply
+//! each other. A read-only client is refused on delete, tag replace and
+//! upload with no mutation. A write-only client gets an empty list, a 403 on
+//! show, and a real 204 on delete. Documents are rows in the business tables.
 
 use parity::fixtures::{self};
 use parity::json::{assert_error, assert_json_content_type, assert_json_eq, assert_status};
@@ -283,4 +285,157 @@ async fn security_authz_dept_a_cannot_poll_an_upload_request_in_dept_b() {
         )
         .await;
     assert_error(&r, 403, NO_READ);
+}
+
+/// Read and write grants on a fresh department. Each test builds its own so a
+/// delete cannot race another test's row.
+struct Pair {
+    base: String,
+    dept: i64,
+    reader: String,
+    writer: String,
+}
+
+impl Pair {
+    fn api(&self) -> Api {
+        Api::new(&self.base)
+    }
+}
+
+async fn pair(prefix: &str) -> Pair {
+    let backend = backend().await;
+    let db = backend.db();
+    let base = backend.base_url().to_owned();
+    let dept = fixtures::create_department(db, &fixtures::unique(prefix), None).await;
+    let (_, reader) = registered(db, &format!("{prefix}-r"), Some((dept, true, false))).await;
+    let (_, writer) = registered(db, &format!("{prefix}-w"), Some((dept, false, true))).await;
+    Pair {
+        base,
+        dept,
+        reader,
+        writer,
+    }
+}
+
+#[tokio::test]
+async fn security_authz_read_only_cannot_delete() {
+    let p = pair("rw-del").await;
+    let backend = backend().await;
+    let doc = fixtures::insert_document(backend.db(), p.dept, "report.pdf", "seed").await;
+    let r = p
+        .api()
+        .delete_bearer(&format!("/api/v1/documents/{doc}"), &p.reader)
+        .await;
+    assert_error(&r, 403, NO_WRITE);
+    assert!(
+        fixtures::document_exists(backend.db(), &doc).await,
+        "read-only delete removed the row"
+    );
+    assert!(
+        fixtures::retention_seconds(backend.db(), &doc)
+            .await
+            .is_none(),
+        "read-only delete set a purge window"
+    );
+}
+
+#[tokio::test]
+async fn security_authz_read_only_cannot_replace_tags() {
+    let p = pair("rw-tags").await;
+    let backend = backend().await;
+    let doc = fixtures::insert_document(backend.db(), p.dept, "report.pdf", "seed").await;
+    let r = p
+        .api()
+        .put_form_bearer(
+            &format!("/api/v1/documents/{doc}/tags"),
+            &p.reader,
+            &[("tags[type]", "facture")],
+        )
+        .await;
+    assert_error(&r, 403, NO_WRITE);
+    assert_eq!(
+        fixtures::document_tags(backend.db(), &doc)
+            .await
+            .expect("row"),
+        json!({})
+    );
+}
+
+#[tokio::test]
+async fn security_authz_read_only_cannot_upload() {
+    let p = pair("rw-up").await;
+    let backend = backend().await;
+    let before = fixtures::document_count(backend.db(), p.dept).await;
+    let dept = p.dept.to_string();
+    let r = p
+        .api()
+        .upload_bearer(
+            "/api/v1/documents",
+            &p.reader,
+            &[("department_id", dept.as_str())],
+            "report.pdf",
+            "application/pdf",
+            b"PDF!",
+        )
+        .await;
+    assert_error(&r, 403, NO_WRITE);
+    assert_eq!(
+        fixtures::document_count(backend.db(), p.dept).await,
+        before,
+        "read-only upload persisted a document"
+    );
+}
+
+#[tokio::test]
+async fn security_authz_write_only_list_is_empty() {
+    let p = pair("rw-list").await;
+    let backend = backend().await;
+    let doc = fixtures::insert_document(backend.db(), p.dept, "report.pdf", "seed").await;
+    let listed = p.api().get_bearer("/api/v1/documents", &p.writer).await;
+    assert_status(&listed, 200);
+    assert_json_eq(
+        &listed,
+        &json!({
+            "documents": [],
+            "pagination": { "limit": 100, "offset": 0, "total": 0 }
+        }),
+    );
+    let seen = p.api().get_bearer("/api/v1/documents", &p.reader).await;
+    assert_status(&seen, 200);
+    let ids = document_ids(&seen.json());
+    assert!(
+        ids.contains(&doc),
+        "reader lost its document, so the empty writer list proved nothing: {ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn security_authz_write_only_delete_is_effective() {
+    let p = pair("rw-wipe").await;
+    let backend = backend().await;
+    let doc = fixtures::insert_document(backend.db(), p.dept, "report.pdf", "seed").await;
+    let path = format!("/api/v1/documents/{doc}");
+
+    let visible = p.api().get_bearer(&path, &p.reader).await;
+    assert_status(&visible, 200);
+    assert_eq!(visible.json()["id"], json!(doc));
+
+    let hidden = p.api().get_bearer(&path, &p.writer).await;
+    assert_error(&hidden, 403, NO_READ);
+
+    let deleted = p.api().delete_bearer(&path, &p.writer).await;
+    assert_eq!(deleted.status, 204, "{}", deleted.text());
+    assert!(deleted.body.is_empty(), "204 body: {:?}", deleted.text());
+    assert!(
+        fixtures::document_exists(backend.db(), &doc).await,
+        "write-only delete destroyed the row instead of soft-deleting it"
+    );
+    let window = fixtures::retention_seconds(backend.db(), &doc)
+        .await
+        .expect("write-only delete did not set a purge window");
+    assert!(
+        (window - 2_592_000.0).abs() < 2.0,
+        "retention was {window}s, expected 30 days"
+    );
+    assert_error(&p.api().get_bearer(&path, &p.reader).await, 404, NOT_FOUND);
 }

@@ -30,3 +30,13 @@ fait renvoyer 413 par Axum avant toute écriture disque
 tests `security_fuzz_oversized_*` verrouillent ce contrat. L'absence du fichier
 de staging reste unitaire (`rust/ged/src/storage/staging.rs`) : elle n'est pas
 visible en HTTP.
+
+Décision T2b (orchestrateur, après la revue) : le corps vide du 413 **reste
+l'attente**. C'est le contrat observé sur le stack, à reproduire tel quel côté
+Rust — pas un artefact de proxy à assouplir au portage. Un corps JSON
+`{ "error": ... }` ou un texte du genre « length limit exceeded » serait une
+divergence. L'attente reste : statut 413, corps vide (`body` de longueur 0),
+aucune ligne `documents` ni `upload_requests`. Les tests
+`security_fuzz_oversized_sync_upload_is_rejected_at_the_edge` et
+`security_fuzz_oversized_async_upload_is_rejected_without_a_request_row` ne
+changent pas.

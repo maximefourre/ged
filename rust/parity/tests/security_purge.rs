@@ -2,18 +2,24 @@
 //! `Backend::run_job("PurgeDeletedDocumentsJob")` runs the real job.
 //! Storage and queue tables are never read or written by the suite.
 //!
-//! The job purges every due row, not one caller's, so these tests hold a
-//! process-wide lock across the mutation and the job.
+//! The HTTP test uploads a real file. Download must return those bytes, and
+//! after the purge the same URL is `404 not found`. If that first response
+//! carries a disk or Active Storage locator, the test requests it again and
+//! the bytes must be gone. The job purges every due row, not one caller's, so
+//! these tests hold a process-wide lock across the mutation and the job.
 
 use parity::fixtures::{self};
 use parity::json::{assert_error, assert_json_content_type, assert_status};
 use parity::oauth::{self};
-use parity::{Api, backend};
+use parity::{Api, Resp, backend};
 
 const NOT_FOUND: &str = "not found";
 const JOB: &str = "PurgeDeletedDocumentsJob";
 /// `Document::RETENTION` is `30.days`, exactly 30 * 24 hours.
 const RETENTION_SECONDS: f64 = 2_592_000.0;
+/// Distinct from any other fixture body, so a later 404 cannot accidentally
+/// still be serving the file.
+const FILE_BYTES: &[u8] = b"PDF-purge-marker";
 
 async fn gate() -> tokio::sync::MutexGuard<'static, ()> {
     static GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -22,6 +28,41 @@ async fn gate() -> tokio::sync::MutexGuard<'static, ()> {
 
 async fn run_purge(backend: &dyn parity::Backend) {
     backend.run_job(JOB).await.expect("purge job");
+}
+
+/// Header values that point at the stored file: an `X-Sendfile` /
+/// `X-Accel-Redirect` path, or an Active Storage URL. A plain download body
+/// is not a locator.
+fn disk_locators(resp: &Resp) -> Vec<String> {
+    let mut found = Vec::new();
+    for (name, value) in resp.headers.iter() {
+        let Ok(raw) = value.to_str() else {
+            continue;
+        };
+        let header = name.as_str();
+        let sendfile = header.eq_ignore_ascii_case("x-sendfile")
+            || header.eq_ignore_ascii_case("x-accel-redirect");
+        let mentions_storage = raw.contains("/rails/storage")
+            || raw.contains("/rails/active_storage/")
+            || raw.contains("active_storage");
+        if sendfile || mentions_storage {
+            found.push(format!("{header}: {raw}"));
+        }
+    }
+    found
+}
+
+/// Active Storage HTTP paths mentioned by a locator. A filesystem path such
+/// as `/rails/storage/<key>` is not a route, so it is not requested.
+fn http_disk_paths(locator: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for token in locator.split_whitespace() {
+        if let Some(idx) = token.find("/rails/active_storage/") {
+            let path = token[idx..].trim_matches(|c: char| c == '"' || c == '\'');
+            paths.push(path.to_owned());
+        }
+    }
+    paths
 }
 
 #[tokio::test]
@@ -43,13 +84,23 @@ async fn security_purge_http_soft_delete_hides_the_document_until_the_job() {
             &[("department_id", dept_s.as_str())],
             "report.pdf",
             "application/pdf",
-            b"PDF!",
+            FILE_BYTES,
         )
         .await;
     assert_status(&created, 201);
     assert_json_content_type(&created);
     let id = created.json()["id"].as_str().expect("id").to_owned();
     let path = format!("/api/v1/documents/{id}");
+
+    let downloaded = api.get_bearer(&format!("{path}/download"), &token).await;
+    assert_status(&downloaded, 200);
+    assert_eq!(
+        downloaded.body,
+        FILE_BYTES,
+        "download did not return the stored file: {:?}",
+        downloaded.text()
+    );
+    let locators = disk_locators(&downloaded);
 
     let deleted = api.delete_bearer(&path, &token).await;
     assert_eq!(deleted.status, 204, "{}", deleted.text());
@@ -98,6 +149,35 @@ async fn security_purge_http_soft_delete_hides_the_document_until_the_job() {
         !fixtures::document_exists(db, &id).await,
         "purge left the document row"
     );
+    let after = api.get_bearer(&format!("{path}/download"), &token).await;
+    assert_error(&after, 404, NOT_FOUND);
+    assert!(
+        !after
+            .body
+            .windows(FILE_BYTES.len())
+            .any(|w| w == FILE_BYTES),
+        "purged download still carried the file bytes"
+    );
+    for locator in &locators {
+        assert!(
+            !after.text().contains(locator),
+            "purged download still names the disk locator {locator}"
+        );
+        for disk_path in http_disk_paths(locator) {
+            let again = api.get(&disk_path, &[]).await;
+            assert_ne!(
+                again.status, 200,
+                "disk trace {disk_path} still answered 200 after purge"
+            );
+            assert!(
+                !again
+                    .body
+                    .windows(FILE_BYTES.len())
+                    .any(|w| w == FILE_BYTES),
+                "disk trace {disk_path} still served the file after purge"
+            );
+        }
+    }
 }
 
 #[tokio::test]

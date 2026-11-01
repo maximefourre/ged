@@ -78,6 +78,30 @@ fn assert_window(resp: &Resp, limit: i64, offset: i64) {
     assert!(page["documents"].is_array(), "{}", resp.text());
 }
 
+/// The name that ends up in `Content-Disposition` on download. Rails emits
+/// both `filename` and `filename*`; neither may keep a path.
+fn assert_download_disposition(resp: &Resp, name: &str) {
+    assert_status(resp, 200);
+    assert_eq!(resp.body, b"PDF!", "download body: {:?}", resp.text());
+    let cd = resp.header("content-disposition").unwrap_or("");
+    assert!(
+        cd.contains(name),
+        "Content-Disposition {cd:?} does not carry {name}"
+    );
+    assert!(
+        !cd.contains("..") && !cd.contains('/'),
+        "Content-Disposition {cd:?} still contains a path"
+    );
+}
+
+async fn assert_download_name(f: &Fuzz, id: &str, name: &str) {
+    let r = f
+        .api()
+        .get_bearer(&format!("/api/v1/documents/{id}/download"), &f.token)
+        .await;
+    assert_download_disposition(&r, name);
+}
+
 fn ids_of(body: &Value) -> Vec<String> {
     body["documents"]
         .as_array()
@@ -227,6 +251,8 @@ async fn security_fuzz_hostile_filename_is_reduced_to_its_basename() {
     let text = name.as_str().unwrap_or_default();
     assert!(!text.contains("../"));
     assert!(!text.contains('/'));
+    let id = r.json()["id"].as_str().expect("id").to_owned();
+    assert_download_name(f, &id, "passwd.pdf").await;
 }
 
 #[tokio::test]
@@ -235,6 +261,8 @@ async fn security_fuzz_filename_with_a_space_is_kept() {
     let r = upload(f, &[], "mon rapport.pdf", b"PDF!").await;
     assert_status(&r, 201);
     assert_eq!(r.json()["filename"], json!("mon rapport.pdf"));
+    let id = r.json()["id"].as_str().expect("id").to_owned();
+    assert_download_name(f, &id, "mon rapport.pdf").await;
 }
 
 #[tokio::test]
@@ -243,6 +271,8 @@ async fn security_fuzz_backslash_path_is_reduced_to_its_basename() {
     let r = upload(f, &[], r"..\..\windows\system32\evil.exe", b"PDF!").await;
     assert_status(&r, 201);
     assert_eq!(r.json()["filename"], json!("evil.exe"));
+    let id = r.json()["id"].as_str().expect("id").to_owned();
+    assert_download_name(f, &id, "evil.exe").await;
 }
 
 #[tokio::test]
@@ -251,6 +281,8 @@ async fn security_fuzz_filename_that_sanitizes_to_empty_becomes_unnamed() {
     let r = upload(f, &[], "../../", b"PDF!").await;
     assert_status(&r, 201);
     assert_eq!(r.json()["filename"], json!("unnamed"));
+    let id = r.json()["id"].as_str().expect("id").to_owned();
+    assert_download_name(f, &id, "unnamed").await;
 }
 
 #[tokio::test]

@@ -53,10 +53,13 @@ Règles de classement :
 - Ligne 178 (couverture des chemins OpenAPI) reste unitaire Rust.
 - Porté (sécurité) : `authz_idor_test.rb` (12), les 19 lignes parité de `input_fuzz_test.rb`,
   les 4 encodages numériques de `ssrf_test.rb` (422) et `purge_deleted_documents_job_test.rb` (9)
-  → `rust/parity/tests/security_{authz,fuzz,ssrf,purge}.rs`. 56 tests Rust au total, dont la
+  → `rust/parity/tests/security_{authz,fuzz,ssrf,purge}.rs`. 61 tests Rust au total, dont la
   matrice Rack (`tags[type]=x`, `limit[]=1` → 200, doublons, vide ou absent), un 202 vers un
   hostname public, et le parcours HTTP soft-delete puis `PurgeDeletedDocumentsJob`.
-  Vert : `GED_BACKEND=rails cargo test -p parity security` (56 passed).
+  Le parcours de purge télécharge les octets du fichier puis exige un 404 après le job ;
+  un locator disque présent dans la réponse est redemandé. read≠write est couvert dans
+  les deux sens. `Content-Disposition` du téléchargement porte le nom assaini.
+  Vert : `GED_BACKEND=rails cargo test -p parity security` (61 passed).
   La ligne 92 (corps du POST de callback) est reclassée unitaire
   (`rust/ged/src/jobs/deliver_callback.rs`) : la cible loopback est bloquée par la garde SSRF.
 - Tout le reste : à porter dans T3a (admin HTTP) et T4+ (unitaire Rust).
@@ -274,16 +277,16 @@ Règles de classement :
 | 152 | `test/controllers/api/v1/documents_test.rb:294` | filters documents by uploaded_at, indexed_at and updated_at ranges | parité | `rust/parity/tests/api_documents.rs` |  |
 | 153 | `test/controllers/api/v1/documents_test.rb:313` | sync upload targeting trashed department returns 404 | parité | `rust/parity/tests/api_documents.rs` |  |
 | 154 | `test/controllers/api/v1/read_write_permissions_test.rb:32` | read-only client can list, show and download | parité | `rust/parity/tests/api_permissions.rs` |  |
-| 155 | `test/controllers/api/v1/read_write_permissions_test.rb:44` | read-only client cannot upload | parité | `rust/parity/tests/api_permissions.rs` |  |
-| 156 | `test/controllers/api/v1/read_write_permissions_test.rb:51` | read-only client cannot delete | parité | `rust/parity/tests/api_permissions.rs` |  |
-| 157 | `test/controllers/api/v1/read_write_permissions_test.rb:57` | read-only client cannot replace tags | parité | `rust/parity/tests/api_permissions.rs` |  |
+| 155 | `test/controllers/api/v1/read_write_permissions_test.rb:44` | read-only client cannot upload | parité | `rust/parity/tests/api_permissions.rs` | aussi `security_authz.rs` : 403 exact, aucune ligne |
+| 156 | `test/controllers/api/v1/read_write_permissions_test.rb:51` | read-only client cannot delete | parité | `rust/parity/tests/api_permissions.rs` | aussi `security_authz.rs` : 403 exact, pas de fenêtre de purge |
+| 157 | `test/controllers/api/v1/read_write_permissions_test.rb:57` | read-only client cannot replace tags | parité | `rust/parity/tests/api_permissions.rs` | aussi `security_authz.rs` : 403 exact, tags inchangés |
 | 158 | `test/controllers/api/v1/read_write_permissions_test.rb:64` | read-only client cannot create a sub-department | parité | `rust/parity/tests/api_permissions.rs` |  |
 | 159 | `test/controllers/api/v1/read_write_permissions_test.rb:72` | write-only client can upload and gets the created document back | parité | `rust/parity/tests/api_permissions.rs` |  |
-| 160 | `test/controllers/api/v1/read_write_permissions_test.rb:79` | write-only client cannot list, show or download | parité | `rust/parity/tests/api_permissions.rs` |  |
+| 160 | `test/controllers/api/v1/read_write_permissions_test.rb:79` | write-only client cannot list, show or download | parité | `rust/parity/tests/api_permissions.rs` | liste vide dans `security_authz.rs` ; show déjà couvert ; download reste pour `api_permissions.rs` |
 | 161 | `test/controllers/api/v1/read_write_permissions_test.rb:92` | write-only client cannot filter the list by department | parité | `rust/parity/tests/api_permissions.rs` |  |
 | 162 | `test/controllers/api/v1/read_write_permissions_test.rb:98` | write-only client sees no departments in the read-scoped index | parité | `rust/parity/tests/api_permissions.rs` |  |
 | 163 | `test/controllers/api/v1/read_write_permissions_test.rb:106` | write-only client can create a sub-department and gets it back | parité | `rust/parity/tests/api_permissions.rs` |  |
-| 164 | `test/controllers/api/v1/read_write_permissions_test.rb:115` | write-only client can delete (delete is a write) | parité | `rust/parity/tests/api_permissions.rs` |  |
+| 164 | `test/controllers/api/v1/read_write_permissions_test.rb:115` | write-only client can delete (delete is a write) | parité | `rust/parity/tests/api_permissions.rs` | aussi `security_authz.rs` : 204, soft-delete, puis 404 en lecture |
 | 165 | `test/controllers/api/v1/read_write_permissions_test.rb:121` | write-only client can replace tags | parité | `rust/parity/tests/api_permissions.rs` |  |
 | 166 | `test/controllers/api/v1/read_write_permissions_test.rb:128` | write-only client cannot poll an upload request (poll is a read) | parité | `rust/parity/tests/api_permissions.rs` |  |
 | 167 | `test/controllers/api/v1/read_write_permissions_test.rb:143` | destroy requires write even though it shares the finder with show | parité | `rust/parity/tests/api_permissions.rs` |  |
@@ -322,7 +325,7 @@ Règles de classement :
 | 200 | `test/jobs/deliver_callback_job_test.rb:123` | emits outcome=failure on a connection error | unitaire Rust | `rust/ged/src/jobs/deliver_callback.rs` |  |
 | 201 | `test/jobs/deliver_callback_job_test.rb:133` | emits outcome=refused for a blocked callback target | unitaire Rust | `rust/ged/src/jobs/deliver_callback.rs` |  |
 | 202 | `test/jobs/deliver_callback_job_test.rb:141` | emits outcome=exhausted once retries run out | unitaire Rust | `rust/ged/src/jobs/deliver_callback.rs` |  |
-| 203 | `test/jobs/purge_deleted_documents_job_test.rb:18` | hard-deletes documents past their purge_at and purges their file | parité | `rust/parity/tests/security_purge.rs` | purge_at avancé en SQL puis Backend::run_job ; lignes métier seulement (pas de lecture Active Storage) |
+| 203 | `test/jobs/purge_deleted_documents_job_test.rb:18` | hard-deletes documents past their purge_at and purges their file | parité | `rust/parity/tests/security_purge.rs` | octets servis au téléchargement, puis 404 après le job. Observé le 2026-11-01 : les en-têtes ne portent pas de chemin disque (pas de X-Sendfile ni d'URL Active Storage) ; le test redemande un tel locator s'il apparaît. Suppression physique du blob non observable en HTTP, unitaire : `rust/ged/src/jobs/purge.rs` |
 | 204 | `test/jobs/purge_deleted_documents_job_test.rb:32` | keeps soft-deleted documents still within the retention window | parité | `rust/parity/tests/security_purge.rs` | purge_at avancé en SQL puis Backend::run_job ; lignes métier seulement (pas de lecture Active Storage) |
 | 205 | `test/jobs/purge_deleted_documents_job_test.rb:39` | keeps live documents | parité | `rust/parity/tests/security_purge.rs` | purge_at avancé en SQL puis Backend::run_job ; lignes métier seulement (pas de lecture Active Storage) |
 | 206 | `test/jobs/purge_deleted_documents_job_test.rb:45` | hard-deletes a soft-deleted leaf department once its documents are purged | parité | `rust/parity/tests/security_purge.rs` | purge_at avancé en SQL puis Backend::run_job ; lignes métier seulement (pas de lecture Active Storage) |
@@ -424,7 +427,7 @@ Règles de classement :
 | 302 | `test/security/authz_idor_test.rb:72` | deptA client's unfiltered list never leaks dept B's document | parité | `rust/parity/tests/security_authz.rs` |  |
 | 303 | `test/security/authz_idor_test.rb:80` | read/write grant on a department cascades to its child (upload) | parité | `rust/parity/tests/security_authz.rs` |  |
 | 304 | `test/security/authz_idor_test.rb:86` | a grant on a child department never escalates to reach the parent's document | parité | `rust/parity/tests/security_authz.rs` |  |
-| 305 | `test/security/authz_idor_test.rb:91` | write-only client cannot read (write does not imply read) | parité | `rust/parity/tests/security_authz.rs` |  |
+| 305 | `test/security/authz_idor_test.rb:91` | write-only client cannot read (write does not imply read) | parité | `rust/parity/tests/security_authz.rs` | show 403 ; l'autre sens (read-only → delete/tags/upload) et le 204 du write-only sont dans le même fichier |
 | 306 | `test/security/authz_idor_test.rb:96` | a client with no grants cannot access documents at all | parité | `rust/parity/tests/security_authz.rs` |  |
 | 307 | `test/security/authz_idor_test.rb:105` | a random unknown document UUID is 404, never 200 or 500 | parité | `rust/parity/tests/security_authz.rs` |  |
 | 308 | `test/security/authz_idor_test.rb:110` | deptA client cannot poll an upload request that belongs to dept B | parité | `rust/parity/tests/security_authz.rs` |  |
@@ -441,13 +444,13 @@ Règles de classement :
 | 319 | `test/security/input_fuzz_test.rb:102` | a tag key longer than 100 characters is rejected with 422 | parité | `rust/parity/tests/security_fuzz.rs` |  |
 | 320 | `test/security/input_fuzz_test.rb:109` | a tag value longer than 500 characters is rejected with 422 | parité | `rust/parity/tests/security_fuzz.rs` |  |
 | 321 | `test/security/input_fuzz_test.rb:118` | malformed JSON body returns an app-level JSON 400 error | parité | `rust/parity/tests/security_fuzz.rs` |  |
-| 322 | `test/security/input_fuzz_test.rb:139` | a hostile filename is sanitized before being persisted | parité | `rust/parity/tests/security_fuzz.rs` | filename lu dans le JSON de création (colonne documents), pas le blob |
-| 323 | `test/security/input_fuzz_test.rb:170` | an oversized upload is rejected | parité | `rust/parity/tests/security_fuzz.rs` | 413 corps vide au bord (Thruster), pas le 422 modèle ; voir parity-gaps.md |
-| 324 | `test/security/input_fuzz_test.rb:184` | a legitimate filename with a space survives sanitization unchanged | parité | `rust/parity/tests/security_fuzz.rs` | filename lu dans le JSON de création |
-| 325 | `test/security/input_fuzz_test.rb:197` | a backslash path filename is reduced to its basename | parité | `rust/parity/tests/security_fuzz.rs` | filename lu dans le JSON de création |
-| 326 | `test/security/input_fuzz_test.rb:210` | a filename that sanitizes to empty falls back to unnamed | parité | `rust/parity/tests/security_fuzz.rs` | filename lu dans le JSON de création |
+| 322 | `test/security/input_fuzz_test.rb:139` | a hostile filename is sanitized before being persisted | parité | `rust/parity/tests/security_fuzz.rs` | JSON `passwd.pdf` et `Content-Disposition` du téléchargement sans `/` ni `..` |
+| 323 | `test/security/input_fuzz_test.rb:170` | an oversized upload is rejected | parité | `rust/parity/tests/security_fuzz.rs` | 413 corps vide au bord (Thruster), contrat observé à reproduire côté Rust ; voir parity-gaps.md |
+| 324 | `test/security/input_fuzz_test.rb:184` | a legitimate filename with a space survives sanitization unchanged | parité | `rust/parity/tests/security_fuzz.rs` | JSON et `Content-Disposition` du téléchargement portent `mon rapport.pdf` |
+| 325 | `test/security/input_fuzz_test.rb:197` | a backslash path filename is reduced to its basename | parité | `rust/parity/tests/security_fuzz.rs` | JSON `evil.exe` et `Content-Disposition` du téléchargement sans `/` ni `..` |
+| 326 | `test/security/input_fuzz_test.rb:210` | a filename that sanitizes to empty falls back to unnamed | parité | `rust/parity/tests/security_fuzz.rs` | JSON `unnamed` et `Content-Disposition` du téléchargement sans `/` ni `..` |
 | 327 | `test/security/input_fuzz_test.rb:225` | a byte_size of nil stays valid (guards allow_nil) | unitaire Rust | `rust/ged/src/domain/document.rs` |  |
-| 328 | `test/security/input_fuzz_test.rb:238` | a sync oversized upload is rejected with 422 | parité | `rust/parity/tests/security_fuzz.rs` | 413 corps vide au bord (Thruster), pas le 422 modèle ; voir parity-gaps.md |
+| 328 | `test/security/input_fuzz_test.rb:238` | a sync oversized upload is rejected with 422 | parité | `rust/parity/tests/security_fuzz.rs` | 413 corps vide au bord (Thruster), contrat observé à reproduire côté Rust ; voir parity-gaps.md |
 | 329 | `test/security/input_fuzz_test.rb:248` | an async oversized upload is rejected with 422 AND the staging file is never written | unitaire Rust | `rust/ged/src/storage/staging.rs` | 413 au bord et absence de ligne couverts par security_fuzz.rs ; le fichier de staging reste non observable en HTTP |
 | 330 | `test/security/ssrf_test.rb:16` | decimal-encoded loopback IP is blocked | parité | `rust/parity/tests/security_ssrf.rs` | 422 sur callback_url numérique ; l'encodage lui-même est testé en unitaire |
 | 331 | `test/security/ssrf_test.rb:21` | hex-encoded loopback IP is blocked | parité | `rust/parity/tests/security_ssrf.rs` | 422 sur callback_url numérique ; l'encodage lui-même est testé en unitaire |
