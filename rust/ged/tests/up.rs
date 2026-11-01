@@ -1,9 +1,12 @@
-use axum::{body::Body, http::Request};
+mod support;
+
+use axum::body::Body;
+use axum::http::Request;
 use tower::ServiceExt;
 
 #[tokio::test]
 async fn up_returns_200() {
-    let response = ged::router()
+    let response = support::app()
         .oneshot(Request::get("/up").body(Body::empty()).unwrap())
         .await
         .unwrap();

@@ -1,10 +1,9 @@
-use axum::{Router, http::StatusCode, routing::get};
+//! GED: document management system.
 
-/// Builds the HTTP router.
-pub fn router() -> Router {
-    Router::new().route("/up", get(up))
-}
+pub mod config;
+pub mod db;
+pub mod domain;
+pub mod http;
+pub mod seed;
 
-async fn up() -> StatusCode {
-    StatusCode::OK
-}
+pub use http::{AppState, router, router_with};
