@@ -3,8 +3,11 @@
 //! Login attempts are rate limited per Rails process (10 per 3 minutes), so
 //! use [`AdminSession::login`] sparingly and prefer [`AdminSession::cached`].
 
+use std::sync::{Arc, Mutex};
+
 use regex::Regex;
-use reqwest::{Client, Method, redirect};
+use reqwest::cookie::{CookieStore, Jar};
+use reqwest::{Client, Method, Url, redirect};
 
 use crate::http::{Resp, read};
 use crate::stack::admin_credentials;
@@ -12,6 +15,12 @@ use crate::stack::admin_credentials;
 pub struct AdminSession {
     base: String,
     http: Client,
+    jar: Arc<Jar>,
+    /// Copy session rotations into the process-wide cookie string. Each
+    /// `#[tokio::test]` has its own runtime, so a `Client` cached in a static
+    /// would keep a dead connection pool. Only the cookie string is shared;
+    /// every call builds a new client.
+    tracks_cookie: bool,
 }
 
 /// Extract `<meta name="csrf-token" content="…">`.
@@ -27,26 +36,75 @@ fn html_unescape(s: &str) -> String {
         .replace("&gt;", ">")
 }
 
+fn cookie_slot() -> &'static Mutex<Option<String>> {
+    static COOKIE: Mutex<Option<String>> = Mutex::new(None);
+    &COOKIE
+}
+
+fn stored_cookie() -> Option<String> {
+    cookie_slot()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+fn store_cookie(cookie: String) {
+    *cookie_slot().lock().unwrap_or_else(|e| e.into_inner()) = Some(cookie);
+}
+
+/// `_ged_session=<value>` from a `Set-Cookie` header, attributes stripped.
+fn session_from_set_cookie(resp: &reqwest::Response) -> Option<String> {
+    resp.headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|v| v.starts_with("_ged_session="))
+        .map(|v| v.split(';').next().unwrap_or_default().to_owned())
+        .filter(|v| !v.is_empty())
+}
+
+fn session_from_jar(jar: &Jar, base: &str) -> Option<String> {
+    let url = Url::parse(&format!("{base}/admin")).ok()?;
+    let header = jar.cookies(&url)?;
+    let text = header.to_str().ok()?;
+    text.split(';')
+        .map(str::trim)
+        .find(|part| part.starts_with("_ged_session="))
+        .map(str::to_owned)
+}
+
 /// Browser-like client: cookie jar, no redirects followed, and an `Accept`
 /// header like a browser's (Devise answers 204 instead of redirecting when the
 /// client does not ask for HTML).
-fn new_client(cookie: Option<&str>) -> Client {
-    let mut h = reqwest::header::HeaderMap::new();
-    h.insert(
+///
+/// The session cookie is seeded into the jar, not sent as a default `Cookie`
+/// header. reqwest skips the jar whenever that header is already set, which
+/// would freeze the pre-rotation session and 422 the next CSRF check.
+fn new_client(base: &str, cookie: Option<&str>) -> (Client, Arc<Jar>) {
+    let jar = Arc::new(Jar::default());
+    if let Some(cookie) = cookie {
+        let url = Url::parse(&format!("{base}/")).expect("base url");
+        let line = if cookie.to_ascii_lowercase().contains("path=") {
+            cookie.to_owned()
+        } else {
+            format!("{cookie}; Path=/")
+        };
+        jar.add_cookie_str(&line, &url);
+    }
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
         reqwest::header::ACCEPT,
         "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             .parse()
             .expect("accept"),
     );
-    if let Some(c) = cookie {
-        h.insert(reqwest::header::COOKIE, c.parse().expect("cookie header"));
-    }
-    Client::builder()
+    let http = Client::builder()
         .redirect(redirect::Policy::none())
-        .cookie_store(true)
-        .default_headers(h)
+        .cookie_provider(Arc::clone(&jar))
+        .default_headers(headers)
         .build()
-        .expect("build http client")
+        .expect("build http client");
+    (http, jar)
 }
 
 impl AdminSession {
@@ -59,9 +117,13 @@ impl AdminSession {
     /// Log in with explicit credentials; also returns the login response
     /// (a redirect on success, a re-rendered form on failure).
     pub async fn login_as(base: &str, user: &str, pass: &str) -> Result<(Self, Resp), String> {
+        let base = base.trim_end_matches('/').to_owned();
+        let (http, jar) = new_client(&base, None);
         let this = Self {
-            base: base.trim_end_matches('/').to_owned(),
-            http: new_client(None),
+            base,
+            http,
+            jar,
+            tracks_cookie: false,
         };
         let form = this.get("/admins/sign_in").await;
         if form.status != 200 {
@@ -93,54 +155,68 @@ impl AdminSession {
         Ok((this, resp))
     }
 
-    /// One login per process. Later callers clone that client so they share its
-    /// cookie jar. A frozen `Cookie` header would keep sending the pre-rotation
-    /// session after Rails issues a new one, and the next form POST would 422
-    /// on CSRF.
+    /// One login per process. Later callers rebuild a client from the session
+    /// cookie, so each tokio runtime owns the pool it uses.
     pub async fn cached(base: &str) -> Result<Self, String> {
-        static CLIENT: tokio::sync::Mutex<Option<Client>> = tokio::sync::Mutex::const_new(None);
-        let mut slot = CLIENT.lock().await;
-        if let Some(http) = slot.clone() {
+        let base = base.trim_end_matches('/').to_owned();
+        if let Some(cookie) = stored_cookie() {
+            let (http, jar) = new_client(&base, Some(&cookie));
             return Ok(Self {
-                base: base.trim_end_matches('/').to_owned(),
+                base,
                 http,
+                jar,
+                tracks_cookie: true,
             });
         }
-        let this = Self::login(base).await?;
-        *slot = Some(this.http.clone());
+        let mut this = Self::login(&base).await?;
+        let cookie = this.session_cookie().await?;
+        store_cookie(cookie);
+        this.tracks_cookie = true;
         Ok(this)
     }
 
-    /// `name=value` of the session cookie, so a browser suite can reuse this
-    /// login. Rails allows 10 `POST /admins/sign_in` attempts per 3 minutes.
+    /// `name=value` of the session cookie, read from the jar after an
+    /// authenticated page load (Rails rewrites `Set-Cookie` when it saves
+    /// the session). Public so a browser suite can reuse this login (Rails
+    /// allows 10 `POST /admins/sign_in` attempts per 3 minutes).
     pub async fn session_cookie(&self) -> Result<String, String> {
-        // reqwest's jar is opaque; recover the cookie from the Set-Cookie of a
-        // fresh authenticated page instead of re-implementing a jar.
         let resp = self
             .http
             .get(format!("{}/admin", self.base))
             .send()
             .await
             .map_err(|e| e.to_string())?;
-        let from_set_cookie = resp
-            .headers()
-            .get_all(reqwest::header::SET_COOKIE)
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .find(|v| v.starts_with("_ged_session="))
-            .map(|v| v.split(';').next().unwrap_or_default().to_owned());
-        from_set_cookie.ok_or_else(|| "no session Set-Cookie on /admin".into())
+        let from_header = session_from_set_cookie(&resp);
+        let _ = resp.bytes().await;
+        from_header
+            .or_else(|| session_from_jar(&self.jar, &self.base))
+            .ok_or_else(|| "no session cookie after GET /admin".into())
+    }
+
+    fn remember_rotation(&self, resp: &reqwest::Response) {
+        if !self.tracks_cookie {
+            return;
+        }
+        if let Some(cookie) =
+            session_from_set_cookie(resp).or_else(|| session_from_jar(&self.jar, &self.base))
+        {
+            store_cookie(cookie);
+        }
+    }
+
+    async fn finish(&self, resp: reqwest::Response) -> Resp {
+        self.remember_rotation(&resp);
+        read(resp).await
     }
 
     pub async fn get(&self, path: &str) -> Resp {
-        read(
-            self.http
-                .get(format!("{}{path}", self.base))
-                .send()
-                .await
-                .expect("GET"),
-        )
-        .await
+        let resp = self
+            .http
+            .get(format!("{}{path}", self.base))
+            .send()
+            .await
+            .expect("GET");
+        self.finish(resp).await
     }
 
     /// Fresh CSRF token, read from an authenticated (or login) page.
@@ -190,7 +266,7 @@ impl AdminSession {
             .send()
             .await
             .expect("POST form");
-        read(resp).await
+        self.finish(resp).await
     }
 
     /// Multipart POST (document upload) with a valid CSRF token.
@@ -204,7 +280,7 @@ impl AdminSession {
             .send()
             .await
             .expect("POST multipart");
-        read(resp).await
+        self.finish(resp).await
     }
 
     /// Sign out (`DELETE /admins/sign_out`).

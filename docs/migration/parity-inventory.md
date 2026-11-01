@@ -8,8 +8,8 @@ Les tests de `oauth-provider/test/` ne sont pas comptés : ce service reste en R
 
 | Catégorie | Tests | Signification |
 |---|---:|---|
-| parité | 231 | boîte noire HTTP/SQL dans `rust/parity` (`cargo test -p parity`), validée d'abord contre Rails |
-| unitaire Rust | 151 | test unitaire ou d'intégration interne dans `rust/ged` (invisible en HTTP) |
+| parité | 229 | boîte noire HTTP/SQL dans `rust/parity` (`cargo test -p parity`), validée d'abord contre Rails |
+| unitaire Rust | 153 | test unitaire ou d'intégration interne dans `rust/ged` (invisible en HTTP) |
 | navigateur | 22 | Playwright dans `rust/e2e`, fermeture explicite du navigateur en `finally` |
 
 Règles de classement :
@@ -38,13 +38,18 @@ Règles de classement :
 - Porté (T3b) : `test/system/admin_ui_test.rb` (22 tests navigateur) →
   `rust/e2e/tests/admin_ui.spec.ts`. Session réutilisée via `AdminSession::cached`
   (`rust/parity/src/bin/admin_session.rs`) à cause de la limite de 10 connexions / 3 min.
-- Porté (T2a, API) : 84 des 86 lignes parité issues de `test/controllers/api` et des
-  lignes OpenAPI/`/up` associées (176, 177, 179, 186) → `rust/parity/tests/api_*.rs`
-  et `rust/parity/tests/health.rs` (`api_up_returns_200`). Vert contre Rails :
+- Porté (T2a, API) : 84 lignes parité issues de `test/controllers/api` (hors
+  `authentication_test.rb`, déjà recoupé en T1) et des lignes OpenAPI/`/up`
+  associées (176, 177, 179, 186) → `rust/parity/tests/api_*.rs` et
+  `rust/parity/tests/health.rs` (`api_up_returns_200`). Vert contre Rails :
   `GED_BACKEND=rails cargo test -p parity api` (84 tests). La charge utile des
   callbacks async est observée par le polling ; le POST de callback reste unitaire.
-  Lignes 87 et 90 ne sont pas portées : elles suppriment `storage/staging`, qui
-  n'est pas une table métier.
+  Lignes 87 et 90 sont **unitaire Rust** (`rust/ged/src/jobs/store_document.rs` et
+  `rust/ged/src/jobs/deliver_callback.rs`) : elles suppriment `storage/staging`,
+  qui n'est pas une table métier.
+- Les tests de polling qui figent l'état `pending` appellent
+  `POST`/`DELETE /admin/upload_queue_pause`. Le port Rust doit servir cette
+  route admin dès que ces tests tournent contre Rust (T3a/T8).
 - Ligne 178 (couverture des chemins OpenAPI) reste unitaire Rust.
 - Tout le reste : à porter dans T2b (sécurité), T3a (admin HTTP) et T4+ (unitaire Rust).
 
@@ -64,7 +69,7 @@ Règles de classement :
 | `test/controllers/admin/status_controller_test.rb` | 5 | 4 | 1 | 0 |
 | `test/controllers/admin/upload_queue_pause_test.rb` | 3 | 3 | 0 | 0 |
 | `test/controllers/admin/upload_requests_controller_test.rb` | 4 | 4 | 0 | 0 |
-| `test/controllers/api/v1/async_upload_test.rb` | 12 | 12 | 0 | 0 |
+| `test/controllers/api/v1/async_upload_test.rb` | 12 | 10 | 2 | 0 |
 | `test/controllers/api/v1/authentication_test.rb` | 5 | 5 | 0 | 0 |
 | `test/controllers/api/v1/departments_test.rb` | 12 | 12 | 0 | 0 |
 | `test/controllers/api/v1/document_tags_test.rb` | 7 | 7 | 0 | 0 |
@@ -101,7 +106,7 @@ Règles de classement :
 | `test/services/document_creator_test.rb` | 3 | 0 | 3 | 0 |
 | `test/services/system_health_test.rb` | 10 | 0 | 10 | 0 |
 | `test/system/admin_ui_test.rb` | 22 | 0 | 0 | 22 |
-| **Total** | **404** | **231** | **151** | **22** |
+| **Total** | **404** | **229** | **153** | **22** |
 
 ## Inventaire détaillé
 
@@ -190,13 +195,13 @@ Règles de classement :
 | 81 | `test/controllers/admin/upload_requests_controller_test.rb:32` | index renders for a request whose department is trashed | parité | `rust/parity/tests/admin_upload_requests.rs` |  |
 | 82 | `test/controllers/admin/upload_requests_controller_test.rb:45` | index shows an empty state when there are no upload requests | parité | `rust/parity/tests/admin_upload_requests.rs` |  |
 | 83 | `test/controllers/api/v1/async_upload_test.rb:19` | upload with a callback_url targeting an internal address returns 422 | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
-| 84 | `test/controllers/api/v1/async_upload_test.rb:28` | upload with callback_url returns 202 and processes in background | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
+| 84 | `test/controllers/api/v1/async_upload_test.rb:28` | upload with callback_url returns 202 and processes in background | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) ; octets vérifiés par le download ; suppression du fichier de staging : unitaire (store_document) |
 | 85 | `test/controllers/api/v1/async_upload_test.rb:58` | rejects callback_url values that are not http(s) URLs with 422 | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
 | 86 | `test/controllers/api/v1/async_upload_test.rb:71` | upload request status can be polled through pending and completed | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
-| 87 | `test/controllers/api/v1/async_upload_test.rb:92` | an async failure is surfaced through the polling endpoint | parité | `rust/parity/tests/api_async_upload.rs` | non porté : le test Ruby supprime `storage/staging` (hors tables métier) ; l'échec est unitaire (deliver_callback) |
+| 87 | `test/controllers/api/v1/async_upload_test.rb:92` | an async failure is surfaced through the polling endpoint | unitaire Rust | `rust/ged/src/jobs/store_document.rs` | non porté en parité : le test Ruby supprime `storage/staging` (hors tables métier) ; statut `failed` et `document_id` nul relèvent du job de stockage |
 | 88 | `test/controllers/api/v1/async_upload_test.rb:111` | async upload applies tags and returns them in the callback and polling | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
 | 89 | `test/controllers/api/v1/async_upload_test.rb:138` | async upload with invalid tags is rejected with 422 before the 202 | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
-| 90 | `test/controllers/api/v1/async_upload_test.rb:150` | a failed async upload reports null tags in the callback | parité | `rust/parity/tests/api_async_upload.rs` | non porté : échec provoqué en supprimant le fichier de staging (stockage, pas une table métier) ; tags null du callback en unitaire |
+| 90 | `test/controllers/api/v1/async_upload_test.rb:150` | a failed async upload reports null tags in the callback | unitaire Rust | `rust/ged/src/jobs/deliver_callback.rs` | non porté en parité : échec provoqué en supprimant le fichier de staging ; tags null du POST de callback |
 | 91 | `test/controllers/api/v1/async_upload_test.rb:172` | async metadata is null while pending and populated once completed | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
 | 92 | `test/controllers/api/v1/async_upload_test.rb:192` | the callback payload carries the document metadata | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |
 | 93 | `test/controllers/api/v1/async_upload_test.rb:206` | polling an upload request of a forbidden department returns 403 | parité | `rust/parity/tests/api_async_upload.rs` | assertions de callback couvertes en unitaire (deliver_callback) |

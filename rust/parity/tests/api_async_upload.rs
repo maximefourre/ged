@@ -7,7 +7,14 @@
 //!
 //! Two Ruby tests force a failure by deleting the staging file
 //! (`an async failure is surfaced…`, `a failed async upload reports null tags…`).
-//! That file is storage, not a business table, so those lines are not ported.
+//! That file is storage, not a business table, so those lines are unit tests
+//! (`store_document`, `deliver_callback`), not parity rows.
+//!
+//! The success path checks stored bytes through the download endpoint only.
+//! Asserting that `storage/staging/<id>` was removed is the same unit-level
+//! observation. Pausing the uploads queue (to see `pending`) calls the admin
+//! route `POST`/`DELETE /admin/upload_queue_pause`; the Rust port must serve
+//! it as soon as these tests run against Rust.
 
 mod common;
 
@@ -27,7 +34,41 @@ fn async_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-async fn pause_uploads(base: &str) {
+/// Pauses the uploads queue and resumes it when dropped, including on panic,
+/// so a failed assertion cannot leave the queue paused for later tests.
+struct ResumeUploads {
+    base: String,
+}
+
+impl Drop for ResumeUploads {
+    fn drop(&mut self) {
+        let base = self.base.clone();
+        let started = std::thread::Builder::new()
+            .name("resume-uploads".into())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("resume runtime");
+                runtime.block_on(async move {
+                    match AdminSession::cached(&base).await {
+                        Ok(admin) => {
+                            let _ = admin.resume_upload_queue().await;
+                        }
+                        Err(error) => eprintln!("resume-on-drop: {error}"),
+                    }
+                });
+            });
+        if let Ok(handle) = started {
+            let _ = handle.join();
+        }
+    }
+}
+
+async fn pause_uploads(base: &str) -> ResumeUploads {
+    let guard = ResumeUploads {
+        base: base.to_owned(),
+    };
     let admin = AdminSession::cached(base).await.expect("admin session");
     let resp = admin.pause_upload_queue().await;
     assert!(
@@ -36,6 +77,7 @@ async fn pause_uploads(base: &str) {
         resp.status,
         resp.header("location")
     );
+    guard
 }
 
 async fn resume_uploads(base: &str) {
@@ -170,7 +212,7 @@ async fn api_upload_request_status_can_be_polled_through_pending_and_completed()
     let w = World::new().await;
     let base = w.backend.base_url().to_owned();
     resume_uploads(&base).await;
-    pause_uploads(&base).await;
+    let _resume_on_drop = pause_uploads(&base).await;
     let t = w.read_write_tree().await;
     let url = callback_url();
     let resp = post_async(&w, t.finance, &url, &[]).await;
@@ -235,7 +277,7 @@ async fn api_async_metadata_is_null_while_pending_and_populated_once_completed()
     let w = World::new().await;
     let base = w.backend.base_url().to_owned();
     resume_uploads(&base).await;
-    pause_uploads(&base).await;
+    let _resume_on_drop = pause_uploads(&base).await;
     let t = w.read_write_tree().await;
     let url = callback_url();
     let resp = post_async(&w, t.finance, &url, &[]).await;
@@ -268,7 +310,8 @@ async fn api_polling_payload_carries_the_document_metadata() {
     let request_id = resp.json()["request_id"].as_str().expect("id").to_owned();
     let done = poll_upload(&w.api, &w.token, &request_id, "completed").await;
     assert_eq!(done["metadata"]["upload_mode"], json!("async"));
-    assert!(done["metadata"]["uploaded_at"].is_string());
+    common::assert_rails_time(&done["metadata"]["uploaded_at"]);
+    common::assert_rails_time(&done["metadata"]["updated_at"]);
 }
 
 #[tokio::test]

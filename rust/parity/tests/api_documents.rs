@@ -9,8 +9,10 @@ use common::{
     PDF, Tree, World, assert_document_keys, assert_rails_time, document_id, documents_of,
     filenames, pagination_of, query, upload,
 };
+use parity::admin::AdminSession;
 use parity::http::FilePart;
 use parity::json::{assert_error, assert_json_content_type, assert_json_includes, assert_status};
+use reqwest::Method;
 use serde_json::{Value, json};
 
 async fn tree(w: &World) -> Tree {
@@ -31,8 +33,7 @@ async fn api_sync_upload_returns_201_with_the_document_uuid() {
     let body = resp.json();
     assert_document_keys(&body);
     let id = body["id"].as_str().expect("id");
-    assert_eq!(id.len(), 36);
-    assert!(id.contains('-'), "{id}");
+    assert_rails_uuid(id);
     assert_json_includes(
         &body,
         &json!({
@@ -531,6 +532,49 @@ async fn api_delete_soft_deletes_the_document_and_keeps_it_for_the_retention_win
         parity::fixtures::document_retained_for_30_days(w.backend.db(), &id).await,
         "soft-deleted row must stay, with purge_at = deleted_at + 30 days"
     );
+    let hidden = w
+        .api
+        .get_bearer(&format!("/api/v1/documents/{id}/download"), &w.token)
+        .await;
+    assert_error(&hidden, 404, "not found");
+
+    // The blob row is a storage table, so it is not queried here. Restoring
+    // through the admin UI and downloading the same bytes proves the file
+    // survived the soft-delete, which is what `ActiveStorage::Blob.exists?`
+    // asserts on the Rails side.
+    let admin = AdminSession::cached(w.backend.base_url())
+        .await
+        .expect("admin session");
+    let restored = admin
+        .submit(
+            Method::PATCH,
+            &format!("/admin/deleted_documents/{id}/restore"),
+            &[],
+        )
+        .await;
+    assert!(
+        matches!(restored.status, 302 | 303),
+        "restore answered {} {:?}",
+        restored.status,
+        restored.header("location")
+    );
+    let kept = w
+        .api
+        .get_bearer(&format!("/api/v1/documents/{id}/download"), &w.token)
+        .await;
+    assert_status(&kept, 200);
+    assert_eq!(kept.body, PDF, "soft-delete must keep the file bytes");
+}
+
+/// Rails `SecureRandom.uuid`: 36 lowercase hex-or-dash characters, and a real UUID.
+fn assert_rails_uuid(id: &str) {
+    assert!(
+        id.len() == 36
+            && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+            && id.bytes().all(|b| !b.is_ascii_uppercase()),
+        "expected a Rails uuid, got {id}"
+    );
+    uuid::Uuid::parse_str(id).unwrap_or_else(|e| panic!("{id} is not a uuid ({e})"));
 }
 
 #[tokio::test]

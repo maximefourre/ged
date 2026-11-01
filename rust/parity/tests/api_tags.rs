@@ -135,5 +135,8 @@ async fn api_tag_replace_is_forbidden_outside_granted_departments() {
 async fn api_the_tag_registry_endpoints_are_gone() {
     let w = World::new().await;
     let resp = w.api.get_bearer("/api/v1/tags", &w.token).await;
+    // Ruby only asserted 404. `JsonApiExceptions` renders Rack's status name
+    // for an unrouted `/api/v1` path (`Not Found` → `not found`). The body is
+    // part of the contract and is checked against the Rails stack.
     assert_error(&resp, 404, "not found");
 }
