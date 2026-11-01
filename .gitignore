@@ -43,3 +43,10 @@ tmp_test_data/
 
 # Rust build output.
 /rust/target/
+
+# Playwright (rust/e2e). The suite is committed; its install and traces are not.
+/rust/e2e/node_modules/
+/rust/e2e/test-results/
+/rust/e2e/playwright-report/
+/rust/e2e/blob-report/
+/rust/e2e/.auth/

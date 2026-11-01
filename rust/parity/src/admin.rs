@@ -108,8 +108,9 @@ impl AdminSession {
         Ok(this)
     }
 
-    /// `name=value` of the session cookie, read back from a request echo.
-    async fn session_cookie(&self) -> Result<String, String> {
+    /// `name=value` of the session cookie, so a browser suite can reuse this
+    /// login. Rails allows 10 `POST /admins/sign_in` attempts per 3 minutes.
+    pub async fn session_cookie(&self) -> Result<String, String> {
         // reqwest's jar is opaque; recover the cookie from the Set-Cookie of a
         // fresh authenticated page instead of re-implementing a jar.
         let resp = self

@@ -35,7 +35,10 @@ Règles de classement :
   Vert contre Rails : `GED_BACKEND=rails cargo test -p parity auth`.
 - `rust/parity/tests/harness_admin.rs` : tests de fumée de l'utilitaire de session admin
   (login formulaire, CSRF, logout), hors inventaire.
-- Tout le reste : à porter dans T2 (API), T3 (admin, navigateur) et T4+ (unitaire Rust).
+- Porté (T3b) : `test/system/admin_ui_test.rb` (22 tests navigateur) →
+  `rust/e2e/tests/admin_ui.spec.ts`. Session réutilisée via `AdminSession::cached`
+  (`rust/parity/src/bin/admin_session.rs`) à cause de la limite de 10 connexions / 3 min.
+- Tout le reste : à porter dans T2 (API), T3a (admin HTTP) et T4+ (unitaire Rust).
 
 ## Répartition par fichier Ruby
 
@@ -478,25 +481,25 @@ Règles de classement :
 | 380 | `test/services/system_health_test.rb:51` | storage disk check maps used fraction to thresholds | unitaire Rust | `rust/ged/src/admin/status.rs` |  |
 | 381 | `test/services/system_health_test.rb:60` | storage disk check is unknown when df is unavailable | unitaire Rust | `rust/ged/src/admin/status.rs` |  |
 | 382 | `test/services/system_health_test.rb:66` | checks returns database, workers, jwks and disk in display order | unitaire Rust | `rust/ged/src/admin/status.rs` |  |
-| 383 | `test/system/admin_ui_test.rb:20` | 2.1 login with valid credentials lands on the documents list | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 384 | `test/system/admin_ui_test.rb:27` | 2.2 login with a wrong password is rejected and creates no session | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 385 | `test/system/admin_ui_test.rb:42` | 2.3 create departments with a hierarchy | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 386 | `test/system/admin_ui_test.rb:57` | 2.4 a duplicate department at the same level is rejected | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 387 | `test/system/admin_ui_test.rb:67` | department tree rows collapse and expand | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 388 | `test/system/admin_ui_test.rb:84` | 2.5 tag keys are normalized to lowercase in the document tags textarea | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 389 | `test/system/admin_ui_test.rb:104` | 2.6 upload a document and see it in the list attributed to the admin | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 390 | `test/system/admin_ui_test.rb:120` | 2.7 download the uploaded document returns the original bytes | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 391 | `test/system/admin_ui_test.rb:130` | 2.8 filter the document list by filename and by department | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 392 | `test/system/admin_ui_test.rb:156` | 2.9 delete a document removes it from the list | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 393 | `test/system/admin_ui_test.rb:168` | 2.9b a deleted document can be restored from the trash | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 394 | `test/system/admin_ui_test.rb:188` | clicking a document row opens the split-pane preview in an iframe | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 395 | `test/system/admin_ui_test.rb:209` | an image row renders an <img> preview, not an iframe | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 396 | `test/system/admin_ui_test.rb:223` | a non-previewable content type shows the fallback card instead of an iframe | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 397 | `test/system/admin_ui_test.rb:237` | the Close button hides the preview and restores the full-width table | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 398 | `test/system/admin_ui_test.rb:252` | clicking Download/Tags/Delete in a row does not open the preview | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 399 | `test/system/admin_ui_test.rb:265` | select-all enables the bulk toolbar and Delete selected trashes the selection | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 400 | `test/system/admin_ui_test.rb:287` | bulk ZIP download contains the selected documents | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 401 | `test/system/admin_ui_test.rb:309` | 2.10 deleting a department with documents offers move or trash, then trashes | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 402 | `test/system/admin_ui_test.rb:343` | 2.11 after logout a protected page redirects to login | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 403 | `test/system/admin_ui_test.rb:354` | the status page shows health checks and key metrics | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
-| 404 | `test/system/admin_ui_test.rb:367` | the light/dark toggle switches the theme and persists across reloads | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | remplace test/system/admin_ui_test.rb |
+| 383 | `test/system/admin_ui_test.rb:20` | 2.1 login with valid credentials lands on the documents list | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 384 | `test/system/admin_ui_test.rb:27` | 2.2 login with a wrong password is rejected and creates no session | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 385 | `test/system/admin_ui_test.rb:42` | 2.3 create departments with a hierarchy | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 386 | `test/system/admin_ui_test.rb:57` | 2.4 a duplicate department at the same level is rejected | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 387 | `test/system/admin_ui_test.rb:67` | department tree rows collapse and expand | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 388 | `test/system/admin_ui_test.rb:84` | 2.5 tag keys are normalized to lowercase in the document tags textarea | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 389 | `test/system/admin_ui_test.rb:104` | 2.6 upload a document and see it in the list attributed to the admin | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 390 | `test/system/admin_ui_test.rb:120` | 2.7 download the uploaded document returns the original bytes | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 391 | `test/system/admin_ui_test.rb:130` | 2.8 filter the document list by filename and by department | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 392 | `test/system/admin_ui_test.rb:156` | 2.9 delete a document removes it from the list | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 393 | `test/system/admin_ui_test.rb:168` | 2.9b a deleted document can be restored from the trash | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 394 | `test/system/admin_ui_test.rb:188` | clicking a document row opens the split-pane preview in an iframe | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 395 | `test/system/admin_ui_test.rb:209` | an image row renders an <img> preview, not an iframe | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 396 | `test/system/admin_ui_test.rb:223` | a non-previewable content type shows the fallback card instead of an iframe | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 397 | `test/system/admin_ui_test.rb:237` | the Close button hides the preview and restores the full-width table | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 398 | `test/system/admin_ui_test.rb:252` | clicking Download/Tags/Delete in a row does not open the preview | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 399 | `test/system/admin_ui_test.rb:265` | select-all enables the bulk toolbar and Delete selected trashes the selection | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 400 | `test/system/admin_ui_test.rb:287` | bulk ZIP download contains the selected documents | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 401 | `test/system/admin_ui_test.rb:309` | 2.10 deleting a department with documents offers move or trash, then trashes | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 402 | `test/system/admin_ui_test.rb:343` | 2.11 after logout a protected page redirects to login | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 403 | `test/system/admin_ui_test.rb:354` | the status page shows health checks and key metrics | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |
+| 404 | `test/system/admin_ui_test.rb:367` | the light/dark toggle switches the theme and persists across reloads | navigateur | `rust/e2e/tests/admin_ui.spec.ts` | porté T3b |

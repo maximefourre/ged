@@ -1,0 +1,12 @@
+{
+  "name": "ged-e2e",
+  "private": true,
+  "description": "Black-box Playwright suite for the GED admin UI. Talks to GED_BASE_URL with GED_ADMIN_USERNAME / GED_ADMIN_PASSWORD.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^22.19.0"
+  }
+}
