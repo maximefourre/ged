@@ -60,7 +60,15 @@ fn resolve() -> Stack {
         .expect("GED_OAUTH_URL unset and bin/worktree-stack urls gave no oauth port");
     let database_url = env_nonempty("DATABASE_URL")
         .or_else(|| {
-            db.map(|p| format!("postgres://postgres:postgres@localhost:{p}/ged_production"))
+            // Rails compose uses `ged_production`. `GED_DATABASE_NAME` lets a
+            // future backend point the same fallback at its own database
+            // without changing that default.
+            db.map(|p| {
+                format!(
+                    "postgres://postgres:postgres@localhost:{p}/{}",
+                    database_name()
+                )
+            })
         })
         .expect("DATABASE_URL unset and bin/worktree-stack urls gave no db port");
     Stack {
@@ -91,6 +99,15 @@ pub fn exec(service: &str, args: &[&str]) -> Result<String, String> {
             String::from_utf8_lossy(&out.stderr)
         ))
     }
+}
+
+/// Business database name used when `DATABASE_URL` is unset.
+///
+/// Default `ged_production` matches this repo's compose file. Set
+/// `GED_DATABASE_NAME` for a backend whose database is named differently.
+/// An explicit `DATABASE_URL` still wins, unchanged.
+pub fn database_name() -> String {
+    env_nonempty("GED_DATABASE_NAME").unwrap_or_else(|| "ged_production".into())
 }
 
 /// Admin credentials: `GED_ADMIN_USERNAME` (default `admin`) and

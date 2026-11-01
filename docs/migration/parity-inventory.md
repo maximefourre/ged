@@ -34,7 +34,9 @@ Règles de classement :
   un témoin « jeton re-signé sans modification accepté », et le schéma non-Bearer).
   Vert contre Rails : `GED_BACKEND=rails cargo test -p parity auth`.
 - `rust/parity/tests/harness_admin.rs` : tests de fumée de l'utilitaire de session admin
-  (login formulaire, CSRF, logout), hors inventaire.
+  (login formulaire, CSRF, logout), hors inventaire. Le POST sans jeton valide
+  (absent ou forgé) répond 422 « The change you wanted was rejected » et ne
+  met pas la file d'upload en pause.
 - Porté (T3b) : `test/system/admin_ui_test.rb` (22 tests navigateur) →
   `rust/e2e/tests/admin_ui.spec.ts`. Session réutilisée via `AdminSession::cached`
   (`rust/parity/src/bin/admin_session.rs`) à cause de la limite de 10 connexions / 3 min.
@@ -62,7 +64,12 @@ Règles de classement :
   Vert : `GED_BACKEND=rails cargo test -p parity security` (61 passed).
   La ligne 92 (corps du POST de callback) est reclassée unitaire
   (`rust/ged/src/jobs/deliver_callback.rs`) : la cible loopback est bloquée par la garde SSRF.
-- Tout le reste : à porter dans T3a (admin HTTP) et T4+ (unitaire Rust).
+- Porté (T3a) : les 81 lignes parité de `test/controllers/admin` (la ligne
+  « lists recent failed jobs » reste unitaire Rust) → `rust/parity/tests/admin_*.rs`.
+  Statut HTTP et libellés visibles. Le budget login Rails (10/3 min) est partagé :
+  une seule session admin pour la suite, les deux tests de rate-limit attendent
+  une fenêtre libre.
+- Tout le reste : unitaire Rust (T4+), sauf mention contraire ci-dessus.
 
 ## Répartition par fichier Ruby
 
@@ -136,10 +143,10 @@ Règles de classement :
 | 11 | `test/controllers/admin/admin_ui_test.rb:124` | registers an app client with full read/write access from the grid | parité | `rust/parity/tests/admin_app_clients.rs` |  |
 | 12 | `test/controllers/admin/admin_ui_test.rb:135` | registers a read-only app client | parité | `rust/parity/tests/admin_app_clients.rs` |  |
 | 13 | `test/controllers/admin/admin_ui_test.rb:146` | registers a write-only app client | parité | `rust/parity/tests/admin_app_clients.rs` |  |
-| 14 | `test/controllers/admin/admin_ui_test.rb:157` | unchecking both boxes removes the department access row | parité | `rust/parity/tests/admin_departments.rs` |  |
-| 15 | `test/controllers/admin/admin_ui_test.rb:169` | updating access flags edits the existing row in place | parité | `rust/parity/tests/admin_documents.rs` |  |
+| 14 | `test/controllers/admin/admin_ui_test.rb:157` | unchecking both boxes removes the department access row | parité | `rust/parity/tests/admin_app_clients.rs` |  |
+| 15 | `test/controllers/admin/admin_ui_test.rb:169` | updating access flags edits the existing row in place | parité | `rust/parity/tests/admin_app_clients.rs` |  |
 | 16 | `test/controllers/admin/admin_ui_test.rb:182` | the app client form shows the read/write grid | parité | `rust/parity/tests/admin_app_clients.rs` |  |
-| 17 | `test/controllers/admin/admin_ui_test.rb:190` | the legacy department_ids param no longer grants access | parité | `rust/parity/tests/admin_departments.rs` |  |
+| 17 | `test/controllers/admin/admin_ui_test.rb:190` | the legacy department_ids param no longer grants access | parité | `rust/parity/tests/admin_app_clients.rs` |  |
 | 18 | `test/controllers/admin/admin_ui_test.rb:199` | uploads a document, then soft-deletes it to the trash | parité | `rust/parity/tests/admin_documents.rs` |  |
 | 19 | `test/controllers/admin/admin_ui_test.rb:220` | uploads a document with tags | parité | `rust/parity/tests/admin_documents.rs` |  |
 | 20 | `test/controllers/admin/admin_ui_test.rb:230` | uploading a non-file file param shows an alert instead of a 500 | parité | `rust/parity/tests/admin_documents.rs` |  |

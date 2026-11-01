@@ -161,6 +161,95 @@ pub async fn set_upload_origin(db: &PgPool, id: &str, stored_async: bool, upload
         .expect("set upload origin");
 }
 
+pub async fn admin_insert_document(
+    db: &PgPool,
+    department_id: i64,
+    filename: &str,
+    uploaded_by: &str,
+    tags: serde_json::Value,
+    byte_size: Option<i64>,
+) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO documents \
+         (department_id, filename, content_type, byte_size, uploaded_by, tags, \
+          uploaded_at, stored_async, created_at, updated_at) \
+         VALUES ($1, $2, 'application/pdf', $3, $4, $5, now(), false, now(), now()) \
+         RETURNING id",
+    )
+    .bind(department_id)
+    .bind(filename)
+    .bind(byte_size)
+    .bind(uploaded_by)
+    .bind(tags)
+    .fetch_one(db)
+    .await
+    .expect("insert document")
+}
+
+pub async fn admin_insert_upload_request(
+    db: &PgPool,
+    department_id: i64,
+    filename: &str,
+    status: &str,
+    error_message: Option<&str>,
+) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO upload_requests \
+         (department_id, callback_url, filename, uploaded_by, status, error_message, \
+          created_at, updated_at) \
+         VALUES ($1, 'https://caller.test/cb', $2, 'erp-app', $3, $4, now(), now()) \
+         RETURNING id",
+    )
+    .bind(department_id)
+    .bind(filename)
+    .bind(status)
+    .bind(error_message)
+    .fetch_one(db)
+    .await
+    .expect("insert upload_request")
+}
+
+/// Remove fixture rows this suite created. Children before parents.
+/// Does not touch storage or queue tables.
+pub async fn delete_fixtures(db: &PgPool, departments: &[i64], clients: &[i64]) {
+    if !departments.is_empty() {
+        for sql in [
+            "DELETE FROM upload_requests WHERE department_id = ANY($1)",
+            "DELETE FROM documents WHERE department_id = ANY($1)",
+            "DELETE FROM client_department_accesses WHERE department_id = ANY($1)",
+        ] {
+            sqlx::query(sql).bind(departments).execute(db).await.ok();
+        }
+        let mut remaining = departments.to_vec();
+        while !remaining.is_empty() {
+            let deleted: Vec<i64> = sqlx::query_scalar(
+                "DELETE FROM departments d WHERE d.id = ANY($1) AND NOT EXISTS \
+                 (SELECT 1 FROM departments c WHERE c.parent_id = d.id) RETURNING d.id",
+            )
+            .bind(&remaining)
+            .fetch_all(db)
+            .await
+            .unwrap_or_default();
+            if deleted.is_empty() {
+                break;
+            }
+            remaining.retain(|id| !deleted.contains(id));
+        }
+    }
+    if !clients.is_empty() {
+        sqlx::query("DELETE FROM client_department_accesses WHERE app_client_id = ANY($1)")
+            .bind(clients)
+            .execute(db)
+            .await
+            .ok();
+        sqlx::query("DELETE FROM app_clients WHERE id = ANY($1)")
+            .bind(clients)
+            .execute(db)
+            .await
+            .ok();
+    }
+}
+
 /// Soft-delete state of a document, to age it past its retention window
 /// before running the purge job.
 pub async fn make_purgeable(db: &PgPool, document_id: Uuid) {
