@@ -37,7 +37,7 @@ async fn main() -> ExitCode {
     };
     let result = match cli.command {
         Command::Serve => serve().await,
-        Command::Worker => Err("not implemented".into()),
+        Command::Worker => worker().await,
         Command::Migrate => migrate().await,
         Command::Seed => seed_admin().await,
     };
@@ -94,4 +94,13 @@ async fn seed_admin() -> Result<(), Failure> {
     let pool = db::connect(database_url(&config)?).await?;
     seed::run(&pool, &config).await?;
     Ok(())
+}
+
+async fn worker() -> Result<(), Failure> {
+    let config = load_config()?;
+    ged::jobs::worker::run(
+        database_url(&config)?,
+        ged::jobs::worker::WorkerSettings::from_process_env(),
+    )
+    .await
 }

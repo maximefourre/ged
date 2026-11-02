@@ -21,7 +21,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 sha2 = "0.10"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "fs", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "fs", "io-util", "sync"] }
 uuid = { version = "1.29.0", features = ["v4"] }
 opentelemetry = "0.33"
 opentelemetry_sdk = "0.33"

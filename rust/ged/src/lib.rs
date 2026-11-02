@@ -6,6 +6,7 @@ pub mod config;
 pub mod db;
 pub mod domain;
 pub mod http;
+pub mod jobs;
 pub mod seed;
 pub mod telemetry;
 

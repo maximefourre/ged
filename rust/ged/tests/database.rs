@@ -33,6 +33,9 @@ fn ged(args: &[&str], url: &str, env: &[(&str, &str)]) -> std::process::Output {
     cmd.output().unwrap()
 }
 
+/// T8: the job queue lives in the same database.
+const QUEUE_TABLES: [&str; 4] = ["job_workers", "jobs", "queue_pauses", "scheduled_runs"];
+
 async fn tables(pool: &sqlx::PgPool) -> Vec<String> {
     sqlx::query_scalar(
         "SELECT table_name::text FROM information_schema.tables \
@@ -54,7 +57,9 @@ async fn migrate_creates_the_business_tables_and_is_idempotent() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    assert_eq!(tables(&db.pool().await).await, BUSINESS_TABLES);
+    let mut expected: Vec<&str> = BUSINESS_TABLES.into_iter().chain(QUEUE_TABLES).collect();
+    expected.sort_unstable();
+    assert_eq!(tables(&db.pool().await).await, expected);
     db.drop_db().await;
 }
 
