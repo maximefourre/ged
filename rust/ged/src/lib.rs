@@ -9,4 +9,6 @@ pub mod http;
 pub mod seed;
 pub mod telemetry;
 
+pub mod storage;
+
 pub use http::{AppState, router, router_with};
