@@ -88,6 +88,92 @@ async fn rejects_a_token_whose_nbf_is_in_the_future_but_not_one_that_just_starte
 }
 
 #[tokio::test]
+async fn a_token_without_exp_is_accepted_like_jwt_3_2() {
+    // jwt 3.2 only checks exp when present; Rails therefore accepts it.
+    let f = Fixture::new().await;
+    let mut c = claims("erp-app");
+    c.as_object_mut().unwrap().remove("exp");
+    assert_eq!(f.id(audience_cfg(), &sign(&c)).await.unwrap(), "erp-app");
+}
+
+#[tokio::test]
+async fn exp_given_as_a_string_is_read_like_string_to_i() {
+    let f = Fixture::new().await;
+    let mut c = claims("erp-app");
+    c["exp"] = json!((now() + 3600).to_string());
+    assert!(f.id(audience_cfg(), &sign(&c)).await.is_ok());
+    c["exp"] = json!(format!("{}abc", now() + 3600));
+    assert!(f.id(audience_cfg(), &sign(&c)).await.is_ok());
+    for expired in [
+        json!("abc"),
+        json!(""),
+        json!(null),
+        json!(true),
+        json!([now() + 3600]),
+        json!({"v": now() + 3600}),
+        json!((now() - 1).to_string()),
+        json!("-99999999999999999999"),
+    ] {
+        c["exp"] = expired.clone();
+        assert!(
+            f.id(audience_cfg(), &sign(&c)).await.is_err(),
+            "exp {expired} must be rejected"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_exp_beyond_i64_is_far_future_not_zero() {
+    // Ruby bignum: still valid, exactly like Rails.
+    let f = Fixture::new().await;
+    let mut c = claims("erp-app");
+    c["exp"] = json!("99999999999999999999");
+    assert!(f.id(audience_cfg(), &sign(&c)).await.is_ok());
+}
+
+#[tokio::test]
+async fn nbf_given_as_a_string_is_read_like_string_to_i() {
+    let f = Fixture::new().await;
+    let mut c = claims("erp-app");
+    c["nbf"] = json!((now() - 5).to_string());
+    assert!(f.id(audience_cfg(), &sign(&c)).await.is_ok());
+    c["nbf"] = json!("12abc");
+    assert!(f.id(audience_cfg(), &sign(&c)).await.is_ok());
+    c["nbf"] = json!(null); // nil.to_i == 0, long started
+    assert!(f.id(audience_cfg(), &sign(&c)).await.is_ok());
+    c["nbf"] = json!((now() + 3600).to_string());
+    assert!(f.id(audience_cfg(), &sign(&c)).await.is_err());
+}
+
+#[tokio::test]
+async fn an_unrepresentable_nbf_is_rejected_never_read_as_zero() {
+    // Rails: ImmatureSignature. A fallback to 0 would accept the token.
+    let f = Fixture::new().await;
+    let mut c = claims("erp-app");
+    for nbf in [
+        json!("99999999999999999999"),
+        json!("9_9999999999"),
+        json!("9223372036854775808"),
+        json!(1e30),
+        json!(18446744073709551615u64),
+    ] {
+        c["nbf"] = nbf.clone();
+        assert!(
+            f.id(audience_cfg(), &sign(&c)).await.is_err(),
+            "nbf {nbf} must be rejected"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_token_whose_nbf_is_this_very_second_is_accepted() {
+    let f = Fixture::new().await;
+    let mut c = claims("erp-app");
+    c["nbf"] = json!(now());
+    assert!(f.id(audience_cfg(), &sign(&c)).await.is_ok());
+}
+
+#[tokio::test]
 async fn rejects_the_wrong_issuer_or_none() {
     let f = Fixture::new().await;
     let mut c = claims("erp-app");

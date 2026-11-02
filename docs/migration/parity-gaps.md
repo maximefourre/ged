@@ -195,13 +195,35 @@ gem installé, pas supposé) :
 - `exp` et `nbf` ne sont contrôlés **que s'ils sont présents** : un token sans
   `exp` est accepté par Rails et l'est donc côté Rust (comportement discutable,
   reproduit tel quel, comme l'impose la spec) ; une valeur non numérique est lue
-  comme `String#to_i` (`"abc"`, `null` → 0, donc expiré) ;
+  comme `String#to_i` (`"abc"`, `null` → 0, donc expiré). Les entiers
+  hors `i64` (`"99999999999999999999"`, `"9_9999999999"`, flottant `1e30`) sont des
+  bignums côté Ruby : le Rust **sature** à `i64::MAX`/`i64::MIN` au lieu de
+  retomber sur 0, donc un `nbf` inreprésentable est rejeté (`ImmatureSignature`
+  sur Rails, jamais lu comme « déjà valide ») et un `exp` inreprésentable reste
+  valable, exactement comme Rails. Les particularités de `to_i` (un `_` isolé
+  entre chiffres, préfixe `0d`, espaces ASCII seulement) sont reproduites.
+  Ces cas sont couverts par `auth_validator.rs` et comparés en direct sur les
+  deux backends par `parity/tests/auth_matrix.rs` ;
 - `aud` : intersection non vide entre le claim (chaîne ou tableau) et
   `GED_OIDC_AUDIENCE` ; absent ou vide → refus ;
 - un token sans `kid` est refusé ; un `kid` inconnu force un seul rafraîchissement
   par fenêtre de 30 s (rotation de clés).
 
-Écarts connus, volontaires : une variable de configuration absente
+Écarts connus, volontaires, tous plus stricts que Rails (fail-closed) :
+
+- `exp`/`nbf` booléen, tableau ou objet, ou payload JSON qui n'est pas un objet :
+  Rails lève `NoMethodError`/`TypeError` (500, sondé sur `jwt` 3.2.0) ; le Rust
+  répond 401 `invalid token`. Le 500 n'est pas reproduit, volontairement (pas de
+  cas dans `auth_matrix`, qui n'asserte que des comportements identiques).
+- claim d'identifiant `true` : Rails le passe à `find_by` (403 `client not
+  registered`, ou correspondance avec un client nommé `"t"`) ; le Rust refuse en
+  401. Un tableau non vide : Rails fait un `IN` et peut authentifier le premier
+  client existant ; le Rust refuse en 401.
+- variable de configuration présente mais **vide** (`GED_OIDC_AUDIENCE=""`) :
+  traitée comme absente (401) côté Rust, alors que `ENV.fetch` Rails renverrait
+  `""` et attendrait un `aud` vide.
+
+Autres écarts connus, volontaires : une variable de configuration absente
 (`GED_OIDC_ISSUER`, `GED_OIDC_AUDIENCE`, `GED_OIDC_REQUIRED_SCOPE`) donne un 401
 `invalid token` côté Rust, là où Rails lève `KeyError` (500) ; en production le
 boot est de toute façon refusé dans ce cas. Un claim d'identifiant numérique est

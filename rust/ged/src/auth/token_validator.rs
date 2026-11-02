@@ -153,26 +153,54 @@ fn now() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
-/// Ruby `value.to_i` on a JSON claim; anything that is not a number or a
-/// string counts as `0` (so an `exp` of `null` is long expired).
+/// Ruby `value.to_i` on a JSON claim, saturating where Ruby would return a
+/// bignum (so `"99999999999999999999"` is "very far in the future", exactly
+/// how Rails judges it) — never a fallback to `0`. Anything that is neither a
+/// number nor a string counts as `0` (an `exp` of `null` is long expired).
 fn ruby_to_i(value: &Value) -> i64 {
     match value {
         Value::Number(n) => n
             .as_i64()
+            // u64 above i64::MAX has no i64 form; as_f64 saturates below.
             .or_else(|| n.as_f64().map(|f| f as i64))
             .unwrap_or(0),
-        Value::String(s) => {
-            let t = s.trim_start();
-            let (sign, digits) = match t.strip_prefix('-') {
-                Some(rest) => (-1, rest),
-                None => (1, t.strip_prefix('+').unwrap_or(t)),
-            };
-            let end = digits
-                .find(|c: char| !c.is_ascii_digit())
-                .unwrap_or(digits.len());
-            sign * digits[..end].parse::<i64>().unwrap_or(0)
-        }
+        Value::String(s) => string_to_i(s),
         _ => 0,
+    }
+}
+
+/// `String#to_i` (base 10): leading ASCII whitespace, one sign, an optional
+/// `0d` prefix, then digits where a single `_` between digits is allowed.
+fn string_to_i(s: &str) -> i64 {
+    let t = s.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']);
+    let (negative, rest) = match t.as_bytes().first() {
+        Some(b'-') => (true, &t[1..]),
+        Some(b'+') => (false, &t[1..]),
+        _ => (false, t),
+    };
+    let b = rest.as_bytes();
+    let b = match b {
+        [b'0', b'd' | b'D', d, ..] if d.is_ascii_digit() => &b[2..],
+        _ => b,
+    };
+    let mut magnitude: u64 = 0;
+    let mut prev_digit = false;
+    for (i, &c) in b.iter().enumerate() {
+        if c.is_ascii_digit() {
+            magnitude = magnitude
+                .saturating_mul(10)
+                .saturating_add(u64::from(c - b'0'));
+            prev_digit = true;
+        } else if c == b'_' && prev_digit && b.get(i + 1).is_some_and(u8::is_ascii_digit) {
+            prev_digit = false;
+        } else {
+            break;
+        }
+    }
+    if negative {
+        i64::try_from(magnitude).map_or(i64::MIN, |m| -m)
+    } else {
+        i64::try_from(magnitude).unwrap_or(i64::MAX)
     }
 }
 
@@ -225,6 +253,47 @@ mod tests {
         assert_eq!(ruby_to_i(&json!("abc")), 0);
         assert_eq!(ruby_to_i(&json!(null)), 0);
         assert_eq!(ruby_to_i(&json!("-3")), -3);
+    }
+
+    #[test]
+    fn ruby_to_i_saturates_instead_of_falling_back_to_zero() {
+        // Ruby has bignums: these are huge, never 0.
+        assert_eq!(ruby_to_i(&json!("99999999999999999999")), i64::MAX);
+        assert_eq!(ruby_to_i(&json!("-99999999999999999999")), i64::MIN);
+        assert_eq!(ruby_to_i(&json!(1e30)), i64::MAX);
+        assert_eq!(ruby_to_i(&json!(99999999999999999999u128 as f64)), i64::MAX);
+        assert_eq!(ruby_to_i(&json!(18446744073709551615u64)), i64::MAX);
+    }
+
+    #[test]
+    fn ruby_to_i_matches_string_to_i_quirks_probed_on_ruby_3_4() {
+        assert_eq!(ruby_to_i(&json!("9_9999999999")), 99_999_999_999);
+        assert_eq!(ruby_to_i(&json!("1_000")), 1000);
+        assert_eq!(ruby_to_i(&json!("1__0")), 1);
+        assert_eq!(ruby_to_i(&json!("_1")), 0);
+        assert_eq!(ruby_to_i(&json!("1_")), 1);
+        assert_eq!(ruby_to_i(&json!("0_8")), 8);
+        assert_eq!(ruby_to_i(&json!("0d12")), 12);
+        assert_eq!(ruby_to_i(&json!("-0d5")), -5);
+        assert_eq!(ruby_to_i(&json!("0d")), 0);
+        assert_eq!(ruby_to_i(&json!("0d_1")), 0);
+        assert_eq!(ruby_to_i(&json!("0x1A")), 0);
+        assert_eq!(ruby_to_i(&json!("1e3")), 1);
+        assert_eq!(ruby_to_i(&json!("\u{b}\u{c} 7x")), 7);
+        assert_eq!(ruby_to_i(&json!("\u{a0}5")), 0);
+        assert_eq!(ruby_to_i(&json!("- 3")), 0);
+        assert_eq!(ruby_to_i(&json!("+-3")), 0);
+    }
+
+    #[test]
+    fn unrepresentable_times_are_judged_like_ruby_bignums() {
+        let now = 1_700_000_000;
+        assert!(check_time(&json!({"nbf": "99999999999999999999"}), now).is_err());
+        assert!(check_time(&json!({"nbf": "9_9999999999"}), now).is_err());
+        assert!(check_time(&json!({"nbf": 1e30}), now).is_err());
+        assert!(check_time(&json!({"nbf": "-99999999999999999999"}), now).is_ok());
+        assert!(check_time(&json!({"exp": "99999999999999999999"}), now).is_ok());
+        assert!(check_time(&json!({"exp": "-99999999999999999999"}), now).is_err());
     }
 
     #[test]

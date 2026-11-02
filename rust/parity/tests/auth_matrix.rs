@@ -199,3 +199,141 @@ async fn auth_control_resigned_untouched_claims_are_accepted() {
     let r = w.api.get_bearer(PING, &token).await;
     assert_json_eq(&r, &json!({ "client": w.client.client_id }));
 }
+
+// --- JWT claim semantics taken from the `jwt` 3.2 gem, observed over HTTP ---
+//
+// Each case below is asserted identically on Rails and Rust (the suite runs
+// against either backend). Cases where Rails answers 500 (a boolean/array/
+// object `exp`/`nbf`, a non-object payload) are deliberately absent: Rust
+// fails closed with 401 there, a documented divergence (parity-gaps.md).
+
+fn resigned(w: &World, mutate: impl FnOnce(&mut serde_json::Value)) -> String {
+    let mut claims = w.template.fresh_claims();
+    mutate(&mut claims);
+    forge::sign_rs256(&claims, w.template.kid())
+}
+
+async fn assert_accepted(w: &World, token: &str, what: &str) {
+    let r = w.api.get_bearer(PING, token).await;
+    assert_status(&r, 200);
+    assert!(
+        r.text().contains(&w.client.client_id),
+        "{what}: {}",
+        r.text()
+    );
+}
+
+async fn assert_rejected(w: &World, token: &str, what: &str) {
+    let r = w.api.get_bearer(PING, token).await;
+    eprintln!("{what}: {}", r.status);
+    assert_error(&r, 401, "invalid token");
+}
+
+#[tokio::test]
+async fn auth_token_without_exp_is_accepted() {
+    // jwt only checks exp when present; Rails accepts, so does Rust.
+    let w = World::new().await;
+    let token = resigned(&w, |c| {
+        c.as_object_mut().expect("claims object").remove("exp");
+    });
+    assert_accepted(&w, &token, "no exp").await;
+}
+
+#[tokio::test]
+async fn auth_exp_as_a_string_is_read_like_string_to_i() {
+    let w = World::new().await;
+    let future = forge::now() + 3600;
+    let token = resigned(&w, |c| c["exp"] = json!(future.to_string()));
+    assert_accepted(&w, &token, "exp future string").await;
+    let token = resigned(&w, |c| c["exp"] = json!(format!("{future}abc")));
+    assert_accepted(&w, &token, "exp future string with trailing junk").await;
+    let token = resigned(&w, |c| c["exp"] = json!("99999999999999999999"));
+    assert_accepted(&w, &token, "exp bignum string (far future)").await;
+    for (what, exp) in [
+        ("exp non-numeric string", json!("abc")),
+        ("exp empty string", json!("")),
+        ("exp null", json!(null)),
+        ("exp past string", json!((forge::now() - 3600).to_string())),
+        ("exp huge negative string", json!("-99999999999999999999")),
+    ] {
+        let token = resigned(&w, |c| c["exp"] = exp);
+        assert_rejected(&w, &token, what).await;
+    }
+}
+
+#[tokio::test]
+async fn auth_exp_as_a_float_is_truncated() {
+    let w = World::new().await;
+    let token = resigned(&w, |c| c["exp"] = json!(forge::now() as f64 + 3600.5));
+    assert_accepted(&w, &token, "exp future float").await;
+}
+
+#[tokio::test]
+async fn auth_nbf_as_a_string_is_read_like_string_to_i() {
+    let w = World::new().await;
+    for (what, nbf) in [
+        ("nbf past string", json!((forge::now() - 60).to_string())),
+        ("nbf non-numeric string (0)", json!("abc")),
+        ("nbf null (0)", json!(null)),
+    ] {
+        let token = resigned(&w, |c| c["nbf"] = nbf);
+        assert_accepted(&w, &token, what).await;
+    }
+    let token = resigned(&w, |c| c["nbf"] = json!((forge::now() + 3600).to_string()));
+    assert_rejected(&w, &token, "nbf future string").await;
+}
+
+#[tokio::test]
+async fn auth_an_unrepresentable_nbf_is_immature_not_zero() {
+    // Rails: Integer bignum > now => ImmatureSignature. Reading these as 0
+    // would accept the token (the fail-open the Rust port must not have).
+    let w = World::new().await;
+    for (what, nbf) in [
+        ("nbf bignum string", json!("99999999999999999999")),
+        ("nbf underscore string", json!("9_9999999999")),
+        ("nbf just over i64", json!("9223372036854775808")),
+        ("nbf huge float", json!(1e30)),
+    ] {
+        let token = resigned(&w, |c| c["nbf"] = nbf);
+        assert_rejected(&w, &token, what).await;
+    }
+}
+
+#[tokio::test]
+async fn auth_aud_as_an_array_needs_the_expected_audience_in_it() {
+    let w = World::new().await;
+    let aud = w.template.claims["aud"].clone();
+    let own = if aud.is_array() { aud[0].clone() } else { aud };
+    let token = resigned(&w, |c| {
+        c["aud"] = json!(["https://some-other-api.internal", own.clone()]);
+    });
+    assert_accepted(&w, &token, "aud array containing ours").await;
+    let token = resigned(&w, |c| {
+        c["aud"] = json!([
+            "https://some-other-api.internal",
+            "https://another.internal"
+        ]);
+    });
+    assert_rejected(&w, &token, "aud array without ours").await;
+    let token = resigned(&w, |c| c["aud"] = json!([]));
+    assert_rejected(&w, &token, "empty aud array").await;
+}
+
+#[tokio::test]
+async fn auth_token_without_kid_is_rejected() {
+    use base64::Engine as _;
+    let w = World::new().await;
+    // Re-encode the genuine header without its kid; the signature then no
+    // longer matches, but the kid check comes first on both backends and
+    // the outcome is the same generic 401 either way.
+    let parts: Vec<&str> = w.token.split('.').collect();
+    let header = json!({ "alg": "RS256", "typ": "JWT" });
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let token = format!(
+        "{}.{}.{}",
+        b64.encode(header.to_string()),
+        parts[1],
+        parts[2]
+    );
+    assert_rejected(&w, &token, "no kid").await;
+}
