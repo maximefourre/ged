@@ -154,3 +154,33 @@ Fixée en T4 et vérifiée sur le stack Rails :
 - `<`, `>`, `&`, U+2028 et U+2029 sont échappés en `\u003c`, `\u003e`, `\u0026`,
   `\u2028`, `\u2029` dans les chaînes (`{error: "a<b>&c"}.to_json`) ;
 - l'ordre des clés est l'ordre d'insertion.
+
+## Obfuscation SQL des spans (helper Ruby, pas le stack HTTP)
+
+Comparé le 2026-11-02 à `OpenTelemetry::Helpers::SqlProcessor.obfuscate_sql`
+(`adapter: :postgres`) du gem `opentelemetry-helpers-sql-processor 0.5.0`
+épinglé dans `Gemfile.lock`, le même helper que
+`config/initializers/opentelemetry.rb` branche pour `db_statement: :obfuscate`.
+Les chaînes golden de `rust/ged/tests/telemetry.rs`, y compris les formes
+`\'`, donnent les mêmes sorties. Trois écarts restent, tous hors de ces
+goldens. Le Rust masque au moins autant : un littéral que Ruby cache ne
+reste pas en clair.
+
+`.*?` des dollar-quotes Ruby ne traverse pas un retour à la ligne, donc le
+texte qui suit fuit. Le Rust masque toute la quote jusqu'au fermant.
+
+| SQL | Ruby | Rust |
+|---|---|---|
+| `SELECT $$a<NL>secret$$ FROM t` | `SELECT ?<NL>secret?` (`secret` en clair) | `SELECT ? FROM t` |
+
+Un commentaire de ligne Ruby s'arrête avant `\r` (`(?=\r|\n|$)`). La regex
+Rust `(?:#|--).*` s'arrête au `\n` et avale le `\r`.
+
+| SQL | Ruby | Rust |
+|---|---|---|
+| `SELECT 1 -- secret<CR><NL>FROM t` | `SELECT ? ?<CR><NL>FROM t` | `SELECT ? ?<NL>FROM t` |
+| `SELECT 1 -- x<CR>FROM t` | `SELECT ? ?<CR>FROM t` | `SELECT ? ?` |
+
+Une chaîne non UTF-8 n'atteint pas l'obfuscateur Rust (`&str`). Ruby passe
+d'abord par `OpenTelemetry::Common::Utilities.utf8_encode`. La limite des
+2 000 caractères est la même (caractères, pas octets).

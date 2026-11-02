@@ -9,19 +9,21 @@
 //!
 //! Names match `lib/telemetry.rb`. Attribute values are closed enums, so a
 //! filename, a tag, a department or a URL cannot be attached to a metric.
-//! SQL sent on a span goes through the same Postgres obfuscation as
-//! `db_statement: :obfuscate` (literals become `?`).
+//! SQL sent on a span is obfuscated in the shape of `db_statement: :obfuscate`
+//! (literals become `?`). The golden strings match the Ruby helper; inputs
+//! that diverge are listed in `docs/migration/parity-gaps.md`.
 
 use std::future::Future;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use opentelemetry::metrics::{Counter, Histogram};
-use opentelemetry::trace::{FutureExt, SpanKind, TraceContextExt, Tracer};
+use opentelemetry::trace::{FutureExt, SpanKind, Status as SpanStatus, TraceContextExt, Tracer};
 use opentelemetry::{Context, KeyValue, global};
 use opentelemetry_otlp::MetricExporter;
 use opentelemetry_otlp::SpanExporter;
@@ -119,7 +121,11 @@ impl JobQueue {
     }
 }
 
+/// Rails `at_exit` passes `timeout: 3` to both provider shutdowns.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// Holds the providers so shutdown runs when the process command returns.
+/// Drop flushes the span batch and the metric reader, then stops them.
 /// A guard from a disabled SDK does nothing.
 #[must_use = "dropping the guard shuts the OpenTelemetry exporters down"]
 pub struct TelemetryGuard {
@@ -140,12 +146,12 @@ impl Drop for TelemetryGuard {
     fn drop(&mut self) {
         // Tracer first, then meter: a meter shutdown can still emit spans.
         if let Some(tracer) = self.tracer.take()
-            && let Err(err) = tracer.shutdown()
+            && let Err(err) = tracer.shutdown_with_timeout(SHUTDOWN_TIMEOUT)
         {
             eprintln!("ged: telemetry tracer shutdown: {err}");
         }
         if let Some(meter) = self.meter.take()
-            && let Err(err) = meter.shutdown()
+            && let Err(err) = meter.shutdown_with_timeout(SHUTDOWN_TIMEOUT)
         {
             eprintln!("ged: telemetry meter shutdown: {err}");
         }
@@ -154,6 +160,9 @@ impl Drop for TelemetryGuard {
 
 static SDK_ACTIVE: AtomicBool = AtomicBool::new(false);
 static INSTRUMENTS: OnceLock<Instruments> = OnceLock::new();
+/// Entries into a recording path, where span names, HTTP fields and SQL
+/// obfuscation allocate. Stays put while the SDK is inactive.
+static SPAN_PREPARATIONS: AtomicU64 = AtomicU64::new(0);
 
 struct Instruments {
     documents_uploaded: Counter<u64>,
@@ -171,6 +180,46 @@ pub fn enabled(endpoint: Option<&str>, sdk_disabled: Option<&str>) -> bool {
 /// [`enabled`] is false — no exporter threads, no export.
 pub fn sdk_active() -> bool {
     SDK_ACTIVE.load(Ordering::SeqCst)
+}
+
+/// How many times a recording path prepared a span. Tests use this to prove
+/// the inactive SDK neither obfuscates SQL nor builds HTTP span strings.
+pub fn span_preparations() -> u64 {
+    SPAN_PREPARATIONS.load(Ordering::Relaxed)
+}
+
+fn note_span_preparation() {
+    SPAN_PREPARATIONS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// The recording suite installs in-memory providers without [`install`],
+/// which is what sets [`sdk_active`] in a real process.
+#[doc(hidden)]
+pub fn mark_sdk_active_for_test(active: bool) {
+    SDK_ACTIVE.store(active, Ordering::SeqCst);
+}
+
+/// Completes on SIGTERM or SIGINT. `serve` waits on this, returns, and the
+/// process then drops [`TelemetryGuard`], whose [`Drop`] flushes exporters.
+/// A handler that cannot be installed waits forever, so that failure does
+/// not stop the server at boot.
+pub async fn wait_for_shutdown_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let Ok(mut sigterm) = signal(SignalKind::terminate()) else {
+        eprintln!("ged: SIGTERM handler unavailable");
+        std::future::pending::<()>().await;
+        return;
+    };
+    let Ok(mut sigint) = signal(SignalKind::interrupt()) else {
+        eprintln!("ged: SIGINT handler unavailable");
+        std::future::pending::<()>().await;
+        return;
+    };
+    tokio::select! {
+        _ = sigterm.recv() => {}
+        _ = sigint.recv() => {}
+    }
 }
 
 /// Boot hook. Reads the process environment, like the Rails initializer.
@@ -290,7 +339,16 @@ pub fn job_duration(class: JobClass, queue: JobQueue, seconds: f64) {
 }
 
 /// Outermost HTTP span for one request. Installed by [`wrap`].
+/// While the SDK is inactive this forwards the request and allocates nothing.
 pub async fn trace_http(req: Request, next: Next) -> Response {
+    if !sdk_active() {
+        return next.run(req).await;
+    }
+    trace_http_recording(req, next).await
+}
+
+async fn trace_http_recording(req: Request, next: Next) -> Response {
+    note_span_preparation();
     let method = bounded_method(req.method().as_str());
     let path = req.uri().path().to_owned();
     let tracer = global::tracer(METER_NAME);
@@ -307,6 +365,12 @@ pub async fn trace_http(req: Request, next: Next) -> Response {
         "http.response.status_code",
         i64::from(response.status().as_u16()),
     ));
+    // Rack: `Status.error` (empty description) when the status is 500..=599.
+    // A 4xx stays unset, so the dashboard's STATUS_CODE_ERROR rate counts
+    // server failures only.
+    if response.status().is_server_error() {
+        span.set_status(SpanStatus::error(""));
+    }
     span.end();
     response
 }
@@ -319,6 +383,18 @@ pub async fn trace_outgoing_http<T>(
     target: &str,
     fut: impl Future<Output = (u16, T)>,
 ) -> T {
+    if !sdk_active() {
+        return fut.await.1;
+    }
+    trace_outgoing_http_recording(method, target, fut).await
+}
+
+async fn trace_outgoing_http_recording<T>(
+    method: &str,
+    target: &str,
+    fut: impl Future<Output = (u16, T)>,
+) -> T {
+    note_span_preparation();
     let method = bounded_method(method);
     let host = host_only(target);
     let tracer = global::tracer(METER_NAME);
@@ -342,7 +418,16 @@ pub async fn trace_outgoing_http<T>(
 }
 
 /// Runs `fut` under a Postgres span whose statement has had literals removed.
+/// While the SDK is inactive this awaits `fut` and does not obfuscate.
 pub async fn trace_sql<T>(statement: &str, fut: impl Future<Output = T>) -> T {
+    if !sdk_active() {
+        return fut.await;
+    }
+    trace_sql_recording(statement, fut).await
+}
+
+async fn trace_sql_recording<T>(statement: &str, fut: impl Future<Output = T>) -> T {
+    note_span_preparation();
     let statement = obfuscate_sql(statement);
     let tracer = global::tracer(METER_NAME);
     let span = tracer.start("postgresql");
@@ -356,8 +441,8 @@ pub async fn trace_sql<T>(statement: &str, fut: impl Future<Output = T>) -> T {
     result
 }
 
-/// Router layer that records one server span per request. No-op while the
-/// SDK is inactive (the global tracer is the API no-op).
+/// Router layer that records one server span per request. While the SDK is
+/// inactive the layer forwards the request and builds no span.
 pub fn wrap(router: Router) -> Router {
     router.layer(middleware::from_fn(trace_http))
 }
@@ -381,12 +466,13 @@ fn host_only(target: &str) -> &str {
     rest.split_once(':').map_or(rest, |(host, _)| host)
 }
 
-/// Postgres `db.statement` obfuscation, matching
+/// Postgres `db.statement` obfuscation, in the shape of
 /// `OpenTelemetry::Helpers::SqlProcessor.obfuscate_sql(adapter: :postgres)`
 /// at its default 2000-character limit. Literals, comments and UUIDs become
 /// `?`. A statement that still contains a quote after that, or that is
 /// longer than the limit, is replaced by a fixed message that does not
-/// contain the SQL.
+/// contain the SQL. The golden strings match that helper; the inputs that
+/// do not are listed in `docs/migration/parity-gaps.md`.
 pub fn obfuscate_sql(sql: &str) -> String {
     const LIMIT: usize = 2000;
     const TOO_LONG: &str = "SQL not obfuscated, query exceeds 2000 characters";
@@ -399,24 +485,43 @@ pub fn obfuscate_sql(sql: &str) -> String {
 
     let mut out = String::with_capacity(sql.len());
     let mut index = 0;
+    // Next regex literal at or after `index`. One `find_at` per pattern per
+    // gap, not per byte: a later match is reused until a quote jumps past it.
+    let mut pending: Option<(usize, usize)> = None;
     while index < sql.len() {
         if !sql.is_char_boundary(index) {
             return FAILED.to_owned();
         }
-        match literal_end(sql, index) {
-            Some(end) if end > index => {
-                out.push('?');
-                index = end;
+        if let Some(end) = single_quote(sql, index).or_else(|| dollar_quote(sql, index)) {
+            if end <= index {
+                return FAILED.to_owned();
             }
-            Some(_) => return FAILED.to_owned(),
-            None => {
-                let Some(ch) = sql[index..].chars().next() else {
-                    break;
-                };
-                out.push(ch);
-                index += ch.len_utf8();
+            out.push('?');
+            index = end;
+            if pending.is_some_and(|(start, _)| start < index) {
+                pending = None;
             }
+            continue;
         }
+        if pending.is_none_or(|(start, _)| start < index) {
+            pending = next_regex_literal(sql, index);
+        }
+        if let Some((start, end)) = pending
+            && start == index
+        {
+            if end <= index {
+                return FAILED.to_owned();
+            }
+            out.push('?');
+            index = end;
+            pending = None;
+            continue;
+        }
+        let Some(ch) = sql[index..].chars().next() else {
+            break;
+        };
+        out.push(ch);
+        index += ch.len_utf8();
     }
     if quotes_remained(&out) {
         FAILED.to_owned()
@@ -425,20 +530,30 @@ pub fn obfuscate_sql(sql: &str) -> String {
     }
 }
 
-fn literal_end(sql: &str, index: usize) -> Option<usize> {
-    single_quote(sql, index)
-        .or_else(|| dollar_quote(sql, index))
-        .or_else(|| regex_at(uuid_re(), sql, index))
-        .or_else(|| regex_at(numeric_re(), sql, index))
-        .or_else(|| regex_at(boolean_re(), sql, index))
-        .or_else(|| regex_at(line_comment_re(), sql, index))
-        .or_else(|| regex_at(block_comment_re(), sql, index))
-}
-
-fn regex_at(re: &Regex, sql: &str, index: usize) -> Option<usize> {
-    re.find_at(sql, index)
-        .filter(|found| found.start() == index)
-        .map(|found| found.end())
+/// Leftmost regex literal at or after `index`. A match that starts at
+/// `index` keeps pattern priority (uuid, then number, boolean, comments).
+/// A later match is the earliest start; ties keep the earlier pattern.
+fn next_regex_literal(sql: &str, index: usize) -> Option<(usize, usize)> {
+    const PATTERNS: &[fn() -> &'static Regex] = &[
+        uuid_re,
+        numeric_re,
+        boolean_re,
+        line_comment_re,
+        block_comment_re,
+    ];
+    let mut best: Option<(usize, usize)> = None;
+    for pattern in PATTERNS {
+        let Some(found) = pattern().find_at(sql, index) else {
+            continue;
+        };
+        if found.start() == index {
+            return Some((found.start(), found.end()));
+        }
+        if best.is_none_or(|(start, _)| found.start() < start) {
+            best = Some((found.start(), found.end()));
+        }
+    }
+    best
 }
 
 fn single_quote(sql: &str, index: usize) -> Option<usize> {
@@ -448,6 +563,16 @@ fn single_quote(sql: &str, index: usize) -> Option<usize> {
     }
     let mut cursor = index + 1;
     while cursor < bytes.len() {
+        // Ruby `single_quotes`: `\'` then `.*` masks the rest of the line
+        // (`.` stops at `\n`). Without this, `'a\' , secret.pdf` would leave
+        // the filename on the span.
+        if bytes[cursor] == b'\\' && bytes.get(cursor + 1) == Some(&b'\'') {
+            cursor += 2;
+            while cursor < bytes.len() && bytes[cursor] != b'\n' {
+                cursor += 1;
+            }
+            return Some(cursor);
+        }
         if bytes[cursor] == b'\'' {
             if bytes.get(cursor + 1) == Some(&b'\'') {
                 cursor += 2;

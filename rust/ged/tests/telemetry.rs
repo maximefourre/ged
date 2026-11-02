@@ -161,6 +161,19 @@ fn sql_literals_are_obfuscated_like_the_rails_pg_instrumentation() {
             "SELECT 'ok' || '",
             "Failed to obfuscate SQL query - quote characters remained after obfuscation",
         ),
+        // Ruby `\'` then `.*` (stops at `\n`). Same outputs as the helper.
+        ("SELECT 'a\\' secret'", "SELECT ?"),
+        ("SELECT 'a\\' AND name = 'visible'", "SELECT ?"),
+        ("SELECT 'a\\' , secret.pdf", "SELECT ?"),
+        ("SELECT 'a\\secret' FROM t", "SELECT ? FROM t"),
+        (
+            "SELECT 'a\\'\nWHERE name = 'secret'",
+            "SELECT ?\nWHERE name = ?",
+        ),
+        (
+            "SELECT 'a\\'\nsecret'",
+            "Failed to obfuscate SQL query - quote characters remained after obfuscation",
+        ),
     ];
     for (sql, expected) in cases {
         let obfuscated = obfuscate_sql(sql);
@@ -175,6 +188,178 @@ fn sql_literals_are_obfuscated_like_the_rails_pg_instrumentation() {
         "SQL not obfuscated, query exceeds 2000 characters"
     );
     assert!(!obfuscated.contains(&long));
+}
+
+#[test]
+fn sql_obfuscation_outside_the_ruby_goldens_does_not_leave_a_literal() {
+    // Rust results, not Ruby goldens. The Ruby helper disagrees on these
+    // inputs; the differences are recorded in docs/migration/parity-gaps.md.
+    let cases = [
+        ("SELECT $$a\nsecret$$ FROM t", "SELECT ? FROM t"),
+        ("SELECT 1 -- secret\r\nFROM t", "SELECT ? ?\nFROM t"),
+        ("SELECT 1 -- x\rFROM t", "SELECT ? ?"),
+    ];
+    for (sql, expected) in cases {
+        let obfuscated = obfuscate_sql(sql);
+        assert_eq!(obfuscated, expected, "sql: {sql:?}");
+        assert!(!obfuscated.contains("secret"), "{obfuscated}");
+    }
+}
+
+#[tokio::test]
+async fn inactive_sdk_does_not_obfuscate_or_allocate_span_fields() {
+    assert!(!telemetry::sdk_active());
+    let before = telemetry::span_preparations();
+    let sql = format!(
+        "SELECT filename = '{}' AND note = 'secret.pdf'",
+        "x".repeat(1800)
+    );
+    let value = telemetry::trace_sql(&sql, async { 7 }).await;
+    assert_eq!(value, 7);
+    let value = telemetry::trace_outgoing_http(
+        "POST",
+        "https://user:pw@hooks.example/callback?token=secret",
+        async { (500_u16, "ok") },
+    )
+    .await;
+    assert_eq!(value, "ok");
+
+    let app = telemetry::wrap(router(support::state()));
+    let response = app
+        .oneshot(Request::get("/up").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        telemetry::span_preparations(),
+        before,
+        "inactive SDK prepared a span (obfuscation or HTTP field allocation)"
+    );
+}
+
+#[tokio::test]
+async fn sigterm_lets_the_server_return_so_the_guard_can_flush() {
+    const CHILD: &str = "GED_T12_SHUTDOWN_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let waiting = tokio::spawn(telemetry::wait_for_shutdown_signal());
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let status = std::process::Command::new("kill")
+            .args(["-TERM", &std::process::id().to_string()])
+            .status()
+            .expect("send SIGTERM");
+        assert!(status.success(), "kill: {status}");
+        tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+            .await
+            .expect("SIGTERM did not unblock shutdown")
+            .expect("shutdown task");
+        return;
+    }
+
+    let output = std::process::Command::new(std::env::current_exe().expect("test exe"))
+        .args([
+            "--exact",
+            "sigterm_lets_the_server_return_so_the_guard_can_flush",
+            "--test-threads=1",
+        ])
+        .env(CHILD, "1")
+        .output()
+        .expect("spawn shutdown child");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "status: {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status
+    );
+    assert!(
+        stdout.contains("sigterm_lets_the_server_return_so_the_guard_can_flush ... ok"),
+        "child did not run the signal test\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn serve_exits_zero_on_sigterm_so_the_guard_is_dropped() {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    drop(listener);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ged"))
+        .args(["serve"])
+        .env_clear()
+        .env("RAILS_ENV", "test")
+        .env("DATABASE_URL", "postgres://localhost/unused")
+        .env("PORT", port.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn ged serve");
+
+    let read_err = |child: &mut std::process::Child| {
+        let mut err = String::new();
+        if let Some(stderr) = child.stderr.as_mut() {
+            let _ = stderr.read_to_string(&mut err);
+        }
+        err
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut up = false;
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait().expect("wait") {
+            panic!("serve exited before /up: {status} {}", read_err(&mut child));
+        }
+        if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .expect("timeout");
+            let _ = write!(
+                stream,
+                "GET /up HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+            );
+            let mut body = String::new();
+            let _ = stream.read_to_string(&mut body);
+            if body.starts_with("HTTP/1.1 200") {
+                up = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    if !up {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("serve never answered /up: {}", read_err(&mut child));
+    }
+
+    let status = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("send SIGTERM");
+    assert!(status.success(), "kill: {status}");
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if let Some(status) = child.try_wait().expect("wait") {
+            assert_eq!(
+                status.code(),
+                Some(0),
+                "SIGTERM should return from serve so the guard drops; stderr: {}",
+                read_err(&mut child)
+            );
+            return;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("SIGTERM did not stop ged serve");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[tokio::test]

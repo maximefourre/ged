@@ -25,6 +25,8 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // Outlives `serve`. SIGTERM or SIGINT makes `serve` return, then this
+    // drop flushes the exporters (Rails does the same from `at_exit`).
     let _telemetry = ged::telemetry::install_from_env();
     let cli = Cli::parse();
     let name = match cli.command {
@@ -75,6 +77,7 @@ async fn serve() -> Result<(), Failure> {
         listener,
         ged::telemetry::wrap(ged::router(AppState::new(config, pool))),
     )
+    .with_graceful_shutdown(ged::telemetry::wait_for_shutdown_signal())
     .await?;
     Ok(())
 }
