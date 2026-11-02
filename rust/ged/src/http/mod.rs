@@ -37,6 +37,7 @@ pub fn router(state: AppState) -> Router {
 /// (how tests exercise the edge with probe handlers).
 pub fn router_with(state: AppState, routes: Router<AppState>) -> Router {
     routes
+        .merge(crate::api::routes())
         .route("/up", get(up))
         // Rails parses the query (and an urlencoded body) before dispatching
         // to any matched route, so a bad one is a 400 even on `/up`. An

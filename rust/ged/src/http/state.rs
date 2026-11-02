@@ -3,6 +3,7 @@ use std::sync::Arc;
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
+use crate::auth::{JwksCache, TokenValidator};
 use crate::config::Config;
 
 /// Shared by every handler. Cheap to clone.
@@ -10,13 +11,20 @@ use crate::config::Config;
 pub struct AppState {
     pub config: Arc<Config>,
     pub db: PgPool,
+    /// Process-local JWKS cache, shared by every request.
+    pub jwks: Arc<JwksCache>,
 }
 
 impl AppState {
     pub fn new(config: Config, db: PgPool) -> Self {
+        // Without a URL the cache can never fetch: bearer auth fails closed.
+        let jwks = Arc::new(JwksCache::new(
+            config.oidc.jwks_url.clone().unwrap_or_default(),
+        ));
         Self {
             config: Arc::new(config),
             db,
+            jwks,
         }
     }
 }
@@ -29,5 +37,11 @@ impl AppState {
             .host("localhost")
             .database("ged_unused");
         Self::new(config, PgPoolOptions::new().connect_lazy_with(options))
+    }
+}
+
+impl AppState {
+    pub fn token_validator(&self) -> TokenValidator {
+        TokenValidator::new(self.jwks.clone(), self.config.oidc.clone())
     }
 }
