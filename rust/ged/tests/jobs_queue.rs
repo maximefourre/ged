@@ -450,7 +450,6 @@ async fn a_job_that_recovers_is_finished_and_a_discard_is_not_retried() {
     enqueue(&pool, "recovers", json!({}), QueueName::Default).await;
     enqueue(&pool, "refused", json!({}), QueueName::Default).await;
     enqueue(&pool, "panics", json!({}), QueueName::Default).await;
-    enqueue(&pool, "nobody-handles-this", json!({}), QueueName::Default).await;
     let r = start(&pool, &reg, fast(QueueName::Default, 2));
     eventually("all settled", || async {
         count(
@@ -478,12 +477,10 @@ async fn a_job_that_recovers_is_finished_and_a_discard_is_not_retried() {
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(errs.len(), 3);
-    assert_eq!(errs[0].0, "nobody-handles-this");
-    assert!(errs[0].2.contains("no handler"), "{errs:?}");
-    assert_eq!((errs[1].0.as_str(), errs[1].1), ("panics", 2));
-    assert!(errs[1].2.contains("panic"), "{errs:?}");
-    assert_eq!(errs[2].1, 1);
+    assert_eq!(errs.len(), 2);
+    assert_eq!((errs[0].0.as_str(), errs[0].1), ("panics", 2));
+    assert!(errs[0].2.contains("panic"), "{errs:?}");
+    assert_eq!(errs[1].1, 1);
     finish(db, pool).await;
 }
 
@@ -517,7 +514,10 @@ async fn heartbeats_are_recorded_and_expire() {
             .unwrap()
             .is_empty()
     );
-    heartbeat::beat(&pool, id).await.unwrap();
+    assert!(
+        !heartbeat::beat(&pool, id, "uploads").await.unwrap(),
+        "a stale but present row is not a re-registration"
+    );
     assert_eq!(
         heartbeat::live_workers(&pool, Duration::from_secs(30))
             .await
@@ -536,12 +536,12 @@ async fn heartbeats_are_recorded_and_expire() {
 }
 
 #[tokio::test]
-async fn a_claim_held_by_a_dead_worker_is_recovered_and_runs_exactly_once() {
+async fn a_claim_held_by_a_dead_worker_is_failed_like_solid_queue_and_never_re_run() {
     let (db, pool) = migrated().await;
     let effects = Arc::new(AtomicUsize::new(0));
     let reg = {
         let effects = effects.clone();
-        registry(vec![job("effect", 1, move |_| {
+        registry(vec![job("effect", 5, move |_| {
             let effects = effects.clone();
             async move {
                 effects.fetch_add(1, Ordering::SeqCst);
@@ -555,46 +555,50 @@ async fn a_claim_held_by_a_dead_worker_is_recovered_and_runs_exactly_once() {
     let dead = heartbeat::register(&pool, "uploads").await.unwrap();
     let claimed = queue::claim(&pool, QueueName::Uploads, dead).await.unwrap();
     assert_eq!(claimed.map(|c| c.id), Some(id));
-    assert!(
-        queue::claim(&pool, QueueName::Uploads, dead)
-            .await
-            .unwrap()
-            .is_none()
-    );
     sqlx::query("UPDATE job_workers SET last_heartbeat_at = now() - interval '1 hour'")
         .execute(&pool)
         .await
         .unwrap();
 
-    // A live replica starts: its heartbeat loop recovers the abandoned claim.
+    // Live replicas start: their heartbeat loops prune the dead worker.
     let mut cfg = fast(QueueName::Uploads, 2);
     cfg.heartbeat.expiry = Duration::from_secs(5);
     let a = start(&pool, &reg, cfg.clone());
     let b = start(&pool, &reg, cfg);
-    eventually("recovered and run", || async {
-        effects.load(Ordering::SeqCst) >= 1
-            && count(
-                &pool,
-                "SELECT count(*) FROM jobs WHERE finished_at IS NOT NULL",
-            )
-            .await
-                == 1
+    eventually("job failed by the prune", || async {
+        count(
+            &pool,
+            "SELECT count(*) FROM jobs WHERE failed_at IS NOT NULL",
+        )
+        .await
+            == 1
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // A fresh job proves the replicas are alive and polling.
+    enqueue(&pool, "effect", json!({}), QueueName::Uploads).await;
+    eventually("fresh job ran", || async {
+        count(
+            &pool,
+            "SELECT count(*) FROM jobs WHERE finished_at IS NOT NULL",
+        )
+        .await
+            == 1
+    })
+    .await;
     a.stop().await;
     b.stop().await;
-    assert_eq!(
-        effects.load(Ordering::SeqCst),
-        1,
-        "one effect, two replicas"
-    );
-    let attempts: i32 = sqlx::query_scalar("SELECT attempts FROM jobs WHERE id = $1")
-        .bind(id.0)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(attempts, 1, "a crashed claim does not burn a retry");
+    assert_eq!(effects.load(Ordering::SeqCst), 1, "only the fresh job ran");
+    // Solid Queue: a crashed claim is a failure (ProcessPrunedError), the
+    // attempt is kept, and the job is never retried automatically.
+    let (attempts, err, claimed_by): (i32, Option<String>, Option<uuid::Uuid>) =
+        sqlx::query_as("SELECT attempts, last_error, claimed_by FROM jobs WHERE id = $1")
+            .bind(id.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(attempts, 1, "the crashed attempt counts");
+    assert!(err.unwrap().contains("heartbeat"), "names the cause");
+    assert_eq!(claimed_by, None);
     let dead_rows: i64 = sqlx::query_scalar("SELECT count(*) FROM job_workers WHERE id = $1")
         .bind(dead)
         .fetch_one(&pool)
@@ -604,8 +608,149 @@ async fn a_claim_held_by_a_dead_worker_is_recovered_and_runs_exactly_once() {
     finish(db, pool).await;
 }
 
+// A shared gate: handlers wait until it opens.
+#[derive(Clone)]
+struct Gate(watch::Sender<bool>);
+
+impl Gate {
+    fn new() -> Self {
+        Self(watch::channel(false).0)
+    }
+    fn open(&self) {
+        self.0.send_replace(true);
+    }
+    async fn wait(&self) {
+        let mut rx = self.0.subscribe();
+        let _ = rx.wait_for(|open| *open).await;
+    }
+}
+
+struct CountOnDrop(Arc<AtomicUsize>);
+
+impl Drop for CountOnDrop {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
 #[tokio::test]
-async fn a_recovered_job_cannot_be_completed_by_its_former_owner() {
+async fn a_live_worker_purged_by_a_peer_re_registers_and_never_double_runs_a_job() {
+    let (db, pool) = migrated().await;
+    let gate = Gate::new();
+    let started = Arc::new(std::sync::Mutex::new(Vec::<i64>::new()));
+    let completed = Arc::new(std::sync::Mutex::new(Vec::<i64>::new()));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let reg = {
+        let (gate, started, completed, dropped) = (
+            gate.clone(),
+            started.clone(),
+            completed.clone(),
+            dropped.clone(),
+        );
+        registry(vec![job("gated", 3, move |args| {
+            let (gate, started, completed, dropped) = (
+                gate.clone(),
+                started.clone(),
+                completed.clone(),
+                dropped.clone(),
+            );
+            async move {
+                let n = args["n"].as_i64().unwrap();
+                let _guard = CountOnDrop(dropped);
+                started.lock().unwrap().push(n);
+                gate.wait().await;
+                completed.lock().unwrap().push(n);
+                Ok(())
+            }
+        })])
+    };
+    let r = start(&pool, &reg, fast(QueueName::Default, 1));
+    let worker: uuid::Uuid = {
+        eventually("registered", || async {
+            count(&pool, "SELECT count(*) FROM job_workers").await == 1
+        })
+        .await;
+        sqlx::query_scalar("SELECT id FROM job_workers")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+
+    // Job 1 is running when a peer prunes this (alive, merely slow) worker.
+    let first = enqueue(&pool, "gated", json!({"n": 1}), QueueName::Default).await;
+    eventually("job 1 running", || async {
+        started.lock().unwrap().len() == 1
+    })
+    .await;
+    assert_eq!(
+        queue::recover_abandoned(&pool, Duration::ZERO)
+            .await
+            .unwrap(),
+        1,
+        "the peer's prune frees job 1"
+    );
+    assert_eq!(count(&pool, "SELECT count(*) FROM job_workers").await, 0);
+
+    // The next heartbeat notices, re-registers under the same id and cancels
+    // the in-flight run whose claim is gone.
+    eventually("re-registered", || async {
+        count(
+            &pool,
+            &format!("SELECT count(*) FROM job_workers WHERE id = '{worker}'"),
+        )
+        .await
+            == 1
+    })
+    .await;
+    eventually("in-flight run cancelled", || async {
+        dropped.load(Ordering::SeqCst) == 1
+    })
+    .await;
+
+    // Job 2 is claimed by the re-registered worker: a peer's recovery pass
+    // leaves it alone, so it runs exactly once.
+    let second = enqueue(&pool, "gated", json!({"n": 2}), QueueName::Default).await;
+    eventually("job 2 running", || async {
+        started.lock().unwrap().contains(&2)
+    })
+    .await;
+    assert_eq!(
+        queue::recover_abandoned(&pool, Duration::from_secs(30))
+            .await
+            .unwrap(),
+        0,
+        "a live, registered worker keeps its claims"
+    );
+    gate.open();
+    eventually("job 2 finished", || async {
+        count(
+            &pool,
+            &format!(
+                "SELECT count(*) FROM jobs WHERE id = {} AND finished_at IS NOT NULL",
+                second.0
+            ),
+        )
+        .await
+            == 1
+    })
+    .await;
+    r.stop().await;
+    assert_eq!(*completed.lock().unwrap(), vec![2], "job 1 never completes");
+    let mut started = started.lock().unwrap().clone();
+    started.sort_unstable();
+    assert_eq!(started, vec![1, 2], "each job started once");
+    let first_failed: bool =
+        sqlx::query_scalar("SELECT failed_at IS NOT NULL FROM jobs WHERE id = $1")
+            .bind(first.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(first_failed, "the pruned claim was failed, not re-run");
+    finish(db, pool).await;
+}
+
+#[tokio::test]
+async fn a_pruned_job_cannot_be_completed_by_its_former_owner() {
     let (db, pool) = migrated().await;
     let id = enqueue(&pool, "x", json!({}), QueueName::Default).await;
     let slow = heartbeat::register(&pool, "default").await.unwrap();
@@ -623,11 +768,14 @@ async fn a_recovered_job_cannot_be_completed_by_its_former_owner() {
             .unwrap(),
         1
     );
+    // Failed, not re-queued: a fresh worker has nothing to claim.
     let fresh = heartbeat::register(&pool, "default").await.unwrap();
-    queue::claim(&pool, QueueName::Default, fresh)
-        .await
-        .unwrap()
-        .unwrap();
+    assert!(
+        queue::claim(&pool, QueueName::Default, fresh)
+            .await
+            .unwrap()
+            .is_none()
+    );
     // The zombie finally reports in: ignored.
     assert!(!queue::complete(&pool, id, slow).await.unwrap());
     assert_eq!(
@@ -638,11 +786,18 @@ async fn a_recovered_job_cannot_be_completed_by_its_former_owner() {
         .await,
         0
     );
-    assert!(queue::complete(&pool, id, fresh).await.unwrap());
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM jobs WHERE failed_at IS NOT NULL"
+        )
+        .await,
+        1
+    );
     finish(db, pool).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_replicas_polling_one_backlog_never_run_a_job_twice() {
     let (db, pool) = migrated().await;
     let seen = Arc::new(std::sync::Mutex::new(Vec::<i64>::new()));
@@ -740,7 +895,7 @@ async fn shutdown_waits_for_running_jobs_then_releases_stragglers_after_the_time
         rows,
         vec![
             ("endless".to_owned(), false, None, 0),
-            ("quick".to_owned(), true, rows[1].2, 1),
+            ("quick".to_owned(), true, None, 1),
         ]
     );
     assert_eq!(count(&pool, "SELECT count(*) FROM job_workers").await, 0);
@@ -793,5 +948,255 @@ async fn clear_finished_removes_only_old_terminal_jobs() {
         "only the old finished job; failed ones are kept for diagnosis"
     );
     assert_eq!(count(&pool, "SELECT count(*) FROM jobs").await, 3);
+    finish(db, pool).await;
+}
+
+// --- review T8 follow-ups -----------------------------------------------------------
+
+struct RealBackoff;
+
+impl Job for RealBackoff {
+    fn kind(&self) -> &'static str {
+        "real_backoff"
+    }
+    fn max_attempts(&self) -> i32 {
+        3
+    }
+    fn perform(&self, _args: Value) -> BoxFuture<'static, Result<(), JobError>> {
+        Box::pin(async { Err(JobError::Retry("later".into())) })
+    }
+}
+
+#[tokio::test]
+async fn a_retry_waits_for_the_real_polynomial_backoff() {
+    let (db, pool) = migrated().await;
+    let reg = registry(vec![Arc::new(RealBackoff)]);
+    let id = enqueue(&pool, "real_backoff", json!({}), QueueName::Default).await;
+    let r = start(&pool, &reg, fast(QueueName::Default, 1));
+    eventually("first attempt recorded", || async {
+        count(
+            &pool,
+            "SELECT count(*) FROM jobs WHERE last_error = 'later' AND claimed_by IS NULL",
+        )
+        .await
+            == 1
+    })
+    .await;
+    // Attempt 1 fails => 1^4 + 2 = 3 s from now.
+    let (attempts, delay): (i32, f64) = sqlx::query_as(
+        "SELECT attempts, EXTRACT(EPOCH FROM (run_at - now()))::float8 FROM jobs WHERE id = $1",
+    )
+    .bind(id.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(attempts, 1);
+    assert!((1.5..=3.1).contains(&delay), "delay was {delay}");
+    // Still waiting: it is not claimable now.
+    assert!(
+        queue::claim(&pool, QueueName::Default, uuid::Uuid::new_v4())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    r.stop().await;
+    finish(db, pool).await;
+}
+
+#[tokio::test]
+async fn an_unknown_kind_is_retried_with_backoff_not_discarded() {
+    let (db, pool) = migrated().await;
+    let id = enqueue(
+        &pool,
+        "from_the_future",
+        json!({"n": 1}),
+        QueueName::Default,
+    )
+    .await;
+    let old = registry(vec![]);
+    let r = start(&pool, &old, fast(QueueName::Default, 1));
+    eventually("attempt recorded", || async {
+        count(
+            &pool,
+            "SELECT count(*) FROM jobs WHERE last_error LIKE '%no handler%' AND claimed_by IS NULL",
+        )
+        .await
+            == 1
+    })
+    .await;
+    r.stop().await;
+    let (attempts, failed, delayed): (i32, bool, bool) = sqlx::query_as(
+        "SELECT attempts, failed_at IS NOT NULL, run_at > now() + interval '1 second' FROM jobs WHERE id = $1",
+    )
+    .bind(id.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((attempts, failed, delayed), (1, false, true));
+
+    // A rolled-out worker that knows the kind picks it up.
+    sqlx::query("UPDATE jobs SET run_at = now()")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let seen = Arc::new(AtomicUsize::new(0));
+    let new = {
+        let seen = seen.clone();
+        registry(vec![job("from_the_future", 1, move |_| {
+            let seen = seen.clone();
+            async move {
+                seen.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        })])
+    };
+    let r = start(&pool, &new, fast(QueueName::Default, 1));
+    eventually("finished by the new worker", || async {
+        count(
+            &pool,
+            "SELECT count(*) FROM jobs WHERE finished_at IS NOT NULL",
+        )
+        .await
+            == 1
+    })
+    .await;
+    r.stop().await;
+    assert_eq!(seen.load(Ordering::SeqCst), 1);
+    finish(db, pool).await;
+}
+
+#[tokio::test]
+async fn an_unknown_kind_gives_up_after_the_attempt_cap() {
+    let (db, pool) = migrated().await;
+    let id = enqueue(&pool, "never_deployed", json!({}), QueueName::Default).await;
+    let cap = i32::try_from(ged::jobs::pool::UNKNOWN_KIND_MAX_ATTEMPTS).unwrap();
+    sqlx::query("UPDATE jobs SET attempts = $2 WHERE id = $1")
+        .bind(id.0)
+        .bind(cap - 1)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = start(&pool, &registry(vec![]), fast(QueueName::Default, 1));
+    eventually("failed at the cap", || async {
+        count(
+            &pool,
+            "SELECT count(*) FROM jobs WHERE failed_at IS NOT NULL",
+        )
+        .await
+            == 1
+    })
+    .await;
+    r.stop().await;
+    finish(db, pool).await;
+}
+
+#[tokio::test]
+async fn a_synchronous_panic_in_perform_does_not_kill_the_claim_loop() {
+    let (db, pool) = migrated().await;
+    let ran = Arc::new(AtomicUsize::new(0));
+    let reg = {
+        let ran = ran.clone();
+        registry(vec![
+            job(
+                "explodes",
+                1,
+                |_| -> std::future::Ready<Result<(), JobError>> {
+                    panic!("before the future exists")
+                },
+            ),
+            job("fine", 1, move |_| {
+                let ran = ran.clone();
+                async move {
+                    ran.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            }),
+        ])
+    };
+    enqueue(&pool, "explodes", json!({}), QueueName::Default).await;
+    // One thread only: if its loop died, nothing would ever claim "fine".
+    let r = start(&pool, &reg, fast(QueueName::Default, 1));
+    eventually("panicking job failed", || async {
+        count(
+            &pool,
+            "SELECT count(*) FROM jobs WHERE failed_at IS NOT NULL",
+        )
+        .await
+            == 1
+    })
+    .await;
+    enqueue(&pool, "fine", json!({}), QueueName::Default).await;
+    eventually("loop still alive", || async {
+        ran.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    r.stop().await;
+    let claimed: i64 = count(
+        &pool,
+        "SELECT count(*) FROM jobs WHERE claimed_by IS NOT NULL",
+    )
+    .await;
+    assert_eq!(claimed, 0, "no job left claimed by a live worker");
+    finish(db, pool).await;
+}
+
+#[tokio::test]
+async fn shutdown_still_deregisters_when_releasing_claims_fails() {
+    let (db, pool) = migrated().await;
+    sqlx::query(
+        "CREATE FUNCTION refuse_release() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN \
+           IF OLD.claimed_by IS NOT NULL AND NEW.claimed_by IS NULL THEN \
+             RAISE EXCEPTION 'release refused'; \
+           END IF; \
+           RETURN NEW; \
+         END $$",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("CREATE TRIGGER refuse_release BEFORE UPDATE ON jobs FOR EACH ROW EXECUTE FUNCTION refuse_release()")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let started = Arc::new(AtomicUsize::new(0));
+    let reg = {
+        let started = started.clone();
+        registry(vec![job("endless", 1, move |_| {
+            let started = started.clone();
+            async move {
+                started.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+                Ok(())
+            }
+        })])
+    };
+    enqueue(&pool, "endless", json!({}), QueueName::Default).await;
+    let mut cfg = fast(QueueName::Default, 1);
+    cfg.shutdown_timeout = Duration::from_millis(300);
+    let (stop, rx) = watch::channel(false);
+    let runner = Runner::new(pool.clone(), reg, cfg);
+    let handle = tokio::spawn(async move { runner.run(rx).await });
+    eventually("running", || async { started.load(Ordering::SeqCst) == 1 }).await;
+    stop.send(true).unwrap();
+    let result = handle.await.unwrap();
+    assert!(result.is_err(), "the release failure is still reported");
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM job_workers").await,
+        0,
+        "yet the worker deregistered"
+    );
+    finish(db, pool).await;
+}
+
+#[tokio::test]
+async fn the_ready_index_carries_run_at_so_future_retries_are_skipped_in_the_index() {
+    let (db, pool) = migrated().await;
+    let def: String =
+        sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE indexname = 'index_jobs_ready'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(def.contains("run_at"), "{def}");
     finish(db, pool).await;
 }

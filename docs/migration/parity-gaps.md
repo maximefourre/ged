@@ -264,3 +264,38 @@ département en corbeille n'accorde rien (`rust/ged/tests/auth_access.rs`).
   transaction (Rails l'écrit au commit). Un rollback ou une validation en échec
   laisse donc un fichier que l'appelant doit supprimer ; un crash peut laisser un
   fichier orphelin, jamais une ligne sans fichier.
+
+## File de jobs : process mort, worker purgé, kind inconnu (T8)
+
+Comportement de Solid Queue 1.5.0 relu dans le gem
+(`app/models/solid_queue/process/prunable.rb`, `claimed_execution.rb`) :
+
+- **Un process mort n'est pas rejoué.** `Process#prune` appelle
+  `fail_all_claimed_executions_with(ProcessPrunedError)` : chaque exécution
+  réclamée devient une `FailedExecution`, sans retry automatique. Seul un arrêt
+  propre (`ClaimedExecution#release`) remet le job en file. Le Rust fait pareil :
+  `queue::recover_abandoned` marque `failed_at` (avec `last_error` « Process pruned… »)
+  et **garde** l'attempt. Un job qui tue son process ne boucle donc pas ; la
+  réparation des uploads revient à `ReconcileUploadRequestsJob`, comme en Rails.
+  Seul `release_claims` (arrêt propre après `shutdown_timeout`) décrémente `attempts`.
+- **Seuils configurables comme Solid Queue** : `SOLID_QUEUE_PROCESS_HEARTBEAT_INTERVAL`
+  (60 s) et `SOLID_QUEUE_PROCESS_ALIVE_THRESHOLD` (300 s), en secondes. Un intervalle
+  qui n'est pas inférieur au seuil est ignoré (valeurs par défaut).
+
+Écarts assumés :
+
+- **Worker vivant mais purgé** (process figé, partition vers Postgres > seuil).
+  Solid Queue ne traite pas ce cas. Ici le beat suivant ré-enregistre le worker sous
+  le même id et **annule** les jobs en cours (leur claim a déjà été échouée par la
+  purge) ; `claim` refuse un worker non enregistré. Aucune double exécution : le job
+  purgé est échoué, jamais relancé. Le job en cours peut avoir produit des effets de
+  bord avant l'annulation (point d'await) : les handlers T9 doivent rester idempotents.
+- **Kind inconnu** (déploiement progressif) : Solid Queue échoue le job
+  (`NameError` à la désérialisation). Le Rust le **réessaie** avec le backoff
+  polynomial, au plus `UNKNOWN_KIND_MAX_ATTEMPTS` (8) fois, puis l'échoue.
+- **Claim vide sous contention** : en READ COMMITTED, une ligne modifiée entre le
+  choix du sous-select et son verrou peut donner 0 ligne alors que d'autres sont
+  prêtes. Coût : un `polling_interval` de retard, jamais de double claim. Non corrigé.
+- Index `index_jobs_ready (queue, id) INCLUDE (run_at)` : les retries futurs sont
+  écartés sans visiter le tas ; le tri reste `ORDER BY id`. À réévaluer en T15 si la file
+  grossit.

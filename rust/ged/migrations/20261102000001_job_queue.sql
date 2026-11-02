@@ -16,8 +16,9 @@ CREATE TABLE jobs (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- Claimable jobs, in FIFO order per queue.
-CREATE INDEX index_jobs_ready ON jobs (queue, id)
+-- Claimable jobs, in FIFO order per queue. `run_at` is carried in the index so
+-- the claim skips not-yet-due retries without visiting the heap.
+CREATE INDEX index_jobs_ready ON jobs (queue, id) INCLUDE (run_at)
   WHERE finished_at IS NULL AND failed_at IS NULL AND claimed_by IS NULL;
 CREATE INDEX index_jobs_claimed_by ON jobs (claimed_by) WHERE claimed_by IS NOT NULL;
 CREATE INDEX index_jobs_finished_at ON jobs (finished_at) WHERE finished_at IS NOT NULL;

@@ -120,7 +120,13 @@ pub struct ClaimedJob {
 }
 
 /// Atomically claims the oldest ready job of `queue` for `worker`; `None`
-/// when nothing is ready or the queue is paused.
+/// when nothing is ready, the queue is paused, or `worker` is not registered
+/// (a pruned worker must not take claims no one would protect).
+///
+/// Known, accepted: under READ COMMITTED, if the row picked by the subquery
+/// is modified by a concurrent transaction before its lock is taken, the
+/// `LIMIT 1` may yield no row although others are ready. The effect is one
+/// `polling_interval` of delay, never a double claim or an error.
 pub async fn claim(
     db: &PgPool,
     queue: QueueName,
@@ -133,6 +139,7 @@ pub async fn claim(
            WHERE queue = $1 AND finished_at IS NULL AND failed_at IS NULL \
              AND claimed_by IS NULL AND run_at <= now() \
              AND NOT EXISTS (SELECT 1 FROM queue_pauses p WHERE p.queue = $1) \
+             AND EXISTS (SELECT 1 FROM job_workers w WHERE w.id = $2) \
            ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1) \
          RETURNING id, kind, args, attempts",
     )
@@ -213,12 +220,17 @@ pub async fn release_claims(db: &PgPool, worker: Uuid) -> Result<u64, sqlx::Erro
     Ok(done.rows_affected())
 }
 
-/// Frees claims whose owner has no heartbeat within `expiry` (or no
-/// registration at all) and forgets those dead workers. A crashed attempt is
-/// not counted. Returns the number of jobs freed.
+/// Fails the claims whose owner has no heartbeat within `expiry` (or no
+/// registration at all) and forgets those dead workers. Like Solid Queue's
+/// `Process#prune` (`ProcessPrunedError` -> `fail_all_claimed_executions_with`)
+/// a crashed claim is a *failure*: the attempt stays counted and the job is
+/// not retried by the queue, so a job that kills its process cannot loop
+/// forever (the application's reconcile jobs re-enqueue what matters).
+/// Returns the number of jobs failed.
 pub async fn recover_abandoned(db: &PgPool, expiry: Duration) -> Result<u64, sqlx::Error> {
-    let freed = sqlx::query(
-        "UPDATE jobs SET claimed_by = NULL, claimed_at = NULL, attempts = GREATEST(attempts - 1, 0) \
+    let failed = sqlx::query(
+        "UPDATE jobs SET claimed_by = NULL, claimed_at = NULL, failed_at = now(), \
+           last_error = 'Process pruned: worker heartbeat expired (the worker process died or stalled)' \
          WHERE claimed_by IS NOT NULL AND finished_at IS NULL AND failed_at IS NULL \
            AND NOT EXISTS (SELECT 1 FROM job_workers w WHERE w.id = jobs.claimed_by \
                            AND w.last_heartbeat_at > now() - make_interval(secs => $1))",
@@ -232,7 +244,7 @@ pub async fn recover_abandoned(db: &PgPool, expiry: Duration) -> Result<u64, sql
     .bind(expiry.as_secs_f64())
     .execute(db)
     .await?;
-    Ok(freed.rows_affected())
+    Ok(failed.rows_affected())
 }
 
 /// Deletes finished jobs older than `older_than`, at most `batch` per call

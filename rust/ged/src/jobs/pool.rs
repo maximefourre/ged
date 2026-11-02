@@ -11,7 +11,11 @@ use uuid::Uuid;
 
 use super::heartbeat::{self, HeartbeatConfig};
 use super::queue::{self, ClaimedJob, QueueName};
-use super::{JobError, Registry};
+use super::{JobError, Registry, polynomial_backoff};
+
+/// A job whose `kind` this binary does not know (rolling deploy) is retried
+/// this many times before it is given up on.
+pub const UNKNOWN_KIND_MAX_ATTEMPTS: u32 = 8;
 
 #[derive(Debug, Clone)]
 pub struct RunnerConfig {
@@ -56,11 +60,15 @@ impl Runner {
         let worker = heartbeat::register(&self.db, cfg.queue.as_str()).await?;
 
         let (beat_stop, beat_rx) = watch::channel(false);
+        // Bumped each time the heartbeat finds the registration gone.
+        let (lost_tx, lost_rx) = watch::channel(0_u64);
         let beat = tokio::spawn(heartbeat_loop(
             self.db.clone(),
             worker,
+            cfg.queue,
             cfg.heartbeat.clone(),
             beat_rx,
+            lost_tx,
         ));
 
         let mut loops = JoinSet::new();
@@ -72,6 +80,7 @@ impl Runner {
                 worker,
                 cfg.polling_interval,
                 shutdown.clone(),
+                lost_rx.clone(),
             ));
         }
 
@@ -90,28 +99,50 @@ impl Runner {
             );
             loops.abort_all();
             while loops.join_next().await.is_some() {}
-            queue::release_claims(&self.db, worker).await?;
+        }
+        // Best effort: whatever fails below, still stop the heartbeat and
+        // deregister (a stale row would otherwise linger until pruned), then
+        // report the first error.
+        let released = if drained {
+            Ok(0)
+        } else {
+            queue::release_claims(&self.db, worker).await
+        };
+        if let Err(e) = &released {
+            eprintln!("ged worker: could not release running jobs: {e}");
         }
 
         let _ = beat_stop.send(true);
         let _ = beat.await;
-        heartbeat::deregister(&self.db, worker).await
+        let deregistered = heartbeat::deregister(&self.db, worker).await;
+        released.map(|_| ()).and(deregistered)
     }
 }
 
 async fn heartbeat_loop(
     db: PgPool,
     worker: Uuid,
+    queue: QueueName,
     cfg: HeartbeatConfig,
     mut stop: watch::Receiver<bool>,
+    lost: watch::Sender<u64>,
 ) {
     loop {
-        if let Err(e) = heartbeat::beat(&db, worker).await {
-            eprintln!("ged worker: heartbeat failed: {e}");
+        match heartbeat::beat(&db, worker, queue.as_str()).await {
+            Ok(false) => {}
+            Ok(true) => {
+                // A peer pruned us while we were stalled: our claims were
+                // failed. Re-registered; running jobs must stop.
+                eprintln!(
+                    "ged worker: registration was pruned, re-registered; cancelling running jobs"
+                );
+                lost.send_modify(|epoch| *epoch += 1);
+            }
+            Err(e) => eprintln!("ged worker: heartbeat failed: {e}"),
         }
         match queue::recover_abandoned(&db, cfg.expiry).await {
             Ok(0) => {}
-            Ok(n) => eprintln!("ged worker: recovered {n} abandoned job(s)"),
+            Ok(n) => eprintln!("ged worker: failed {n} job(s) abandoned by dead workers"),
             Err(e) => eprintln!("ged worker: recovery failed: {e}"),
         }
         tokio::select! {
@@ -128,10 +159,12 @@ async fn claim_loop(
     worker: Uuid,
     polling: Duration,
     mut shutdown: watch::Receiver<bool>,
+    mut lost: watch::Receiver<u64>,
 ) {
     while !*shutdown.borrow() {
+        let epoch = *lost.borrow_and_update();
         match queue::claim(&db, queue, worker).await {
-            Ok(Some(job)) => run_one(&db, &registry, worker, job).await,
+            Ok(Some(job)) => run_one(&db, &registry, worker, job, &mut lost, epoch).await,
             Ok(None) => idle(polling, &mut shutdown).await,
             Err(e) => {
                 eprintln!("ged worker: claim failed: {e}");
@@ -148,17 +181,35 @@ async fn idle(polling: Duration, shutdown: &mut watch::Receiver<bool>) {
     }
 }
 
-async fn run_one(db: &PgPool, registry: &Registry, worker: Uuid, job: ClaimedJob) {
-    let outcome = match registry.get(&job.kind) {
-        None => Err(JobError::Discard(format!("no handler for {:?}", job.kind))),
+async fn run_one(
+    db: &PgPool,
+    registry: &Registry,
+    worker: Uuid,
+    job: ClaimedJob,
+    lost: &mut watch::Receiver<u64>,
+    epoch: u64,
+) {
+    let handler = registry.get(&job.kind).cloned();
+    let outcome = match &handler {
+        // Not deployed here (yet): a rolling deploy, not a poison job.
+        None => Err(JobError::Retry(format!("no handler for {:?}", job.kind))),
         Some(handler) => {
-            // Own task: a panic becomes a failed attempt, not a dead loop.
-            let task = tokio::spawn(handler.perform(job.args.clone()));
+            // Own task, `perform` included: a panic -- even before the future
+            // exists -- becomes a failed attempt, not a dead loop.
+            let (handler, args) = (handler.clone(), job.args.clone());
+            let task = tokio::spawn(async move { handler.perform(args).await });
             let _guard = AbortOnDrop(task.abort_handle());
-            match task.await {
-                Ok(result) => result,
-                Err(e) if e.is_panic() => Err(JobError::Retry("job panicked".into())),
-                Err(e) => Err(JobError::Retry(format!("job aborted: {e}"))),
+            tokio::select! {
+                joined = task => match joined {
+                    Ok(result) => result,
+                    Err(e) if e.is_panic() => Err(JobError::Retry("job panicked".into())),
+                    Err(e) => Err(JobError::Retry(format!("job aborted: {e}"))),
+                },
+                // Our registration was pruned meanwhile: the claim is gone
+                // and a peer may re-run the job, so stop this run now.
+                _ = lost.wait_for(|e| *e != epoch) => {
+                    Err(JobError::Retry("worker registration lost".into()))
+                }
             }
         }
     };
@@ -166,10 +217,14 @@ async fn run_one(db: &PgPool, registry: &Registry, worker: Uuid, job: ClaimedJob
         Ok(()) => queue::complete(db, job.id, worker).await,
         Err(JobError::Discard(msg)) => queue::fail(db, job.id, worker, &msg, None).await,
         Err(JobError::Retry(msg)) => {
-            let handler = registry.get(&job.kind);
-            let max = handler.map_or(1, |h| h.max_attempts());
-            let retry_in = (job.attempts < max)
-                .then(|| handler.map_or(Duration::ZERO, |h| h.backoff(job.attempts)));
+            let (max, backoff) = match &handler {
+                Some(h) => (h.max_attempts(), h.backoff(job.attempts)),
+                None => (
+                    i32::try_from(UNKNOWN_KIND_MAX_ATTEMPTS).unwrap_or(i32::MAX),
+                    polynomial_backoff(job.attempts),
+                ),
+            };
+            let retry_in = (job.attempts < max).then_some(backoff);
             queue::fail(db, job.id, worker, &msg, retry_in).await
         }
     };

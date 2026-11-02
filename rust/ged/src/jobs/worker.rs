@@ -26,6 +26,31 @@ pub struct WorkerSettings {
     pub concurrency: usize,
     /// `SOLID_QUEUE_SHUTDOWN_TIMEOUT` seconds (default 30).
     pub shutdown_timeout: Duration,
+    /// `SOLID_QUEUE_PROCESS_HEARTBEAT_INTERVAL` / `..._ALIVE_THRESHOLD`
+    /// seconds (defaults 60 / 300).
+    pub heartbeat: HeartbeatConfig,
+}
+
+fn seconds(raw: Option<String>) -> Option<Duration> {
+    raw.and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|s| s.is_finite() && *s > 0.0)
+        .map(Duration::from_secs_f64)
+}
+
+/// An interval that is not shorter than the threshold would get every healthy
+/// worker pruned: fall back to the defaults.
+fn heartbeat_from(lookup: &dyn Fn(&str) -> Option<String>) -> HeartbeatConfig {
+    let default = HeartbeatConfig::default();
+    let cfg = HeartbeatConfig {
+        interval: seconds(lookup("SOLID_QUEUE_PROCESS_HEARTBEAT_INTERVAL"))
+            .unwrap_or(default.interval),
+        expiry: seconds(lookup("SOLID_QUEUE_PROCESS_ALIVE_THRESHOLD")).unwrap_or(default.expiry),
+    };
+    if cfg.interval < cfg.expiry {
+        cfg
+    } else {
+        default
+    }
 }
 
 /// Ruby `Integer(x)`-ish: a positive integer, else the default.
@@ -45,6 +70,7 @@ impl WorkerSettings {
             threads: positive(lookup("JOB_THREADS"), 3),
             concurrency: positive(lookup("JOB_CONCURRENCY"), 1),
             shutdown_timeout: Duration::from_secs_f64(secs),
+            heartbeat: heartbeat_from(lookup),
         }
     }
 
@@ -58,7 +84,7 @@ impl WorkerSettings {
             queue,
             threads,
             polling_interval: Duration::from_millis(polling_ms),
-            heartbeat: HeartbeatConfig::default(),
+            heartbeat: self.heartbeat.clone(),
             shutdown_timeout: self.shutdown_timeout,
         };
         let mut all: Vec<_> = (0..self.concurrency)
@@ -190,5 +216,26 @@ mod tests {
             ("SOLID_QUEUE_SHUTDOWN_TIMEOUT", "-3"),
         ]);
         assert_eq!(s, settings(&[]));
+    }
+
+    #[test]
+    fn heartbeat_follows_solid_queue_defaults_and_its_env_knobs() {
+        let d = settings(&[]).runners();
+        assert_eq!(d[0].heartbeat.interval, Duration::from_secs(60));
+        assert_eq!(d[0].heartbeat.expiry, Duration::from_secs(300));
+        let s = settings(&[
+            ("SOLID_QUEUE_PROCESS_HEARTBEAT_INTERVAL", "0.5"),
+            ("SOLID_QUEUE_PROCESS_ALIVE_THRESHOLD", "2"),
+        ]);
+        for r in s.runners() {
+            assert_eq!(r.heartbeat.interval, Duration::from_millis(500));
+            assert_eq!(r.heartbeat.expiry, Duration::from_secs(2));
+        }
+        // Nonsense (or an interval that would outlive the threshold) falls back.
+        let bad = settings(&[
+            ("SOLID_QUEUE_PROCESS_HEARTBEAT_INTERVAL", "0"),
+            ("SOLID_QUEUE_PROCESS_ALIVE_THRESHOLD", "nope"),
+        ]);
+        assert_eq!(bad, settings(&[]));
     }
 }
