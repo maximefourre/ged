@@ -2,6 +2,8 @@
 //! type identification (a port of Active Storage's Marcel call).
 
 pub mod content_type;
+pub mod disposition;
+mod transliteration_table;
 mod marcel_tables;
 
 pub use content_type::detect_content_type;

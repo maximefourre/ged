@@ -1,0 +1,432 @@
+{
+  "id": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b",
+  "cases": [
+    {
+      "input": "report.pdf",
+      "normalized": "report.pdf",
+      "attachment": "attachment; filename=\"report.pdf\"; filename*=UTF-8''report.pdf",
+      "inline": "inline; filename=\"report.pdf\"; filename*=UTF-8''report.pdf",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-report.pdf"
+    },
+    {
+      "input": "mon rapport.pdf",
+      "normalized": "mon rapport.pdf",
+      "attachment": "attachment; filename=\"mon rapport.pdf\"; filename*=UTF-8''mon%20rapport.pdf",
+      "inline": "inline; filename=\"mon rapport.pdf\"; filename*=UTF-8''mon%20rapport.pdf",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-mon rapport.pdf"
+    },
+    {
+      "input": "résumé final.pdf",
+      "normalized": "résumé final.pdf",
+      "attachment": "attachment; filename=\"resume final.pdf\"; filename*=UTF-8''r%C3%A9sum%C3%A9%20final.pdf",
+      "inline": "inline; filename=\"resume final.pdf\"; filename*=UTF-8''r%C3%A9sum%C3%A9%20final.pdf",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-résumé final.pdf"
+    },
+    {
+      "input": "日本語.pdf",
+      "normalized": "日本語.pdf",
+      "attachment": "attachment; filename=\"%3F%3F%3F.pdf\"; filename*=UTF-8''%E6%97%A5%E6%9C%AC%E8%AA%9E.pdf",
+      "inline": "inline; filename=\"%3F%3F%3F.pdf\"; filename*=UTF-8''%E6%97%A5%E6%9C%AC%E8%AA%9E.pdf",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-日本語.pdf"
+    },
+    {
+      "input": "emoji 😀.png",
+      "normalized": "emoji 😀.png",
+      "attachment": "attachment; filename=\"emoji %3F.png\"; filename*=UTF-8''emoji%20%F0%9F%98%80.png",
+      "inline": "inline; filename=\"emoji %3F.png\"; filename*=UTF-8''emoji%20%F0%9F%98%80.png",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-emoji 😀.png"
+    },
+    {
+      "input": "Ünïcödé–dash.txt",
+      "normalized": "Ünïcödé–dash.txt",
+      "attachment": "attachment; filename=\"Unicode%3Fdash.txt\"; filename*=UTF-8''%C3%9Cn%C3%AFc%C3%B6d%C3%A9%E2%80%93dash.txt",
+      "inline": "inline; filename=\"Unicode%3Fdash.txt\"; filename*=UTF-8''%C3%9Cn%C3%AFc%C3%B6d%C3%A9%E2%80%93dash.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-Ünïcödé–dash.txt"
+    },
+    {
+      "input": "../../etc/passwd",
+      "normalized": "passwd",
+      "attachment": "attachment; filename=\"passwd\"; filename*=UTF-8''passwd",
+      "inline": "inline; filename=\"passwd\"; filename*=UTF-8''passwd",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-passwd"
+    },
+    {
+      "input": "..\\..\\windows\\system32\\cmd.exe",
+      "normalized": "cmd.exe",
+      "attachment": "attachment; filename=\"cmd.exe\"; filename*=UTF-8''cmd.exe",
+      "inline": "inline; filename=\"cmd.exe\"; filename*=UTF-8''cmd.exe",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-cmd.exe"
+    },
+    {
+      "input": "/abs/path/file.txt",
+      "normalized": "file.txt",
+      "attachment": "attachment; filename=\"file.txt\"; filename*=UTF-8''file.txt",
+      "inline": "inline; filename=\"file.txt\"; filename*=UTF-8''file.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-file.txt"
+    },
+    {
+      "input": "C:\\dir\\file.txt",
+      "normalized": "file.txt",
+      "attachment": "attachment; filename=\"file.txt\"; filename*=UTF-8''file.txt",
+      "inline": "inline; filename=\"file.txt\"; filename*=UTF-8''file.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-file.txt"
+    },
+    {
+      "input": "a/b/c.txt",
+      "normalized": "c.txt",
+      "attachment": "attachment; filename=\"c.txt\"; filename*=UTF-8''c.txt",
+      "inline": "inline; filename=\"c.txt\"; filename*=UTF-8''c.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-c.txt"
+    },
+    {
+      "input": "a\\b\\c.txt",
+      "normalized": "c.txt",
+      "attachment": "attachment; filename=\"c.txt\"; filename*=UTF-8''c.txt",
+      "inline": "inline; filename=\"c.txt\"; filename*=UTF-8''c.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-c.txt"
+    },
+    {
+      "input": "...hidden",
+      "normalized": "hidden",
+      "attachment": "attachment; filename=\"hidden\"; filename*=UTF-8''hidden",
+      "inline": "inline; filename=\"hidden\"; filename*=UTF-8''hidden",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-hidden"
+    },
+    {
+      "input": ".bashrc",
+      "normalized": "bashrc",
+      "attachment": "attachment; filename=\"bashrc\"; filename*=UTF-8''bashrc",
+      "inline": "inline; filename=\"bashrc\"; filename*=UTF-8''bashrc",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-bashrc"
+    },
+    {
+      "input": "..",
+      "normalized": "unnamed",
+      "attachment": "attachment; filename=\"unnamed\"; filename*=UTF-8''unnamed",
+      "inline": "inline; filename=\"unnamed\"; filename*=UTF-8''unnamed",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-unnamed"
+    },
+    {
+      "input": ".",
+      "normalized": "unnamed",
+      "attachment": "attachment; filename=\"unnamed\"; filename*=UTF-8''unnamed",
+      "inline": "inline; filename=\"unnamed\"; filename*=UTF-8''unnamed",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-unnamed"
+    },
+    {
+      "input": "",
+      "normalized": "unnamed",
+      "attachment": "attachment; filename=\"unnamed\"; filename*=UTF-8''unnamed",
+      "inline": "inline; filename=\"unnamed\"; filename*=UTF-8''unnamed",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-unnamed"
+    },
+    {
+      "input": "   ",
+      "normalized": "unnamed",
+      "attachment": "attachment; filename=\"unnamed\"; filename*=UTF-8''unnamed",
+      "inline": "inline; filename=\"unnamed\"; filename*=UTF-8''unnamed",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-unnamed"
+    },
+    {
+      "input": "\u0000",
+      "normalized": "unnamed",
+      "attachment": "attachment; filename=\"unnamed\"; filename*=UTF-8''unnamed",
+      "inline": "inline; filename=\"unnamed\"; filename*=UTF-8''unnamed",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-unnamed"
+    },
+    {
+      "input": "a\u0000b.txt",
+      "normalized": "ab.txt",
+      "attachment": "attachment; filename=\"ab.txt\"; filename*=UTF-8''ab.txt",
+      "inline": "inline; filename=\"ab.txt\"; filename*=UTF-8''ab.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-ab.txt"
+    },
+    {
+      "input": "file\nname.txt",
+      "normalized": "filename.txt",
+      "attachment": "attachment; filename=\"filename.txt\"; filename*=UTF-8''filename.txt",
+      "inline": "inline; filename=\"filename.txt\"; filename*=UTF-8''filename.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-filename.txt"
+    },
+    {
+      "input": "file\r\nSet-Cookie: x=1",
+      "normalized": "fileSet-Cookie: x=1",
+      "attachment": "attachment; filename=\"fileSet-Cookie%3A x%3D1\"; filename*=UTF-8''fileSet-Cookie%3A%20x%3D1",
+      "inline": "inline; filename=\"fileSet-Cookie%3A x%3D1\"; filename*=UTF-8''fileSet-Cookie%3A%20x%3D1",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-fileSet-Cookie: x=1"
+    },
+    {
+      "input": "evil\r\nContent-Length: 0\r\n\r\n<html>",
+      "normalized": "evilContent-Length: 0<html>",
+      "attachment": "attachment; filename=\"evilContent-Length%3A 0%3Chtml%3E\"; filename*=UTF-8''evilContent-Length%3A%200%3Chtml%3E",
+      "inline": "inline; filename=\"evilContent-Length%3A 0%3Chtml%3E\"; filename*=UTF-8''evilContent-Length%3A%200%3Chtml%3E",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-evilContent-Length: 0<html>"
+    },
+    {
+      "input": "tab\there.txt",
+      "normalized": "tabhere.txt",
+      "attachment": "attachment; filename=\"tabhere.txt\"; filename*=UTF-8''tabhere.txt",
+      "inline": "inline; filename=\"tabhere.txt\"; filename*=UTF-8''tabhere.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-tabhere.txt"
+    },
+    {
+      "input": "delchar",
+      "normalized": "delchar",
+      "attachment": "attachment; filename=\"delchar\"; filename*=UTF-8''delchar",
+      "inline": "inline; filename=\"delchar\"; filename*=UTF-8''delchar",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-delchar"
+    },
+    {
+      "input": "quote\"inside.txt",
+      "normalized": "quote\"inside.txt",
+      "attachment": "attachment; filename=\"quote%22inside.txt\"; filename*=UTF-8''quote%22inside.txt",
+      "inline": "inline; filename=\"quote%22inside.txt\"; filename*=UTF-8''quote%22inside.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-quote\"inside.txt"
+    },
+    {
+      "input": "semi;colon.txt",
+      "normalized": "semi;colon.txt",
+      "attachment": "attachment; filename=\"semi%3Bcolon.txt\"; filename*=UTF-8''semi%3Bcolon.txt",
+      "inline": "inline; filename=\"semi%3Bcolon.txt\"; filename*=UTF-8''semi%3Bcolon.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-semi;colon.txt"
+    },
+    {
+      "input": "back`tick",
+      "normalized": "back`tick",
+      "attachment": "attachment; filename=\"back`tick\"; filename*=UTF-8''back`tick",
+      "inline": "inline; filename=\"back`tick\"; filename*=UTF-8''back`tick",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-back`tick"
+    },
+    {
+      "input": "per%cent.txt",
+      "normalized": "per%cent.txt",
+      "attachment": "attachment; filename=\"per%25cent.txt\"; filename*=UTF-8''per%25cent.txt",
+      "inline": "inline; filename=\"per%25cent.txt\"; filename*=UTF-8''per%25cent.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-per%cent.txt"
+    },
+    {
+      "input": "dollar$sign",
+      "normalized": "dollar$sign",
+      "attachment": "attachment; filename=\"dollar$sign\"; filename*=UTF-8''dollar$sign",
+      "inline": "inline; filename=\"dollar$sign\"; filename*=UTF-8''dollar$sign",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-dollar$sign"
+    },
+    {
+      "input": "pipe|name",
+      "normalized": "pipe|name",
+      "attachment": "attachment; filename=\"pipe|name\"; filename*=UTF-8''pipe|name",
+      "inline": "inline; filename=\"pipe|name\"; filename*=UTF-8''pipe|name",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-pipe|name"
+    },
+    {
+      "input": "star*.txt",
+      "normalized": "star*.txt",
+      "attachment": "attachment; filename=\"star%2A.txt\"; filename*=UTF-8''star%2A.txt",
+      "inline": "inline; filename=\"star%2A.txt\"; filename*=UTF-8''star%2A.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-star*.txt"
+    },
+    {
+      "input": "q?.txt",
+      "normalized": "q?.txt",
+      "attachment": "attachment; filename=\"q%3F.txt\"; filename*=UTF-8''q%3F.txt",
+      "inline": "inline; filename=\"q%3F.txt\"; filename*=UTF-8''q%3F.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-q?.txt"
+    },
+    {
+      "input": "lt<gt>.txt",
+      "normalized": "lt<gt>.txt",
+      "attachment": "attachment; filename=\"lt%3Cgt%3E.txt\"; filename*=UTF-8''lt%3Cgt%3E.txt",
+      "inline": "inline; filename=\"lt%3Cgt%3E.txt\"; filename*=UTF-8''lt%3Cgt%3E.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-lt<gt>.txt"
+    },
+    {
+      "input": "colon:name.txt",
+      "normalized": "colon:name.txt",
+      "attachment": "attachment; filename=\"colon%3Aname.txt\"; filename*=UTF-8''colon%3Aname.txt",
+      "inline": "inline; filename=\"colon%3Aname.txt\"; filename*=UTF-8''colon%3Aname.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-colon:name.txt"
+    },
+    {
+      "input": "comma, name.txt",
+      "normalized": "comma, name.txt",
+      "attachment": "attachment; filename=\"comma%2C name.txt\"; filename*=UTF-8''comma%2C%20name.txt",
+      "inline": "inline; filename=\"comma%2C name.txt\"; filename*=UTF-8''comma%2C%20name.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-comma, name.txt"
+    },
+    {
+      "input": "a'b.txt",
+      "normalized": "a'b.txt",
+      "attachment": "attachment; filename=\"a%27b.txt\"; filename*=UTF-8''a%27b.txt",
+      "inline": "inline; filename=\"a%27b.txt\"; filename*=UTF-8''a%27b.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-a'b.txt"
+    },
+    {
+      "input": "filename=\"x\".pdf",
+      "normalized": "filename=\"x\".pdf",
+      "attachment": "attachment; filename=\"filename%3D%22x%22.pdf\"; filename*=UTF-8''filename%3D%22x%22.pdf",
+      "inline": "inline; filename=\"filename%3D%22x%22.pdf\"; filename*=UTF-8''filename%3D%22x%22.pdf",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-filename=\"x\".pdf"
+    },
+    {
+      "input": "x\"; filename*=UTF-8''evil.exe",
+      "normalized": "x\"; filename*=UTF-8''evil.exe",
+      "attachment": "attachment; filename=\"x%22%3B filename%2A%3DUTF-8%27%27evil.exe\"; filename*=UTF-8''x%22%3B%20filename%2A%3DUTF-8%27%27evil.exe",
+      "inline": "inline; filename=\"x%22%3B filename%2A%3DUTF-8%27%27evil.exe\"; filename*=UTF-8''x%22%3B%20filename%2A%3DUTF-8%27%27evil.exe",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-x\"; filename*=UTF-8''evil.exe"
+    },
+    {
+      "input": "name‮exe.txt",
+      "normalized": "name‮exe.txt",
+      "attachment": "attachment; filename=\"name%3Fexe.txt\"; filename*=UTF-8''name%E2%80%AEexe.txt",
+      "inline": "inline; filename=\"name%3Fexe.txt\"; filename*=UTF-8''name%E2%80%AEexe.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-name‮exe.txt"
+    },
+    {
+      "input": " line",
+      "normalized": " line",
+      "attachment": "attachment; filename=\"%3Fline\"; filename*=UTF-8''%E2%80%A8line",
+      "inline": "inline; filename=\"%3Fline\"; filename*=UTF-8''%E2%80%A8line",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b- line"
+    },
+    {
+      "input": "trailing space ",
+      "normalized": "trailing space ",
+      "attachment": "attachment; filename=\"trailing space \"; filename*=UTF-8''trailing%20space%20",
+      "inline": "inline; filename=\"trailing space \"; filename*=UTF-8''trailing%20space%20",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-trailing space "
+    },
+    {
+      "input": " leading",
+      "normalized": " leading",
+      "attachment": "attachment; filename=\" leading\"; filename*=UTF-8''%20leading",
+      "inline": "inline; filename=\" leading\"; filename*=UTF-8''%20leading",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b- leading"
+    },
+    {
+      "input": "/",
+      "normalized": "/",
+      "attachment": "attachment; filename=\"%2F\"; filename*=UTF-8''%2F",
+      "inline": "inline; filename=\"%2F\"; filename*=UTF-8''%2F",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-/"
+    },
+    {
+      "input": "///",
+      "normalized": "/",
+      "attachment": "attachment; filename=\"%2F\"; filename*=UTF-8''%2F",
+      "inline": "inline; filename=\"%2F\"; filename*=UTF-8''%2F",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-/"
+    },
+    {
+      "input": "a/",
+      "normalized": "a",
+      "attachment": "attachment; filename=\"a\"; filename*=UTF-8''a",
+      "inline": "inline; filename=\"a\"; filename*=UTF-8''a",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-a"
+    },
+    {
+      "input": "dir/",
+      "normalized": "dir",
+      "attachment": "attachment; filename=\"dir\"; filename*=UTF-8''dir",
+      "inline": "inline; filename=\"dir\"; filename*=UTF-8''dir",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-dir"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf",
+      "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf",
+      "attachment": "attachment; filename=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf\"; filename*=UTF-8''aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf",
+      "inline": "inline; filename=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf\"; filename*=UTF-8''aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf"
+    },
+    {
+      "input": "ß.txt",
+      "normalized": "ß.txt",
+      "attachment": "attachment; filename=\"ss.txt\"; filename*=UTF-8''%C3%9F.txt",
+      "inline": "inline; filename=\"ss.txt\"; filename*=UTF-8''%C3%9F.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-ß.txt"
+    },
+    {
+      "input": "ŉ.txt",
+      "normalized": "ŉ.txt",
+      "attachment": "attachment; filename=\"%27n.txt\"; filename*=UTF-8''%C5%89.txt",
+      "inline": "inline; filename=\"%27n.txt\"; filename*=UTF-8''%C5%89.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-ŉ.txt"
+    },
+    {
+      "input": "Ǭ.txt",
+      "normalized": "Ǭ.txt",
+      "attachment": "attachment; filename=\"O.txt\"; filename*=UTF-8''%C7%AC.txt",
+      "inline": "inline; filename=\"O.txt\"; filename*=UTF-8''%C7%AC.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-Ǭ.txt"
+    },
+    {
+      "input": "ʼn",
+      "normalized": "ʼn",
+      "attachment": "attachment; filename=\"%3Fn\"; filename*=UTF-8''%CA%BCn",
+      "inline": "inline; filename=\"%3Fn\"; filename*=UTF-8''%CA%BCn",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-ʼn"
+    },
+    {
+      "input": "naïve café.docx",
+      "normalized": "naïve café.docx",
+      "attachment": "attachment; filename=\"naive cafe.docx\"; filename*=UTF-8''na%C3%AFve%20caf%C3%A9.docx",
+      "inline": "inline; filename=\"naive cafe.docx\"; filename*=UTF-8''na%C3%AFve%20caf%C3%A9.docx",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-naïve café.docx"
+    },
+    {
+      "input": "COM1",
+      "normalized": "COM1",
+      "attachment": "attachment; filename=\"COM1\"; filename*=UTF-8''COM1",
+      "inline": "inline; filename=\"COM1\"; filename*=UTF-8''COM1",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-COM1"
+    },
+    {
+      "input": "con.txt",
+      "normalized": "con.txt",
+      "attachment": "attachment; filename=\"con.txt\"; filename*=UTF-8''con.txt",
+      "inline": "inline; filename=\"con.txt\"; filename*=UTF-8''con.txt",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-con.txt"
+    },
+    {
+      "input": "-rf",
+      "normalized": "-rf",
+      "attachment": "attachment; filename=\"-rf\"; filename*=UTF-8''-rf",
+      "inline": "inline; filename=\"-rf\"; filename*=UTF-8''-rf",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b--rf"
+    },
+    {
+      "input": "~/x",
+      "normalized": "x",
+      "attachment": "attachment; filename=\"x\"; filename*=UTF-8''x",
+      "inline": "inline; filename=\"x\"; filename*=UTF-8''x",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-x"
+    },
+    {
+      "input": "a..b",
+      "normalized": "a..b",
+      "attachment": "attachment; filename=\"a..b\"; filename*=UTF-8''a..b",
+      "inline": "inline; filename=\"a..b\"; filename*=UTF-8''a..b",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-a..b"
+    },
+    {
+      "input": "a.",
+      "normalized": "a.",
+      "attachment": "attachment; filename=\"a.\"; filename*=UTF-8''a.",
+      "inline": "inline; filename=\"a.\"; filename*=UTF-8''a.",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-a."
+    },
+    {
+      "input": ".a.",
+      "normalized": "a.",
+      "attachment": "attachment; filename=\"a.\"; filename*=UTF-8''a.",
+      "inline": "inline; filename=\"a.\"; filename*=UTF-8''a.",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-a."
+    },
+    {
+      "input": "xxxxx",
+      "normalized": "xxxxx",
+      "attachment": "attachment; filename=\"xxxxx\"; filename*=UTF-8''xxxxx",
+      "inline": "inline; filename=\"xxxxx\"; filename*=UTF-8''xxxxx",
+      "zip_entry": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b-xxxxx"
+    }
+  ]
+}
