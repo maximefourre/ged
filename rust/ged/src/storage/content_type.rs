@@ -54,7 +54,11 @@ pub fn detect_content_type(head: &[u8], filename: Option<&str>, declared: Option
     let mut iter = seen.into_iter();
     let first = iter.next().unwrap_or_else(|| BINARY.to_owned());
     iter.fold(first, |kind, candidate| {
-        if is_child(&candidate, &kind, 0) { candidate } else { kind }
+        if is_child(&candidate, &kind, 0) {
+            candidate
+        } else {
+            kind
+        }
     })
 }
 
@@ -63,7 +67,13 @@ fn sanitize_filename(name: &str) -> String {
     const BLANK: &[char] = &['\0', '\t', '\n', '\u{b}', '\u{c}', '\r', ' '];
     name.trim_matches(BLANK)
         .chars()
-        .map(|c| if "\u{202E}%$|:;/<>?*\"\\".contains(c) { '-' } else { c })
+        .map(|c| {
+            if "\u{202E}%$|:;/<>?*\"\\".contains(c) {
+                '-'
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
@@ -71,7 +81,7 @@ fn sanitize_filename(name: &str) -> String {
 fn for_declared_type(declared: &str) -> Option<String> {
     let lower = declared.to_lowercase();
     let end = lower
-        .find(|c: char| matches!(c, ';' | ',' | ' ' | '\t' | '\n' | '\r' | '\u{b}' | '\u{c}'))
+        .find([';', ',', ' ', '\t', '\n', '\r', '\u{b}', '\u{c}'])
         .unwrap_or(lower.len());
     let kind = &lower[..end];
     (kind.contains('/') && kind != BINARY).then(|| kind.to_owned())
@@ -104,7 +114,10 @@ fn is_child(child: &str, parent: &str, depth: usize) -> bool {
         return false;
     }
     match marcel_tables::PARENTS.binary_search_by_key(&child, |(k, _)| k) {
-        Ok(i) => marcel_tables::PARENTS[i].1.iter().any(|p| is_child(p, parent, depth + 1)),
+        Ok(i) => marcel_tables::PARENTS[i]
+            .1
+            .iter()
+            .any(|p| is_child(p, parent, depth + 1)),
         Err(_) => false,
     }
 }
@@ -175,17 +188,33 @@ mod tests {
     // Answers below were read off the Rails stack's Marcel 1.2.1 (see the corpus).
     #[test]
     fn pdf_png_and_zip_by_content() {
-        assert_eq!(detect(b"%PDF-1.4\n1 0 obj", "a.pdf", None), "application/pdf");
-        assert_eq!(detect(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR", "a.png", None), "image/png");
+        assert_eq!(
+            detect(b"%PDF-1.4\n1 0 obj", "a.pdf", None),
+            "application/pdf"
+        );
+        assert_eq!(
+            detect(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR", "a.png", None),
+            "image/png"
+        );
         assert_eq!(detect(b"PK\x03\x04\0\0", "a.zip", None), "application/zip");
     }
 
     #[test]
     fn content_beats_a_misleading_extension_or_declared_type() {
         assert_eq!(detect(b"%PDF-1.4\n", "a.txt", None), "application/pdf");
-        assert_eq!(detect(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR", "a.pdf", Some("application/pdf")), "image/png");
+        assert_eq!(
+            detect(
+                b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR",
+                "a.pdf",
+                Some("application/pdf")
+            ),
+            "image/png"
+        );
         assert_eq!(detect(b"PK\x03\x04\0\0", "a.pdf", None), "application/zip");
-        assert_eq!(detect(b"<!DOCTYPE html><html>", "a.png", Some("image/png")), "text/html");
+        assert_eq!(
+            detect(b"<!DOCTYPE html><html>", "a.png", Some("image/png")),
+            "text/html"
+        );
     }
 
     #[test]
@@ -204,8 +233,14 @@ mod tests {
             detect(b"<svg xmlns='http://www.w3.org/2000/svg'></svg>", "a", None),
             "image/svg+xml"
         );
-        assert_eq!(detect(b"<svg/>", "a.html", Some("text/html")), "image/svg+xml");
-        assert_eq!(detect(b"<html><script>alert(1)</script>", "a.txt", None), "text/html");
+        assert_eq!(
+            detect(b"<svg/>", "a.html", Some("text/html")),
+            "image/svg+xml"
+        );
+        assert_eq!(
+            detect(b"<html><script>alert(1)</script>", "a.txt", None),
+            "text/html"
+        );
         // Marcel misses leading blanks beyond one character
         assert_eq!(detect(b"  \n<html>", "a", None), BINARY);
     }
@@ -216,20 +251,29 @@ mod tests {
         assert_eq!(detect(&bytes, "a", None), BINARY);
         assert_eq!(detect(&bytes, "a.bin", None), BINARY);
         assert_eq!(detect(&bytes, "a.png", Some("image/png")), "image/png");
-        assert_eq!(detect(&bytes, "x", Some("application/octet-stream")), BINARY);
+        assert_eq!(
+            detect(&bytes, "x", Some("application/octet-stream")),
+            BINARY
+        );
         assert_eq!(detect(b"", "a", None), BINARY);
     }
 
     #[test]
     fn declared_type_is_parsed_like_marcel() {
-        assert_eq!(detect(b"hi", "a", Some("TEXT/PLAIN; charset=utf-8")), "text/plain");
+        assert_eq!(
+            detect(b"hi", "a", Some("TEXT/PLAIN; charset=utf-8")),
+            "text/plain"
+        );
         assert_eq!(detect(b"hi", "a", Some("text")), BINARY);
         assert_eq!(detect(b"hi", "a.txt", Some(" text/html")), "text/plain");
     }
 
     #[test]
     fn no_filename_uses_content_and_declared_type_only() {
-        assert_eq!(detect_content_type(b"%PDF-1.4", None, None), "application/pdf");
+        assert_eq!(
+            detect_content_type(b"%PDF-1.4", None, None),
+            "application/pdf"
+        );
         assert_eq!(detect_content_type(b"hi", None, None), BINARY);
     }
 
@@ -255,12 +299,23 @@ mod tests {
         assert!(corpus.cases.len() > 100);
         let mut failures = Vec::new();
         for case in &corpus.cases {
-            let data = base64::engine::general_purpose::STANDARD.decode(&case.data_b64).unwrap();
-            let got = detect_content_type(&data, case.filename.as_deref(), case.declared.as_deref());
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(&case.data_b64)
+                .unwrap();
+            let got =
+                detect_content_type(&data, case.filename.as_deref(), case.declared.as_deref());
             if got != case.expected {
-                failures.push(format!("{}: rails={} rust={}", case.label, case.expected, got));
+                failures.push(format!(
+                    "{}: rails={} rust={}",
+                    case.label, case.expected, got
+                ));
             }
         }
-        assert!(failures.is_empty(), "{} diverge:\n{}", failures.len(), failures.join("\n"));
+        assert!(
+            failures.is_empty(),
+            "{} diverge:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 }

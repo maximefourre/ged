@@ -71,7 +71,10 @@ mod tests {
 
     fn entries(store: &StagingStore) -> Vec<String> {
         match std::fs::read_dir(store.root()) {
-            Ok(rd) => rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect(),
+            Ok(rd) => rd
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect(),
             Err(_) => Vec::new(),
         }
     }
@@ -84,7 +87,13 @@ mod tests {
         assert!(store.exists(id).await);
         assert_eq!(entries(&store), vec![id.to_string()]);
         let mut body = String::new();
-        store.open(id).await.unwrap().read_to_string(&mut body).await.unwrap();
+        store
+            .open(id)
+            .await
+            .unwrap()
+            .read_to_string(&mut body)
+            .await
+            .unwrap();
         assert_eq!(body, "raw bytes");
         store.delete(id).await.unwrap();
         assert!(!store.exists(id).await);
@@ -126,11 +135,11 @@ mod tests {
                     return std::task::Poll::Ready(Err(std::io::Error::other("cut")));
                 }
                 let r = std::pin::Pin::new(&mut self.0).poll_read(cx, buf);
-                if let std::task::Poll::Ready(Ok(())) = &r {
-                    if buf.filled().is_empty() {
-                        self.1 = true;
-                        return std::task::Poll::Ready(Err(std::io::Error::other("cut")));
-                    }
+                if let std::task::Poll::Ready(Ok(())) = &r
+                    && buf.filled().is_empty()
+                {
+                    self.1 = true;
+                    return std::task::Poll::Ready(Err(std::io::Error::other("cut")));
                 }
                 r
             }

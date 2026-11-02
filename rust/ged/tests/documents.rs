@@ -28,7 +28,13 @@ async fn world() -> World {
     let department = department(&pool, "Finance").await;
     let dir = tempfile::tempdir().unwrap();
     let storage = Storage::new(dir.path().join("files"));
-    World { db, pool, storage, _dir: dir, department }
+    World {
+        db,
+        pool,
+        storage,
+        _dir: dir,
+        department,
+    }
 }
 
 async fn department(pool: &PgPool, name: &str) -> i64 {
@@ -87,9 +93,17 @@ fn now() -> NaiveDateTime {
 
 fn files_on_disk(storage: &Storage) -> usize {
     fn walk(dir: &std::path::Path) -> usize {
-        let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return 0;
+        };
         rd.flatten()
-            .map(|e| if e.path().is_dir() { walk(&e.path()) } else { 1 })
+            .map(|e| {
+                if e.path().is_dir() {
+                    walk(&e.path())
+                } else {
+                    1
+                }
+            })
             .sum()
     }
     walk(storage.root())
@@ -123,7 +137,10 @@ async fn create_persists_the_document_and_its_stored_file() {
     .fetch_one(&w.pool)
     .await
     .unwrap();
-    assert_eq!((stored_key.as_str(), kind.as_str(), size), (key.as_str(), "application/pdf", 14));
+    assert_eq!(
+        (stored_key.as_str(), kind.as_str(), size),
+        (key.as_str(), "application/pdf", 14)
+    );
     assert!(w.storage.exists(&key).await);
     w.finish().await;
 }
@@ -204,7 +221,9 @@ async fn a_trashed_or_missing_department_is_rejected() {
 async fn a_rolled_back_transaction_leaves_no_row() {
     let w = world().await;
     let mut tx = w.pool.begin().await.unwrap();
-    DocumentCreator::create(&mut tx, w.input(w.stored(b"x").await)).await.unwrap();
+    DocumentCreator::create(&mut tx, w.input(w.stored(b"x").await))
+        .await
+        .unwrap();
     tx.rollback().await.unwrap();
     assert_eq!(w.count("documents").await, 0);
     assert_eq!(w.count("stored_files").await, 0);
@@ -218,15 +237,31 @@ async fn soft_delete_hides_schedules_the_purge_and_restore_undoes_it() {
     let mut conn = w.pool.acquire().await.unwrap();
     let t = now();
 
-    let trashed = Document::soft_delete(&mut conn, doc.id, t).await.unwrap().unwrap();
+    let trashed = Document::soft_delete(&mut conn, doc.id, t)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(trashed.deleted_at, Some(t));
     assert_eq!(trashed.purge_at, Some(t + Duration::days(30)));
     assert!(Document::find(&mut conn, doc.id).await.unwrap().is_none());
-    assert!(Document::find_with_deleted(&mut conn, doc.id).await.unwrap().is_some());
+    assert!(
+        Document::find_with_deleted(&mut conn, doc.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
     // a trashed document cannot be trashed again
-    assert!(Document::soft_delete(&mut conn, doc.id, t).await.unwrap().is_none());
+    assert!(
+        Document::soft_delete(&mut conn, doc.id, t)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
-    let back = Document::restore(&mut conn, doc.id, now()).await.unwrap().unwrap();
+    let back = Document::restore(&mut conn, doc.id, now())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(back.deleted_at.is_none() && back.purge_at.is_none());
     assert!(Document::find(&mut conn, doc.id).await.unwrap().is_some());
     drop(conn);
@@ -240,9 +275,22 @@ async fn bulk_soft_delete_counts_only_live_rows_and_keeps_updated_at() {
     let b = w.create(w.input(w.stored(b"b").await)).await.unwrap();
     let mut conn = w.pool.acquire().await.unwrap();
     let t = now();
-    assert_eq!(Document::bulk_soft_delete(&mut conn, &[a.id, b.id, Uuid::new_v4()], t).await.unwrap(), 2);
-    assert_eq!(Document::bulk_soft_delete(&mut conn, &[a.id], t).await.unwrap(), 0);
-    let row = Document::find_with_deleted(&mut conn, a.id).await.unwrap().unwrap();
+    assert_eq!(
+        Document::bulk_soft_delete(&mut conn, &[a.id, b.id, Uuid::new_v4()], t)
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        Document::bulk_soft_delete(&mut conn, &[a.id], t)
+            .await
+            .unwrap(),
+        0
+    );
+    let row = Document::find_with_deleted(&mut conn, a.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(row.purge_at, Some(t + Duration::days(30)));
     assert_eq!(row.updated_at, a.updated_at);
     drop(conn);
@@ -281,9 +329,22 @@ async fn documents_inside_the_window_are_not_purgeable() {
     let w = world().await;
     let doc = w.create(w.input(w.stored(b"x").await)).await.unwrap();
     let mut conn = w.pool.acquire().await.unwrap();
-    Document::soft_delete(&mut conn, doc.id, now()).await.unwrap();
-    assert!(Document::purgeable_ids(&mut conn, now()).await.unwrap().is_empty());
-    assert!(Document::purgeable_ids(&mut conn, now() + Duration::days(31)).await.unwrap().len() == 1);
+    Document::soft_delete(&mut conn, doc.id, now())
+        .await
+        .unwrap();
+    assert!(
+        Document::purgeable_ids(&mut conn, now())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        Document::purgeable_ids(&mut conn, now() + Duration::days(31))
+            .await
+            .unwrap()
+            .len()
+            == 1
+    );
     drop(conn);
     w.finish().await;
 }
@@ -310,4 +371,3 @@ async fn upload_requests_pointing_at_a_purged_document_are_unlinked() {
     assert!(linked.is_none());
     w.finish().await;
 }
-

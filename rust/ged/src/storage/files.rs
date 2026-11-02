@@ -13,7 +13,9 @@ use super::content_type::SNIFF_BYTES;
 #[derive(Debug)]
 pub enum StorageError {
     /// More bytes than the limit allowed; nothing was kept.
-    TooLarge { limit: u64 },
+    TooLarge {
+        limit: u64,
+    },
     /// A key or id that is not one this store generates (path traversal etc.).
     InvalidKey,
     Io(io::Error),

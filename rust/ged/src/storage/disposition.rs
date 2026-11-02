@@ -25,7 +25,13 @@ pub fn content_disposition(inline: bool, filename: &str) -> String {
 pub fn zip_entry_name(id: &str, filename: &str) -> String {
     let safe: String = filename
         .chars()
-        .map(|c| if c == '/' || c == '\\' || c.is_control() { '_' } else { c })
+        .map(|c| {
+            if c == '/' || c == '\\' || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     format!("{id}-{safe}")
 }
@@ -91,7 +97,11 @@ mod tests {
         for case in &corpus.cases {
             let name = &case.normalized;
             for (label, got, want) in [
-                ("attachment", content_disposition(false, name), &case.attachment),
+                (
+                    "attachment",
+                    content_disposition(false, name),
+                    &case.attachment,
+                ),
                 ("inline", content_disposition(true, name), &case.inline),
                 ("zip", zip_entry_name(&corpus.id, name), &case.zip_entry),
             ] {
@@ -101,7 +111,10 @@ mod tests {
                     continue;
                 }
                 if &got != want {
-                    failures.push(format!("{:?} {label}: rails={want:?} rust={got:?}", case.input));
+                    failures.push(format!(
+                        "{:?} {label}: rails={want:?} rust={got:?}",
+                        case.input
+                    ));
                 }
             }
         }
@@ -123,7 +136,12 @@ mod tests {
                 let quoted = header.split("filename=\"").nth(1).unwrap();
                 let value = quoted.split('"').next().unwrap();
                 assert!(!value.contains(';') && !value.contains('\\'), "{header:?}");
-                assert_eq!(header.matches('"').count(), 2, "{:?} -> {header:?}", case.input);
+                assert_eq!(
+                    header.matches('"').count(),
+                    2,
+                    "{:?} -> {header:?}",
+                    case.input
+                );
                 assert_eq!(header.matches("; filename").count(), 2, "{header:?}");
             }
         }

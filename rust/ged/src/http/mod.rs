@@ -9,7 +9,7 @@ use std::panic::AssertUnwindSafe;
 
 use axum::Router;
 use axum::body::{Body, HttpBody as _};
-use axum::extract::Request;
+use axum::extract::{Request, State};
 use axum::http::header::{CONTENT_TYPE, HeaderValue};
 use axum::http::{Method, StatusCode, Uri};
 use axum::middleware::{self, Next};
@@ -44,7 +44,7 @@ pub fn router_with(state: AppState, routes: Router<AppState>) -> Router {
         // unmatched path is a plain 404 and never parses anything.
         .route_layer(middleware::from_fn(guard_params))
         .fallback(not_found)
-        .layer(middleware::from_fn(shield))
+        .layer(middleware::from_fn_with_state(state.clone(), shield))
         .with_state(state)
 }
 
@@ -177,11 +177,18 @@ async fn reject_or_unrouted(req: Request, next: Next, api: bool) -> Response {
 /// Outermost layer: no panic or framework rejection under `/api/v1` ever
 /// reaches the client as anything but the JSON error contract, and no
 /// internal detail is ever put in the body.
-async fn shield(req: Request, next: Next) -> Response {
+async fn shield(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let (req, unread) = share_body(req);
     let response = shield_inner(req, next).await;
-    drain(unread).await;
+    drain(unread, drain_limit(state.config.max_upload_bytes)).await;
     response
+}
+
+/// How much unread body is read out before giving up: `GED_MAX_UPLOAD_BYTES`,
+/// the size the proxy in front of Rails (`MAX_REQUEST_BODY`) accepts at all —
+/// beyond it the request is refused (413), so reading further is pointless.
+pub fn drain_limit(max_upload_bytes: u64) -> usize {
+    usize::try_from(max_upload_bytes).unwrap_or(usize::MAX)
 }
 
 /// The request body, shared so that [`drain`] can finish reading what a
@@ -215,11 +222,11 @@ fn share_body(req: Request) -> (Request, SharedBody) {
     )
 }
 
-/// Longest wait, and most bytes, spent reading out an unread body.
+/// Longest wait spent reading out an unread body (the byte limit is
+/// [`drain_limit`]).
 const DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-const DRAIN_MAX_BYTES: usize = 64 * 1024 * 1024;
 
-async fn drain(unread: SharedBody) {
+async fn drain(unread: SharedBody, max_bytes: usize) {
     let read_out = async {
         let mut total = 0usize;
         loop {
@@ -231,7 +238,7 @@ async fn drain(unread: SharedBody) {
             match frame {
                 Some(Ok(frame)) => {
                     total += frame.data_ref().map_or(0, |d| d.len());
-                    if total > DRAIN_MAX_BYTES {
+                    if total > max_bytes {
                         break;
                     }
                 }
@@ -290,4 +297,41 @@ async fn shield_inner(req: Request, next: Next) -> Response {
         return error::json_error_for_status(status);
     }
     response
+}
+
+#[cfg(test)]
+mod drain_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    fn counted_body(chunks: usize, read: Arc<AtomicUsize>) -> SharedBody {
+        let stream = futures_util::stream::iter((0..chunks).map(move |_| {
+            read.fetch_add(1024, Ordering::SeqCst);
+            Ok::<_, std::io::Error>(bytes::Bytes::from(vec![0u8; 1024]))
+        }));
+        Arc::new(Mutex::new(Body::from_stream(stream)))
+    }
+
+    #[tokio::test]
+    async fn drain_stops_at_the_configured_limit() {
+        let read = Arc::new(AtomicUsize::new(0));
+        drain(counted_body(1000, read.clone()), 10 * 1024).await;
+        let got = read.load(Ordering::SeqCst);
+        assert!((10 * 1024..=12 * 1024).contains(&got), "read {got} bytes");
+    }
+
+    #[tokio::test]
+    async fn drain_reads_a_small_body_to_the_end() {
+        let read = Arc::new(AtomicUsize::new(0));
+        drain(counted_body(5, read.clone()), 1 << 20).await;
+        assert_eq!(read.load(Ordering::SeqCst), 5 * 1024);
+    }
+
+    #[test]
+    fn the_limit_is_the_upload_limit() {
+        assert_eq!(drain_limit(52_428_800), 52_428_800);
+        assert_eq!(drain_limit(1024), 1024);
+        assert_eq!(drain_limit(u64::MAX), usize::MAX);
+    }
 }

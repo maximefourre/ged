@@ -88,10 +88,16 @@ mod tests {
         let mut out = Vec::new();
         let mut stack = vec![root.to_path_buf()];
         while let Some(dir) = stack.pop() {
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_dir() { stack.push(path) } else { out.push(path) }
+                if path.is_dir() {
+                    stack.push(path)
+                } else {
+                    out.push(path)
+                }
             }
         }
         out
@@ -105,16 +111,28 @@ mod tests {
         assert_eq!(stored.written.checksum, sha256_hex(b"%PDF-1.4 hello"));
         assert_eq!(stored.written.head, b"%PDF-1.4 hello");
         let mut body = Vec::new();
-        storage.open(&stored.key).await.unwrap().read_to_end(&mut body).await.unwrap();
+        storage
+            .open(&stored.key)
+            .await
+            .unwrap()
+            .read_to_end(&mut body)
+            .await
+            .unwrap();
         assert_eq!(body, b"%PDF-1.4 hello");
         let path = storage.path_for(&stored.key).unwrap();
         assert!(path.starts_with(storage.root()));
-        assert_eq!(path.parent().unwrap().parent().unwrap().parent().unwrap(), storage.root());
+        assert_eq!(
+            path.parent().unwrap().parent().unwrap().parent().unwrap(),
+            storage.root()
+        );
     }
 
     fn sha256_hex(data: &[u8]) -> String {
         use sha2::{Digest, Sha256};
-        Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect()
+        Sha256::digest(data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 
     #[tokio::test]
@@ -147,7 +165,11 @@ mod tests {
         let (_dir, storage) = store();
         let err = storage.put(Breaks(3), 1 << 20).await.err().unwrap();
         assert!(matches!(err, StorageError::Io(_)));
-        assert!(files_under(storage.root()).is_empty(), "{:?}", files_under(storage.root()));
+        assert!(
+            files_under(storage.root()).is_empty(),
+            "{:?}",
+            files_under(storage.root())
+        );
     }
 
     #[tokio::test]
@@ -185,7 +207,10 @@ mod tests {
             &format!("{}\0", "a".repeat(31)),
             &"a".repeat(33),
         ] {
-            assert!(matches!(storage.path_for(key), Err(StorageError::InvalidKey)), "{key:?}");
+            assert!(
+                matches!(storage.path_for(key), Err(StorageError::InvalidKey)),
+                "{key:?}"
+            );
             assert!(storage.open(key).await.is_err(), "{key:?}");
             assert!(storage.delete(key).await.is_err(), "{key:?}");
         }

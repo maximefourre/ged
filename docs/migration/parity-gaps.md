@@ -110,7 +110,7 @@ Le Rust applique les trois : `FORM_BYTES_LIMIT`, `FORM_PARTS_LIMIT` et
 `QUERY_BYTES_LIMIT` (`rust/ged/src/http/params.rs`), le dernier dans la couche la plus
 externe (avant le routage). Le corps urlencoded n'est lu que si une route correspond
 (404 sur un chemin sans route, quelle que soit sa taille) ; un corps que le handler n'a
-pas lu est vidé avant de répondre (jusqu'à 64 Mio / 5 s), comme le fait le proxy, pour ne
+pas lu est vidé avant de répondre (jusqu'à `GED_MAX_UPLOAD_BYTES` octets / 5 s : c'est le `MAX_REQUEST_BODY` du proxy, au-delà la requête est de toute façon refusée en 413), comme le fait le proxy, pour ne
 pas réinitialiser la connexion d'un client en train d'envoyer.
 
 Écarts restants, volontairement non reproduits : (a) un corps **JSON** est plafonné à
@@ -244,3 +244,23 @@ Départements en corbeille et permissions : comme Rails (relations à
 `default_scope`), la remontée des ancêtres s'arrête au premier ancêtre en
 corbeille — aucun grant au-dessus ne s'applique — et un grant sur un
 département en corbeille n'accorde rien (`rust/ged/tests/auth_access.rs`).
+
+## Stockage : type détecté, noms de fichiers (T6)
+
+- `documents.content_type` garde le type **déclaré** par le client, tel quel (Rails
+  ne le réécrit pas) ; le type **détecté par le contenu** (Marcel, comme Active
+  Storage) est enregistré sur le fichier (`stored_files.content_type`). Le port de
+  `detect_content_type` tourne sur les tables de Marcel 1.2.1 générées
+  mécaniquement (`gen_marcel_tables.rb`) ; 110 réponses relevées sur Rails sont
+  figées dans `rust/ged/tests/fixtures/content_type_corpus.json`.
+- `Content-Disposition` : mêmes en-têtes que `send_file` (`ActionDispatch::Http::ContentDisposition`,
+  translittération `I18n`), figés sur 61 noms hostiles (`filename_corpus.json`).
+- **Écart (durcissement)** : dans les entrées ZIP de l'admin, Rails écrit
+  `"#{id}-#{filename}"` tel quel ; un nom stocké réduit à `/` (seul cas où la
+  normalisation laisse un séparateur) donnerait une entrée-répertoire. Le Rust
+  remplace `/`, `\\` et les caractères de contrôle par `_` dans ces entrées. Aucun
+  autre nom ne change.
+- Création d'un document : le fichier est écrit sur disque **avant** la
+  transaction (Rails l'écrit au commit). Un rollback ou une validation en échec
+  laisse donc un fichier que l'appelant doit supprimer ; un crash peut laisser un
+  fichier orphelin, jamais une ligne sans fichier.

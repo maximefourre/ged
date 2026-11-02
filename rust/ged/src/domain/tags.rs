@@ -54,9 +54,8 @@ pub fn validate(tags: &Value) -> Vec<String> {
     if map.len() > MAX_ENTRIES {
         errors.push(format!("cannot have more than {MAX_ENTRIES} entries"));
     }
-    let key_ok = |k: &String| {
-        !k.chars().all(char::is_whitespace) && k.chars().count() <= MAX_KEY_LENGTH
-    };
+    let key_ok =
+        |k: &String| !k.chars().all(char::is_whitespace) && k.chars().count() <= MAX_KEY_LENGTH;
     if !map.keys().all(key_ok) {
         errors.push(format!(
             "keys must be non-empty strings of at most {MAX_KEY_LENGTH} characters"
@@ -104,7 +103,10 @@ mod tests {
     #[test]
     fn strip_is_ascii_whitespace_and_nul_only_like_ruby() {
         assert_eq!(normalize(json!({"a": "\u{0} x\u{0}\n"})), json!({"a": "x"}));
-        assert_eq!(normalize(json!({"a": "\u{a0}x\u{a0}"})), json!({"a": "\u{a0}x\u{a0}"}));
+        assert_eq!(
+            normalize(json!({"a": "\u{a0}x\u{a0}"})),
+            json!({"a": "\u{a0}x\u{a0}"})
+        );
     }
 
     #[test]
@@ -121,7 +123,10 @@ mod tests {
 
     #[test]
     fn non_string_values_and_non_maps_pass_through() {
-        assert_eq!(normalize(json!({"a": 1, "b": ["x"]})), json!({"a": 1, "b": ["x"]}));
+        assert_eq!(
+            normalize(json!({"a": 1, "b": ["x"]})),
+            json!({"a": 1, "b": ["x"]})
+        );
         assert_eq!(normalize(json!(["a"])), json!(["a"]));
         assert_eq!(normalize(json!("x")), json!("x"));
         assert_eq!(normalize(Value::Null), Value::Null);
@@ -146,7 +151,10 @@ mod tests {
         assert!(validate(&Value::Object(ok.clone())).is_empty());
         let mut too_many = ok;
         too_many.insert("k50".into(), Value::Null);
-        assert_eq!(validate(&Value::Object(too_many)), vec!["cannot have more than 50 entries"]);
+        assert_eq!(
+            validate(&Value::Object(too_many)),
+            vec!["cannot have more than 50 entries"]
+        );
     }
 
     #[test]
@@ -180,7 +188,8 @@ mod tests {
 
     #[test]
     fn errors_come_in_rails_order_and_full_messages_prefix_the_attribute() {
-        let mut entries: Map<String, Value> = (0..50).map(|i| (format!("k{i}"), Value::Null)).collect();
+        let mut entries: Map<String, Value> =
+            (0..50).map(|i| (format!("k{i}"), Value::Null)).collect();
         entries.insert(String::new(), json!(1));
         let errors = validate(&Value::Object(entries));
         assert_eq!(

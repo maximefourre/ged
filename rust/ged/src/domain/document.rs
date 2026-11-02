@@ -89,10 +89,12 @@ impl Document {
         conn: &mut PgConnection,
         id: Uuid,
     ) -> sqlx::Result<Option<Document>> {
-        sqlx::query_as(sql(&format!("SELECT {COLUMNS} FROM documents WHERE id = $1")))
-            .bind(id)
-            .fetch_optional(conn)
-            .await
+        sqlx::query_as(sql(&format!(
+            "SELECT {COLUMNS} FROM documents WHERE id = $1"
+        )))
+        .bind(id)
+        .fetch_optional(conn)
+        .await
     }
 
     /// `soft_delete!`: hides a live document and schedules its purge.
@@ -150,7 +152,10 @@ impl Document {
     }
 
     /// `Document.purgeable`: past-due rows, trashed or not.
-    pub async fn purgeable_ids(conn: &mut PgConnection, now: NaiveDateTime) -> sqlx::Result<Vec<Uuid>> {
+    pub async fn purgeable_ids(
+        conn: &mut PgConnection,
+        now: NaiveDateTime,
+    ) -> sqlx::Result<Vec<Uuid>> {
         sqlx::query_scalar("SELECT id FROM documents WHERE purge_at <= $1 ORDER BY purge_at, id")
             .bind(now)
             .fetch_all(conn)
@@ -244,12 +249,16 @@ mod tests {
     #[test]
     fn normalize_filename_matches_rails_on_hostile_names() {
         let corpus: Corpus =
-            serde_json::from_str(include_str!("../../tests/fixtures/filename_corpus.json")).unwrap();
+            serde_json::from_str(include_str!("../../tests/fixtures/filename_corpus.json"))
+                .unwrap();
         let mut failures = Vec::new();
         for case in &corpus.cases {
             let got = Document::normalize_filename(&case.input);
             if got != case.normalized {
-                failures.push(format!("{:?}: rails={:?} rust={got:?}", case.input, case.normalized));
+                failures.push(format!(
+                    "{:?}: rails={:?} rust={got:?}",
+                    case.input, case.normalized
+                ));
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
@@ -257,9 +266,19 @@ mod tests {
 
     #[test]
     fn normalized_names_never_carry_separators_or_control_bytes() {
-        for hostile in ["../../etc/passwd", "a\\b\\c", "x\r\ny", "\0", "..", "a/../b"] {
+        for hostile in [
+            "../../etc/passwd",
+            "a\\b\\c",
+            "x\r\ny",
+            "\0",
+            "..",
+            "a/../b",
+        ] {
             let name = Document::normalize_filename(hostile);
-            assert!(!name.contains('\\') && !name.chars().any(char::is_control), "{name:?}");
+            assert!(
+                !name.contains('\\') && !name.chars().any(char::is_control),
+                "{name:?}"
+            );
             assert!(!name.contains('/') || name == "/", "{name:?}");
             assert!(!name.starts_with('.'), "{name:?}");
             assert!(!name.is_empty());
