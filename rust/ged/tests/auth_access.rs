@@ -315,7 +315,7 @@ async fn a_parent_cycle_terminates() {
 async fn document(db: &Db, dept: i64, trashed: bool) -> String {
     let id: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO documents (department_id, filename, uploaded_by, uploaded_at, created_at, updated_at, \
-         deleted_at, purge_at) VALUES ($1, 'f.txt', 'u', now(), now(), now(), \
+         deleted_at, purge_at) VALUES ($1, 'f.txt', 'u', now(), now(), CASE WHEN $2 THEN now() - interval '1 day' ELSE now() END, \
          CASE WHEN $2 THEN now() END, CASE WHEN $2 THEN now() + interval '30 days' END) RETURNING id",
     )
     .bind(dept)

@@ -184,3 +184,31 @@ Rust `(?:#|--).*` s'arrête au `\n` et avale le `\r`.
 Une chaîne non UTF-8 n'atteint pas l'obfuscateur Rust (`&str`). Ruby passe
 d'abord par `OpenTelemetry::Common::Utilities.utf8_encode`. La limite des
 2 000 caractères est la même (caractères, pas octets).
+
+## Claims du JWT : sémantique du gem `jwt` 3.2 reproduite (T5)
+
+`rust/ged/src/auth/token_validator.rs` signe/vérifie avec `jsonwebtoken` (RS256
+seul) et refait les contrôles de claims à la main, comme `jwt` 3.2 (lu dans le
+gem installé, pas supposé) :
+
+- aucun leeway ; `exp <= maintenant` est expiré, `nbf > maintenant` est prématuré ;
+- `exp` et `nbf` ne sont contrôlés **que s'ils sont présents** : un token sans
+  `exp` est accepté par Rails et l'est donc côté Rust (comportement discutable,
+  reproduit tel quel, comme l'impose la spec) ; une valeur non numérique est lue
+  comme `String#to_i` (`"abc"`, `null` → 0, donc expiré) ;
+- `aud` : intersection non vide entre le claim (chaîne ou tableau) et
+  `GED_OIDC_AUDIENCE` ; absent ou vide → refus ;
+- un token sans `kid` est refusé ; un `kid` inconnu force un seul rafraîchissement
+  par fenêtre de 30 s (rotation de clés).
+
+Écarts connus, volontaires : une variable de configuration absente
+(`GED_OIDC_ISSUER`, `GED_OIDC_AUDIENCE`, `GED_OIDC_REQUIRED_SCOPE`) donne un 401
+`invalid token` côté Rust, là où Rails lève `KeyError` (500) ; en production le
+boot est de toute façon refusé dans ce cas. Un claim d'identifiant numérique est
+converti en chaîne ; tableau, objet, booléen ou `null` sont refusés (Rails
+passerait un tableau non vide à `find_by`).
+
+Départements en corbeille et permissions : comme Rails (relations à
+`default_scope`), la remontée des ancêtres s'arrête au premier ancêtre en
+corbeille — aucun grant au-dessus ne s'applique — et un grant sur un
+département en corbeille n'accorde rien (`rust/ged/tests/auth_access.rs`).
