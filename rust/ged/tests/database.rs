@@ -9,12 +9,15 @@ use argon2::password_hash::phc::PasswordHash;
 use argon2::{Argon2, PasswordVerifier};
 use support::ScratchDb;
 
-const BUSINESS_TABLES: [&str; 6] = [
+/// Tables of the Rails schema (compared byte for byte by `parity_schema`) plus
+/// the tables the Rust side adds for the storage layer (T6).
+const BUSINESS_TABLES: [&str; 7] = [
     "admins",
     "app_clients",
     "client_department_accesses",
     "departments",
     "documents",
+    "stored_files",
     "upload_requests",
 ];
 

@@ -21,3 +21,4 @@ pub fn connect_lazy(url: &str) -> Result<PgPool, sqlx::Error> {
 pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
     MIGRATOR.run(pool).await
 }
+pub type PgTx = sqlx::Transaction<'static, sqlx::Postgres>;
