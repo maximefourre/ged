@@ -4,15 +4,19 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use tokio::sync::watch;
 
 use super::Registry;
+use super::deliver_callback::{CallbackPolicy, DeliverCallbackJob, PolicyNotWired};
+use super::env::PipelineEnv;
 use super::heartbeat::HeartbeatConfig;
 use super::pool::{Runner, RunnerConfig};
+use super::purge::PurgeDeletedDocumentsJob;
 use super::queue::QueueName;
+use super::reconcile::ReconcileUploadRequestsJob;
 use super::scheduler::{self, ClearFinishedJobs};
+use super::store_document::StoreDocumentJob;
 
 /// The `default` pool is fixed: 2 threads, 1 process.
 const DEFAULT_POOL_THREADS: usize = 2;
@@ -101,23 +105,61 @@ impl WorkerSettings {
     }
 }
 
-/// Handlers known to this binary. T9 registers the pipeline jobs here.
-pub fn registry(db: &PgPool) -> Registry {
+/// Handlers known to this binary: housekeeping plus the four pipeline jobs.
+pub fn registry(env: &PipelineEnv, policy: Arc<dyn CallbackPolicy>) -> Registry {
     let mut r = Registry::new();
-    r.register(Arc::new(ClearFinishedJobs { db: db.clone() }));
+    r.register(Arc::new(ClearFinishedJobs { db: env.db.clone() }));
+    r.register(Arc::new(StoreDocumentJob::new(env.clone())));
+    r.register(Arc::new(DeliverCallbackJob::new(env.clone(), policy)));
+    r.register(Arc::new(ReconcileUploadRequestsJob::new(env.clone())));
+    r.register(Arc::new(PurgeDeletedDocumentsJob::new(env.clone())));
     r
+}
+
+/// `ged run-job`: performs one job in the foreground (`Job.perform_now`).
+/// `args` is the job's JSON argument object (`{}` when absent).
+pub async fn perform_now(
+    database_url: &str,
+    kind: &str,
+    args: Option<&str>,
+    max_upload_bytes: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(database_url)
+        .await?;
+    let env = PipelineEnv::from_config(db.clone(), Some(max_upload_bytes));
+    let registry = registry(&env, Arc::new(PolicyNotWired));
+    let job = registry
+        .get(kind)
+        .ok_or_else(|| format!("unknown job {kind}"))?;
+    let args: serde_json::Value = match args {
+        Some(raw) => serde_json::from_str(raw)?,
+        None => serde_json::json!({}),
+    };
+    let result = job.perform(args).await;
+    db.close().await;
+    result.map_err(|e| {
+        match e {
+            super::JobError::Retry(m) | super::JobError::Discard(m) => m,
+        }
+        .into()
+    })
 }
 
 /// Runs until SIGTERM or Ctrl-C, then shuts down within the timeout.
 pub async fn run(
     database_url: &str,
     settings: WorkerSettings,
+    max_upload_bytes: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let db = PgPoolOptions::new()
         .max_connections(settings.db_connections())
         .connect(database_url)
         .await?;
-    let registry = Arc::new(registry(&db));
+    let env = PipelineEnv::from_config(db.clone(), Some(max_upload_bytes));
+    // Integration (T7 lands `policy::callback_url`): pass its `decide` adapter here.
+    let registry = Arc::new(registry(&env, Arc::new(PolicyNotWired)));
     let (stop, rx) = watch::channel(false);
 
     let mut runners = tokio::task::JoinSet::new();
@@ -170,6 +212,28 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
         WorkerSettings::from_lookup(&|k| map.get(k).cloned())
+    }
+
+    #[tokio::test]
+    async fn the_registry_knows_every_pipeline_kind() {
+        let db = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://unused@localhost/unused")
+            .unwrap();
+        let env = PipelineEnv::from_config(db, None);
+        let r = registry(&env, Arc::new(PolicyNotWired));
+        for kind in [
+            "StoreDocumentJob",
+            "DeliverCallbackJob",
+            "ReconcileUploadRequestsJob",
+            "PurgeDeletedDocumentsJob",
+        ] {
+            assert!(r.has(kind), "{kind}");
+        }
+        // every scheduled task now has a handler, so none is filtered out
+        assert!(
+            scheduler::default_schedule().iter().all(|t| r.has(&t.kind)),
+            "a scheduled kind has no handler"
+        );
     }
 
     #[test]

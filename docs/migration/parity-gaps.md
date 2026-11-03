@@ -341,3 +341,55 @@ Comportement de Solid Queue 1.5.0 relu dans le gem
 - **`CallbackUrlPolicy` :** à la requête, `999.1.1.1` n'est pas une adresse (aucun
   encodage `inet_aton`) : traité comme un nom, accepté (202, observé sur Rails) ; la
   livraison le refuse (non résolu). Le pinning lui-même est dans T9.
+
+## Pipeline async, callbacks, réconciliation, purge (T9)
+
+Écarts assumés, tous du côté de la robustesse (aucune attente de parité n'est
+affaiblie : messages d'erreur, payload du callback et statuts sont ceux de Rails) :
+
+- **Callback enqueué dans la transaction du document.** Rails met le
+  `DeliverCallbackJob` en file dans le `ensure`, après la transaction : un crash
+  entre les deux perd la notification. `StoreDocumentJob` commit ici le document,
+  son `stored_files`, `completed` **et** l'enqueue du callback en une transaction
+  (idem pour `failed`). La réconciliation n'a donc plus de notification à
+  rattraper.
+- **Exécution dépassée par la réconciliation.** Une exécution lente (> `STUCK_AFTER`)
+  dont la requête a été remise en `pending` par `ReconcileUploadRequestsJob`
+  n'écrit rien (`UPDATE … WHERE status = 'processing'` sans ligne : rollback du
+  document, suppression du fichier stocké, fichier de staging laissé à la nouvelle
+  exécution). Rails stockait un second document.
+- **Orphelins : balayage dans la purge quotidienne.** Rails supprime les blobs Active
+  Storage non rattachés (> 1 jour) à chaque réconciliation (10 min). Ici il n'y a pas
+  de table de blobs : `PurgeDeletedDocumentsJob` parcourt le répertoire de stockage
+  une fois par jour et supprime les fichiers sans ligne `stored_files` et les `.part`
+  abandonnés, plus vieux d'un jour (mtime). Le répertoire `staging/` reste à la
+  réconciliation (30 jours).
+- **Purge isolée par élément.** Rails (`find_each(&:destroy!)`) abandonne toute la passe
+  sur la première erreur de document ; ici chaque document et chaque département est
+  purgé séparément, l'erreur est loggée et le job termine en échec (`Retry`, une seule
+  tentative) après avoir traité tout le reste. La suppression d'un document est
+  gardée par `purge_at <= now` dans le `DELETE` lui-même : un document restauré entre
+  la liste et la purge survit.
+- **`ged.job.duration`** est enregistré par chaque job (`timed`) et non par un
+  abonné `perform.active_job` ; `ged.documents.uploaded` est émis après le commit
+  (Rails : avant, dans `DocumentCreator`), donc jamais pour un document annulé.
+- **Hook d'épuisement.** `Job::exhausted` (ajout au trait de T8, appelé par le
+  pool au dernier `Retry`) porte le `retry_on … do |job, error|` de Rails : métrique
+  `exhausted` et journal d'erreur.
+- **Livraison HTTP.** `reqwest` : un client par livraison avec l'adresse épinglée via
+  `resolve(host, ip:port)` (Host, SNI et certificat gardent le nom d'hôte), ni proxy
+  ni redirection suivie (un 3xx est un échec comme en `Net::HTTP`), délais 5 s
+  connexion / 10 s lecture. Un hôte littéral IP n'est pas épinglé (déjà vérifié).
+- **Message d'erreur d'un fichier de staging manquant** : reproduit le texte Ruby
+  (`No such file or directory @ rb_sysopen - <chemin>`), avec le chemin du staging Rust.
+
+À brancher à l'intégration (hors du périmètre de T9, `policy::callback_url` est à T7) :
+
+- Le worker enregistre `DeliverCallbackJob` avec `PolicyNotWired`, qui **refuse tout**
+  (fail-closed, métrique `refused`) tant que l'adaptateur de
+  `policy::callback_url::decide(url, true)` n'est pas passé à
+  `jobs::worker::registry`. Aucune livraison ne part sans cela.
+- Cas SSRF `999.1.1.1` et `[::1]` (report de la vague 3) : ils relèvent de la policy
+  (T7), pas du job ; le job ne fait que consommer la décision.
+- `ged run-job <Kind> [json]` (= `Job.perform_now`) alimente `Backend::run_job` du
+  backend Rust des tests de parité.

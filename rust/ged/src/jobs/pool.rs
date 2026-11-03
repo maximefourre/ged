@@ -225,7 +225,11 @@ async fn run_one(
                 ),
             };
             let retry_in = (job.attempts < max).then_some(backoff);
-            queue::fail(db, job.id, worker, &msg, retry_in).await
+            let recorded = queue::fail(db, job.id, worker, &msg, retry_in).await;
+            if let (Some(h), None, Ok(true)) = (&handler, retry_in, &recorded) {
+                h.exhausted(&job.args, &msg);
+            }
+            recorded
         }
     };
     match result {

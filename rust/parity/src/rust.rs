@@ -238,9 +238,23 @@ impl Backend for RustBackend {
     }
 
     async fn run_job(&self, name: &str) -> Result<(), String> {
-        Err(format!(
-            "{name}: the Rust job runner does not exist yet (queue: T8, jobs: T9)"
-        ))
+        // `ged run-job` is `Job.perform_now`; same database and working
+        // directory (so the same `storage/`) as the server.
+        let out = Command::new(ged_binary())
+            .args(["run-job", name])
+            .env_clear()
+            .env("RAILS_ENV", "test")
+            .env("DATABASE_URL", &running().database_url)
+            .output()
+            .map_err(|e| format!("run ged run-job {name}: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "{name}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        }
     }
 
     async fn reset(&self) -> Result<(), String> {

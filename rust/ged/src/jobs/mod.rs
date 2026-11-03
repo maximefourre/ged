@@ -6,10 +6,15 @@
 //! deliberately no catch-all pool, so an uploads backlog cannot starve
 //! callbacks or reconciliation.
 
+pub mod deliver_callback;
+pub mod env;
 pub mod heartbeat;
 pub mod pool;
+pub mod purge;
 pub mod queue;
+pub mod reconcile;
 pub mod scheduler;
+pub mod store_document;
 pub mod worker;
 
 use std::collections::HashMap;
@@ -42,6 +47,10 @@ pub trait Job: Send + Sync + 'static {
     }
 
     fn perform(&self, args: Value) -> BoxFuture<'static, Result<(), JobError>>;
+
+    /// Called once when a `Retry` used the last attempt (Active Job's
+    /// `retry_on ... do |job, error|` block). Nothing by default.
+    fn exhausted(&self, _args: &Value, _error: &str) {}
 }
 
 /// Active Job's `:polynomially_longer`, without jitter: `attempt^4 + 2` s.
@@ -72,4 +81,17 @@ impl Registry {
     pub fn has(&self, kind: &str) -> bool {
         self.jobs.contains_key(kind)
     }
+}
+
+/// Records `ged.job.duration` around a job body (the Rails
+/// `perform.active_job` subscriber), whatever its outcome.
+pub async fn timed<T>(
+    class: crate::telemetry::JobClass,
+    queue: crate::telemetry::JobQueue,
+    body: impl std::future::Future<Output = T>,
+) -> T {
+    let started = std::time::Instant::now();
+    let out = body.await;
+    crate::telemetry::job_duration(class, queue, started.elapsed().as_secs_f64());
+    out
 }

@@ -57,13 +57,13 @@ pub fn default_schedule() -> Vec<ScheduledTask> {
     vec![
         task(
             "reconcile_upload_requests",
-            "reconcile_upload_requests",
+            super::reconcile::KIND,
             Cadence::EveryMinutes(10),
         ),
         task("clear_finished_jobs", CLEAR_FINISHED, Cadence::HourlyAt(12)),
         task(
             "purge_deleted_documents",
-            "purge_deleted_documents",
+            super::purge::KIND,
             Cadence::DailyAt(3),
         ),
     ]

@@ -17,6 +17,13 @@ enum Command {
     Serve,
     /// Run the background job worker
     Worker,
+    /// Perform one job in the foreground (`Job.perform_now`)
+    RunJob {
+        /// Job class name, e.g. `PurgeDeletedDocumentsJob`
+        kind: String,
+        /// JSON arguments, e.g. `{"upload_request_id": "..."}`
+        args: Option<String>,
+    },
     /// Run database migrations
     Migrate,
     /// Seed the database
@@ -32,12 +39,14 @@ async fn main() -> ExitCode {
     let name = match cli.command {
         Command::Serve => "serve",
         Command::Worker => "worker",
+        Command::RunJob { .. } => "run-job",
         Command::Migrate => "migrate",
         Command::Seed => "seed",
     };
     let result = match cli.command {
         Command::Serve => serve().await,
         Command::Worker => worker().await,
+        Command::RunJob { kind, args } => run_job(&kind, args.as_deref()).await,
         Command::Migrate => migrate().await,
         Command::Seed => seed_admin().await,
     };
@@ -101,6 +110,13 @@ async fn worker() -> Result<(), Failure> {
     ged::jobs::worker::run(
         database_url(&config)?,
         ged::jobs::worker::WorkerSettings::from_process_env(),
+        config.max_upload_bytes,
     )
     .await
+}
+
+async fn run_job(kind: &str, args: Option<&str>) -> Result<(), Failure> {
+    let config = load_config()?;
+    ged::jobs::worker::perform_now(database_url(&config)?, kind, args, config.max_upload_bytes)
+        .await
 }
