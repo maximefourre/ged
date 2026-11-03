@@ -385,7 +385,7 @@ async fn bulk_destroy(
 fn too_large() -> Response {
     // The edge refuses an oversized body with an empty 413 (see
     // docs/migration/parity-gaps.md): no JSON, no content type.
-    StatusCode::PAYLOAD_TOO_LARGE.into_response()
+    crate::http::payload_too_large()
 }
 
 fn content_length(headers: &HeaderMap) -> Option<u64> {

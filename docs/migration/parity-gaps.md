@@ -321,8 +321,23 @@ Comportement de Solid Queue 1.5.0 relu dans le gem
   création (attache Active Storage) ; le Rust le laisse égal à `created_at`.
 - **Parties texte multipart :** plafonnées à 4 Mio au total (400 au-delà) ; Rails n'a
   pas ce plafond. Un fichier envoyé sous un autre nom que `file` est ignoré.
-- **En-têtes de réponse :** `ETag` faible, `Cache-Control` et en-têtes de sécurité de
-  Rails ne sont pas encore émis par le Rust (hors assertions de parité).
+- **Limite de taille sur tous les endpoints :** le 413 vide s'applique à toute
+  requête (`PUT …/tags`, `DELETE …/bulk_destroy`, `POST /departments`, …) : par
+  `Content-Length` avant tout routage et authentification, et pour un corps sans
+  longueur, dès que le handler en a lu plus que la limite. `docs/api/openapi.yaml` le
+  documente (`components/responses/PayloadTooLarge`).
+- **Fichiers orphelins après un crash (upload async) :** un `kill -9`/OOM entre
+  l'écriture du fichier (`storage/xx/yy/<key>` puis `staging/<id>`) et le `COMMIT`
+  laisse un fichier sans ligne. Rails a la même fenêtre (staging écrit après
+  `create!`, enqueue après). Aucun balayage n'existe : à confier à T9 (fichiers
+  `staging/*` sans `upload_requests` correspondante, `storage/**` sans `stored_files`,
+  au-delà d'un âge minimal). Tant que T9 ne l'a pas fait, c'est un écart connu.
+- **Zone id IPv6 dans `callback_url` :** `[fe80::1%25eth0]` est refusé (`Invalid`) à la
+  requête par le Rust ; Ruby le lit comme un nom, accepté à la requête et refusé à la
+  livraison. Direction plus sûre.
+- **Faiblesses héritées de `CallbackUrlPolicy` (non corrigées, par fidélité) :** `::`,
+  `::127.0.0.1` (IPv4-compatible) et NAT64 `64:ff9b::/96` ne sont pas bloqués, ni en Rails
+  ni en Rust. À signaler à l'audit (`docs/security/`).
 - **`CallbackUrlPolicy` :** à la requête, `999.1.1.1` n'est pas une adresse (aucun
   encodage `inet_aton`) : traité comme un nom, accepté (202, observé sur Rails) ; la
   livraison le refuse (non résolu). Le pinning lui-même est dans T9.

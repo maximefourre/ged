@@ -3,6 +3,7 @@
 pub mod error;
 pub mod json;
 pub mod params;
+pub mod rails_headers;
 pub mod state;
 
 use std::panic::AssertUnwindSafe;
@@ -19,6 +20,7 @@ use futures_util::FutureExt;
 
 pub use error::ApiError;
 pub use params::{RackParams, RequestParams};
+pub use rails_headers::{bare, payload_too_large};
 pub use state::AppState;
 
 /// Everything under this prefix answers errors as `{ "error": … }`.
@@ -45,6 +47,9 @@ pub fn router_with(state: AppState, routes: Router<AppState>) -> Router {
         .route_layer(middleware::from_fn(guard_params))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(state.clone(), shield))
+        // Outermost: what Rails' controller layer adds to every answer it
+        // produced (and only those: the exceptions app and the edge are `bare`).
+        .layer(middleware::from_fn(rails_headers::layer))
         .with_state(state)
 }
 
@@ -67,7 +72,7 @@ async fn up() -> Response {
 /// elsewhere.
 async fn not_found(uri: Uri) -> Response {
     if is_api(&uri) {
-        ApiError::NotFound.into_response()
+        bare(ApiError::NotFound.into_response())
     } else {
         plain_error(StatusCode::NOT_FOUND)
     }
@@ -86,7 +91,7 @@ fn plain_error(status: StatusCode) -> Response {
         CONTENT_TYPE,
         HeaderValue::from_static("text/html; charset=UTF-8"),
     );
-    response
+    bare(response)
 }
 
 /// Rejects a request whose query string — or urlencoded form body — Rails
@@ -168,7 +173,7 @@ async fn reject_or_unrouted(req: Request, next: Next, api: bool) -> Response {
         }
     }
     if api {
-        ApiError::bad_request().into_response()
+        bare(ApiError::bad_request().into_response())
     } else {
         plain_error(StatusCode::BAD_REQUEST)
     }
@@ -178,10 +183,34 @@ async fn reject_or_unrouted(req: Request, next: Next, api: bool) -> Response {
 /// reaches the client as anything but the JSON error contract, and no
 /// internal detail is ever put in the body.
 async fn shield(State(state): State<AppState>, req: Request, next: Next) -> Response {
-    let (req, unread) = share_body(req);
-    let response = shield_inner(req, next).await;
-    drain(unread, drain_limit(state.config.max_upload_bytes)).await;
+    let max = state.config.max_upload_bytes;
+    // The proxy in front of Rails refuses, before anything else (routing and
+    // authentication included), a body announced larger than its limit — on
+    // every endpoint, not just the upload.
+    let announced_too_large = content_length(req.headers()).is_some_and(|n| n > max);
+    let (req, unread, overrun) = share_body(req, max);
+    let response = if announced_too_large {
+        payload_too_large()
+    } else {
+        shield_inner(req, next).await
+    };
+    // A body streamed (no Content-Length) past the limit is cut off at the
+    // limit and refused the same way, whatever the handler made of it.
+    if overrun.load(std::sync::atomic::Ordering::SeqCst) {
+        return payload_too_large();
+    }
+    drain(unread, drain_limit(max)).await;
     response
+}
+
+fn content_length(headers: &axum::http::HeaderMap) -> Option<u64> {
+    headers
+        .get(axum::http::header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 /// How much unread body is read out before giving up: `GED_MAX_UPLOAD_BYTES`,
@@ -198,7 +227,14 @@ pub fn drain_limit(max_upload_bytes: u64) -> usize {
 /// does this.
 type SharedBody = std::sync::Arc<std::sync::Mutex<Body>>;
 
-struct Shared(SharedBody);
+/// Reads the shared body for the handler, counting what it takes: past `max`
+/// bytes the read fails and `overrun` is raised (see [`shield`]).
+struct Shared {
+    body: SharedBody,
+    read: u64,
+    max: u64,
+    overrun: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
 
 impl axum::body::HttpBody for Shared {
     type Data = bytes::Bytes;
@@ -208,17 +244,44 @@ impl axum::body::HttpBody for Shared {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
-        let mut body = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        std::pin::Pin::new(&mut *body).poll_frame(cx)
+        let this = self.get_mut();
+        let polled = {
+            let mut body = this.body.lock().unwrap_or_else(|e| e.into_inner());
+            std::pin::Pin::new(&mut *body).poll_frame(cx)
+        };
+        if let std::task::Poll::Ready(Some(Ok(frame))) = &polled {
+            this.read += frame.data_ref().map_or(0, |d| d.len() as u64);
+            if this.read > this.max {
+                this.overrun
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                return std::task::Poll::Ready(Some(Err(axum::Error::new("body too large"))));
+            }
+        }
+        polled
     }
 }
 
-fn share_body(req: Request) -> (Request, SharedBody) {
+fn share_body(
+    req: Request,
+    max: u64,
+) -> (
+    Request,
+    SharedBody,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
     let (parts, body) = req.into_parts();
     let shared: SharedBody = std::sync::Arc::new(std::sync::Mutex::new(body));
+    let overrun = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let counted = Shared {
+        body: shared.clone(),
+        read: 0,
+        max,
+        overrun: overrun.clone(),
+    };
     (
-        Request::from_parts(parts, Body::new(Shared(shared.clone()))),
+        Request::from_parts(parts, Body::new(counted)),
         shared,
+        overrun,
     )
 }
 
@@ -257,14 +320,14 @@ async fn shield_inner(req: Request, next: Next) -> Response {
         .query()
         .is_some_and(|q| q.len() > params::QUERY_BYTES_LIMIT)
     {
-        return StatusCode::BAD_REQUEST.into_response();
+        return bare(StatusCode::BAD_REQUEST.into_response());
     }
     let api = is_api(req.uri());
     let response = match AssertUnwindSafe(next.run(req)).catch_unwind().await {
         Ok(response) => response,
         Err(_) => {
             return if api {
-                ApiError::Internal.into_response()
+                bare(ApiError::Internal.into_response())
             } else {
                 plain_error(StatusCode::INTERNAL_SERVER_ERROR)
             };
@@ -275,7 +338,7 @@ async fn shield_inner(req: Request, next: Next) -> Response {
     // never 405, on every path.
     if status == StatusCode::METHOD_NOT_ALLOWED {
         return if api {
-            ApiError::NotFound.into_response()
+            bare(ApiError::NotFound.into_response())
         } else {
             plain_error(StatusCode::NOT_FOUND)
         };
@@ -294,7 +357,7 @@ async fn shield_inner(req: Request, next: Next) -> Response {
         && !is_json
         && status != StatusCode::PAYLOAD_TOO_LARGE
     {
-        return error::json_error_for_status(status);
+        return bare(error::json_error_for_status(status));
     }
     response
 }

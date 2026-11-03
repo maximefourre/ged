@@ -38,11 +38,11 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn spec() -> Response {
-    typed("application/yaml", SPEC)
+    typed("application/yaml; charset=utf-8", SPEC)
 }
 
 async fn page() -> Response {
-    typed("text/html", REDOC_PAGE)
+    typed("text/html; charset=utf-8", REDOC_PAGE)
 }
 
 fn typed(content_type: &'static str, body: &'static str) -> Response {

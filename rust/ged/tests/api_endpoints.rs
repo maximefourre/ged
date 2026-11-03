@@ -19,7 +19,7 @@ use sqlx::PgPool;
 use support::ScratchDb;
 use tower::ServiceExt;
 
-const LIMIT: u64 = 4096;
+const LIMIT: u64 = 65_536;
 
 struct World {
     scratch: ScratchDb,

@@ -296,6 +296,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -403,6 +405,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
@@ -473,6 +477,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
@@ -721,6 +727,12 @@ components:
         error: not found
 
   responses:
+    PayloadTooLarge:
+      description: >-
+        The request body exceeds `GED_MAX_UPLOAD_BYTES` (default 50 MiB). The
+        limit applies to every request, whatever the endpoint, and the edge
+        rejects it before authentication, with an **empty body** (no JSON
+        `error`), no `Content-Type` and none of the usual security headers.
     BadRequest:
       description: Missing or invalid parameter
       content:

@@ -296,3 +296,114 @@ async fn a_query_is_capped_at_10240_bytes_with_an_empty_400() {
     let amps = "&".repeat(10 * 1024);
     assert_eq!(get_(&format!("/up?{amps}")).await.status, StatusCode::OK);
 }
+
+// --- Rails' controller-layer headers, ETag and the edge limit ----------------
+
+mod rails_layer {
+    use super::support::app_with_probes;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use ged::config::Config;
+    use ged::{AppState, router_with};
+    use http_body_util::BodyExt;
+    use sha2::{Digest, Sha256};
+    use tower::ServiceExt;
+
+    async fn call(req: Request<Body>) -> axum::http::Response<Body> {
+        app_with_probes().oneshot(req).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn etag_is_the_weak_32_hex_sha256_of_the_body() {
+        let response = call(Request::get("/up").body(Body::empty()).unwrap()).await;
+        let etag = response.headers()["etag"].to_str().unwrap().to_owned();
+        assert_eq!(
+            response.headers()["cache-control"],
+            "max-age=0, private, must-revalidate"
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let digest = Sha256::digest(&body);
+        let hex: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(etag, format!("W/\"{hex}\""));
+    }
+
+    #[tokio::test]
+    async fn controller_answers_get_security_headers_and_the_exceptions_app_does_not() {
+        let up = call(Request::get("/up").body(Body::empty()).unwrap()).await;
+        assert_eq!(up.headers()["x-frame-options"], "SAMEORIGIN");
+        assert_eq!(up.headers()["x-xss-protection"], "0");
+        assert_eq!(up.headers()["x-content-type-options"], "nosniff");
+        assert_eq!(up.headers()["x-permitted-cross-domain-policies"], "none");
+        assert_eq!(
+            up.headers()["referrer-policy"],
+            "strict-origin-when-cross-origin"
+        );
+        assert!(up.headers().get("content-security-policy").is_none());
+        let miss = call(Request::get("/nope").body(Body::empty()).unwrap()).await;
+        assert!(miss.headers().get("x-frame-options").is_none());
+        assert!(miss.headers().get("cache-control").is_none());
+        let boom = call(Request::get("/api/v1/boom").body(Body::empty()).unwrap()).await;
+        assert_eq!(boom.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(boom.headers().get("x-frame-options").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_matching_if_none_match_is_an_empty_304_compared_verbatim() {
+        let first = call(Request::get("/up").body(Body::empty()).unwrap()).await;
+        let etag = first.headers()["etag"].clone();
+        let hit = call(
+            Request::get("/up")
+                .header("if-none-match", etag.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(hit.status(), StatusCode::NOT_MODIFIED);
+        assert!(hit.headers().get("content-type").is_none());
+        // (Over the wire hyper sends no Content-Length on a 304: parity-checked.)
+        assert!(hit.headers().get("content-length").is_none_or(|v| v == "0"));
+        assert_eq!(hit.headers()["etag"], etag);
+        let strong = etag.to_str().unwrap().trim_start_matches("W/").to_owned();
+        let miss = call(
+            Request::get("/up")
+                .header("if-none-match", strong)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(miss.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_chunked_body_past_the_limit_is_an_empty_bare_413_on_any_endpoint() {
+        let config = Config::from_lookup(&|k| match k {
+            "RAILS_ENV" => Some("test".to_owned()),
+            "GED_MAX_UPLOAD_BYTES" => Some("1024".to_owned()),
+            _ => None,
+        })
+        .unwrap();
+        let app = router_with(
+            AppState::without_database(config),
+            axum::Router::new().route(
+                "/api/v1/echo",
+                axum::routing::post(
+                    |body: axum::body::Bytes| async move { body.len().to_string() },
+                ),
+            ),
+        );
+        let chunks = futures_util::stream::iter(
+            (0..4).map(|_| Ok::<_, std::io::Error>(bytes::Bytes::from(vec![b'x'; 512]))),
+        );
+        let response = app
+            .oneshot(
+                Request::post("/api/v1/echo")
+                    .body(Body::from_stream(chunks))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(response.headers().get("content-type").is_none());
+        assert!(response.headers().get("x-frame-options").is_none());
+    }
+}
