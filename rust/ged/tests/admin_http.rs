@@ -435,6 +435,16 @@ async fn assets_are_served_unchanged_with_a_long_cache() {
     assert_eq!(css.status, 200);
     assert_eq!(css.header("content-type"), "text/css");
     assert_eq!(css.header("cache-control"), "public, max-age=31556952");
+    for name in [
+        "x-frame-options",
+        "x-content-type-options",
+        "x-xss-protection",
+        "x-permitted-cross-domain-policies",
+        "referrer-policy",
+        "etag",
+    ] {
+        assert_eq!(css.header(name), "", "{name} on a static file");
+    }
     let rails = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../app/assets/stylesheets/application.css"
@@ -457,7 +467,16 @@ async fn assets_are_served_unchanged_with_a_long_cache() {
     if let Ok(original) = std::fs::read_to_string(rails_js) {
         assert_eq!(js.body, original, "JS must be Rails' file, unmodified");
     }
-    assert_eq!(b.get("/assets/application-00000000.css").await.status, 404);
+    let missing = b.get("/assets/application-00000000.css").await;
+    assert_eq!(missing.status, 404);
+    assert_eq!(missing.header("x-frame-options"), "");
+    let icon = b.get("/icon.png").await;
+    assert_eq!(icon.status, 200);
+    assert_eq!(icon.header("cache-control"), "public, max-age=31556952");
+    assert_eq!(icon.header("x-frame-options"), "");
+    let robots = b.get("/robots.txt").await;
+    assert_eq!(robots.header("cache-control"), "public, max-age=31556952");
+    assert_eq!(robots.header("x-frame-options"), "");
     site.finish().await;
 }
 

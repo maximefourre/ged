@@ -444,10 +444,16 @@ Relevé sur le stack Rails le 2026-11-03, reproduit par `rust/ged/src/admin/`.
   département qui a des enfants. `x=1` sans `department` donne 400.
 - **Flash** : un message survit aux requêtes qui ne font que rediriger
   (`/admin` → `/admin/documents`), comme Rails.
-- **Provisoire** : `admin/documents_stub.rs` (GET/POST `/admin/documents`) est remplacé
-  par T11. Stockage des fichiers : `GED_STORAGE_ROOT` (défaut `storage`).
-  **Points bloquants T11** (revue T10, M3) : remplacer le stub entièrement ; lire les
-  champs de contrôle avant le fichier si possible, sans tamponner en mémoire un envoi
-  non authentifié par le jeton ; garder la limite explicite (`DefaultBodyLimit` levée
-  sur la route, 413 au-delà de `GED_MAX_UPLOAD_BYTES`, pas 400) ; garder le contrôle
-  d'`Origin` dans le garde ; le nom de fichier passe par `normalize_filename`.
+- **Documents admin (T11)** : `documents.rs` et `trash.rs` remplacent le stub.
+  L'upload lit le jeton avant le fichier quand celui-ci le précède, et envoie les
+  octets vers le stockage du processus (`storage/`, un chunk à la fois, pas un
+  `Vec`). Un corps plus grand que `GED_MAX_UPLOAD_BYTES` répond 413. Le nom de
+  fichier passe par `normalize_filename`. L'`Origin` reste vérifié par le garde.
+  Les fichiers statiques n'ont pas les en-têtes de sécurité des contrôleurs et
+  portent `Cache-Control: public, max-age=31556952`. Le contrôle disque de
+  `/admin/status` lit toujours `GED_STORAGE_ROOT` (défaut `storage`) ; les octets
+  uploadés, eux, restent sous `storage/`.
+- **Identifiants qui ne sont pas des UUID** (téléchargement, aperçu, édition,
+  suppression, restauration, sélection en lot) : le Rust ignore la valeur ou
+  répond 404. Rails lève sur le cast uuid et répond 500. Les tests n'envoient
+  que des UUID.

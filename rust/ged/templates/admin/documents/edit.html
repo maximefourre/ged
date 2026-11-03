@@ -1,0 +1,28 @@
+{% extends "admin/layout.html" %}
+{% block content %}
+<header class="page-head">
+  <h1>Tags — {{ filename }}</h1>
+</header>
+
+<section class="card meta-card">
+  <dl class="meta-list">
+    <div><dt>Uploaded</dt><dd class="mono">{{ uploaded }}</dd></div>
+    <div><dt>Indexed</dt><dd class="mono">{{ indexed }}</dd></div>
+    <div><dt>Updated</dt><dd class="mono">{{ updated }}</dd></div>
+    <div><dt>Upload mode</dt><dd>{{ upload_mode }}</dd></div>
+    <div><dt>Owner</dt><dd>{{ uploaded_by }}</dd></div>
+  </dl>
+</section>
+
+<form class="form-card" action="/admin/documents/{{ id }}" accept-charset="UTF-8" method="post"><input type="hidden" name="_method" value="patch" /><input type="hidden" name="authenticity_token" value="{{ chrome.csrf }}" />
+  <div class="field">
+    <label for="document_tags_text">Tags</label>
+    <span class="hint">Une paire <code>key=value</code> par ligne ; une ligne sans « = » est une clé sans valeur.</span>
+    <textarea name="document[tags_text]" id="document_tags_text" rows="8" class="input">{{ tags_text }}</textarea>
+  </div>
+  <div class="form-actions">
+    <input type="submit" name="commit" value="Save tags" class="btn btn-primary" data-disable-with="Save tags" />
+    <a class="btn" href="/admin/documents">Back to documents</a>
+  </div>
+</form>
+{% endblock %}

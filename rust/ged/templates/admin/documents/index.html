@@ -1,0 +1,75 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% block content %}
+<header class="page-head">
+  <h1>Documents</h1>
+  <a class="btn btn-primary" href="/admin/documents/new">Upload document</a>
+</header>
+
+<form class="filters" action="/admin/documents" accept-charset="UTF-8" method="get">
+  <input class="input grow" placeholder="filename contains…" type="text" value="{{ filename }}" name="filename" id="filename" />
+  <select class="select" name="department_id" id="department_id"><option value="">all departments</option>
+{% for o in departments %}<option {% if o.selected %}selected="selected" {% endif %}value="{{ o.id }}">{{ o.label }}</option>
+{% endfor %}</select>
+  <input class="input" placeholder="tag key" type="text" value="{{ tag }}" name="tag" id="tag" />
+  <input type="submit" name="commit" value="Filter" class="btn" data-disable-with="Filter" />
+</form>
+
+<form id="bulk-form" class="bulk-toolbar" action="/admin/documents/bulk_destroy" accept-charset="UTF-8" method="post"><input type="hidden" name="authenticity_token" value="{{ chrome.csrf }}" />
+  <span data-bulk-count>0 selected</span>
+  <button name="button" type="submit" formaction="/admin/documents/bulk_destroy" formmethod="post" class="btn btn-danger btn-sm" disabled="disabled" data-confirm="Move the selected documents to trash?">Delete selected</button>
+  <button name="button" type="submit" formaction="/admin/documents/bulk_download" formmethod="get" class="btn btn-sm" disabled="disabled">Download ZIP</button>
+</form>
+
+<div class="doc-split">
+  <div class="card">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th><input type="checkbox" name="select-all" id="select-all" value="1" /></th><th>Filename</th><th>Department</th><th>Tags</th><th>Uploaded by</th><th>Date</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr data-doc-row data-preview-url="/admin/documents/{{ row.id }}/preview" data-content-type="{{ row.content_type }}" data-filename="{{ row.filename }}" data-download-url="/admin/documents/{{ row.id }}/download">
+              <td><input type="checkbox" name="document_ids[]" value="{{ row.id }}" form="bulk-form" class="row-select" /></td>
+              <td class="strong">{{ row.filename }}</td>
+              <td>{{ row.department }}</td>
+              <td>{% call m::tag_chips(row.tags.clone()) %}</td>
+              <td class="muted">{{ row.uploaded_by }}</td>
+              <td class="date">{{ row.date }}</td>
+              <td>
+                <div class="row-actions">
+                  <a class="btn btn-link btn-sm" href="/admin/documents/{{ row.id }}/download">Download</a>
+                  <a class="btn btn-link btn-sm" href="/admin/documents/{{ row.id }}/edit">Tags</a>
+                  {% call m::button_to("Delete", "/admin/documents/" ~ row.id, "delete", "btn btn-danger btn-sm", chrome.csrf, row.confirm) %}
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+          {% if rows.is_empty() %}
+            <tr><td colspan="7" class="empty">No documents match.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <aside class="doc-preview" data-doc-preview hidden>
+    <header class="doc-preview-head">
+      <span class="doc-preview-name" data-preview-name></span>
+      <div class="doc-preview-actions">
+        <a class="btn btn-sm" data-preview-download href="#">Download</a>
+        <button type="button" class="btn btn-sm" data-preview-close>Close</button>
+      </div>
+    </header>
+    <div class="doc-preview-body" data-preview-body></div>
+  </aside>
+</div>
+
+{% if has_pager() %}
+  <div class="pager">
+    {% if let Some(href) = newer %}<a class="btn btn-sm" href="{{ href }}">← Newer</a>{% endif %}
+    {% if let Some(href) = older %}<a class="btn btn-sm" href="{{ href }}">Older →</a>{% endif %}
+  </div>
+{% endif %}
+{% endblock %}

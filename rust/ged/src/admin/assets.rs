@@ -50,7 +50,9 @@ fn file(content_type: &'static str, bytes: &'static [u8]) -> Response {
     let h = response.headers_mut();
     h.insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
     h.insert(CACHE_CONTROL, HeaderValue::from_static(CACHE));
-    response
+    // Propshaft and the public file server are not controllers: no
+    // X-Frame-Options and no ETag rewrite of this cache header.
+    crate::http::bare(response)
 }
 
 /// `GET /assets/:file`: only the exact digested names exist.
@@ -61,7 +63,7 @@ pub async fn digested_asset(Path(name): Path<String>) -> Response {
     } else if name == d.js {
         file("text/javascript", JS)
     } else {
-        StatusCode::NOT_FOUND.into_response()
+        crate::http::bare(StatusCode::NOT_FOUND.into_response())
     }
 }
 

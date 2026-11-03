@@ -2,20 +2,22 @@
 //! Rails behaviours that sit around them (method override, default headers,
 //! static assets).
 //!
-//! The documents list, upload, edit, preview and the trash belong to T11
-//! (`documents.rs`, `trash.rs`); [`documents_stub`] is a stand-in until then.
+//! Documents, preview, bulk actions and the trash are [`documents`] and
+//! [`trash`]. Static files are [`assets`], outside the session guard.
 
 pub mod app_clients;
 pub mod assets;
 pub mod csrf;
 pub mod departments;
 pub mod disk_space;
-pub mod documents_stub;
+pub mod documents;
 pub mod session;
 pub mod status;
 pub mod system_health;
+pub mod trash;
 pub mod upload_requests;
 pub mod view;
+mod zip_stream;
 
 use axum::Router;
 use axum::body::Body;
@@ -75,8 +77,31 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/admin", get(session::root))
         .route(
             "/admin/documents",
-            get(documents_stub::index)
-                .post(documents_stub::create.layer(DefaultBodyLimit::max(upload_limit))),
+            get(documents::index)
+                .post(documents::create.layer(DefaultBodyLimit::max(upload_limit))),
+        )
+        .route("/admin/documents/new", get(documents::new))
+        .route(
+            "/admin/documents/bulk_destroy",
+            post(documents::bulk_destroy),
+        )
+        .route(
+            "/admin/documents/bulk_download",
+            get(documents::bulk_download),
+        )
+        .route("/admin/documents/{id}/edit", get(documents::edit))
+        .route(
+            "/admin/documents/{id}",
+            patch(documents::update)
+                .put(documents::update)
+                .delete(documents::destroy),
+        )
+        .route("/admin/documents/{id}/download", get(documents::download))
+        .route("/admin/documents/{id}/preview", get(documents::preview))
+        .route("/admin/deleted_documents", get(trash::index))
+        .route(
+            "/admin/deleted_documents/{id}/restore",
+            patch(trash::restore),
         )
         .route("/admin/status", get(status::index))
         .route(

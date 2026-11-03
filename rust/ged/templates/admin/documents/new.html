@@ -1,0 +1,37 @@
+{% extends "admin/layout.html" %}
+{% block content %}
+<header class="page-head">
+  <h1>Upload document</h1>
+</header>
+
+<form class="form-card" action="/admin/documents" accept-charset="UTF-8" method="post" enctype="multipart/form-data"><input type="hidden" name="authenticity_token" value="{{ chrome.csrf }}" />
+  <div class="field">
+    <label for="document_department_id">Department</label>
+    <select class="select" name="document[department_id]" id="document_department_id">
+{% for o in departments %}<option {% if o.selected %}selected="selected" {% endif %}value="{{ o.id }}">{{ o.label }}</option>
+{% endfor %}</select>
+  </div>
+
+  <div class="field">
+    <label for="document_file">File</label>
+    <div class="dropzone" data-dropzone>
+      <span class="dz-icon">⬆</span>
+      <span class="dz-primary">Glissez un fichier ici</span>
+      <span class="hint">ou choisissez-le ci-dessous</span>
+      <input type="file" name="document[file]" id="document_file" />
+      <span class="dz-file" data-dropzone-file></span>
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="document_tags_text">Tags</label>
+    <span class="hint">Une paire <code>key=value</code> par ligne ; une ligne sans « = » est une clé sans valeur.</span>
+    <textarea name="document[tags_text]" id="document_tags_text" rows="5" class="input"></textarea>
+  </div>
+
+  <div class="form-actions">
+    <input type="submit" name="commit" value="Upload" class="btn btn-primary" data-disable-with="Upload" />
+    <a class="btn" href="/admin/documents">Cancel</a>
+  </div>
+</form>
+{% endblock %}

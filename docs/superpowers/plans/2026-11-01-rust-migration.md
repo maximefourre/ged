@@ -239,9 +239,9 @@ dates, `ged migrate`, `ged seed`.
 **Files :** `admin/documents.rs`, `admin/trash.rs`, `templates/documents/`.
 **Consumes :** session et layouts de T10, `DocumentCreator`.
 
-- [ ] Liste, upload, édition, aperçu avec CSP, corbeille, actions en lot.
-- [ ] ZIP en streaming, test de mémoire stable sur gros volume, Review Focus 1.
-- [ ] Vérifier : toute la parité admin et Playwright vertes contre Rust.
+- [x] Liste, upload, édition, aperçu avec CSP, corbeille, actions en lot.
+- [x] ZIP en streaming, test de mémoire stable sur gros volume, Review Focus 1.
+- [x] Vérifier : toute la parité admin et Playwright vertes contre Rust.
 
 ### T12 — OpenTelemetry (G)
 
@@ -344,9 +344,8 @@ après l'intégration de T16 et avant la stack de validation du propriétaire.
 - Reports de la relecture T6 : garde `purge_at` à la purge, orphelins `.part` et échec
   de suppression (T9) ; restore conditionnel (T7) ; CSP d'aperçu (T11). Dashboard
   `GED_OTEL=1` sur stack Docker complète : T14.
-- `rust/ged/src/admin/documents_stub.rs` (T10) est provisoire : GET et POST minimaux
-  pour la session admin et la page status. T11 le supprime et le remplace dans
-  `documents.rs`.
+- `rust/ged/src/admin/documents_stub.rs` (T10) était provisoire. T11 l'a
+  supprimé et l'a remplacé par `documents.rs` et `trash.rs`.
 
 ## Répartition des modèles révisée (2026-11-03, demande du propriétaire)
 
@@ -358,10 +357,12 @@ relectures, les intégrations et les correctifs des tâches qu'il a écrites (T7
 
 ## Reports de la vague 6 (intégrée en f296ea9)
 
-- T11 : remplacer `admin/documents_stub.rs`, faire passer les 26 tests Rust restants
-  (`admin_documents`, `admin_params`, `admin_trash`, restauration via corbeille), CSP
-  d'aperçu, fichiers statiques sans les en-têtes de sécurité contrôleur comme Rails
-  (`cache-control: public, max-age` d'un an).
+- T11 (fait) : `documents.rs` et `trash.rs` remplacent `admin/documents_stub.rs`.
+  Les 26 tests admin (`admin_documents`, `admin_params`, `admin_trash`) passent,
+  la parité complète est verte sur les deux backends (286), Playwright aussi
+  (22) contre le serveur Rust. CSP d'aperçu et statiques sans en-têtes de
+  contrôleur (`cache-control: public, max-age` d'un an). Écart noté : un id qui
+  n'est pas un UUID est ignoré ou 404, Rails répond 500 (voir `parity-gaps.md`).
 - T14 : le `ged worker` lancé par l'adaptateur Rust de la parité vise une base supprimée
   entre deux tests (logs « database ged_rust_parity does not exist ») ; synchroniser son
   cycle de vie avec `reset()`.
