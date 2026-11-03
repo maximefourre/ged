@@ -323,3 +323,14 @@ passent sur Grok (effort high, config du propriétaire). Sonnet 5.5 medium reste
 relectures, les intégrations et les correctifs des tâches qu'il a écrites (T7, T9, T10).
 - Report T7 C2 : balayage des fichiers orphelins de staging après crash (Review Focus 2),
   à faire par le propriétaire de T9 après l'intégration de la vague 6.
+
+## Reports de la vague 6 (intégrée en f296ea9)
+
+- T11 : remplacer `admin/documents_stub.rs`, faire passer les 26 tests Rust restants
+  (`admin_documents`, `admin_params`, `admin_trash`, restauration via corbeille), CSP
+  d'aperçu, fichiers statiques sans les en-têtes de sécurité contrôleur comme Rails
+  (`cache-control: public, max-age` d'un an).
+- T14 : le `ged worker` lancé par l'adaptateur Rust de la parité vise une base supprimée
+  entre deux tests (logs « database ged_rust_parity does not exist ») ; synchroniser son
+  cycle de vie avec `reset()`.
+- C2 de T7 : balayage des fichiers orphelins de staging après crash.
