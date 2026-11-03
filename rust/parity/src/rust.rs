@@ -167,12 +167,14 @@ fn spawn() -> Running {
     run("migrate");
     run("seed");
 
-    // The watchdog ends the server when this test process goes away (statics
+    // The watchdog (the `web` and `worker` services of the compose stack) ends the
+    // server and the job worker when this test process goes away (statics
     // are never dropped), without leaving a daemon behind.
     let script = r#"
         "$GED" serve & child=$!
+        "$GED" worker & jobs=$!
         while kill -0 "$PARENT" 2>/dev/null && kill -0 "$child" 2>/dev/null; do sleep 1; done
-        kill "$child" 2>/dev/null; wait "$child" 2>/dev/null
+        kill "$child" "$jobs" 2>/dev/null; wait "$child" "$jobs" 2>/dev/null
     "#;
     let mut watchdog = Command::new("sh")
         .args(["-c", script])

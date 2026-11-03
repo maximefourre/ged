@@ -262,7 +262,8 @@ pub fn error_page(status: StatusCode) -> Response {
         CONTENT_TYPE,
         HeaderValue::from_static("text/html; charset=UTF-8"),
     );
-    response
+    // The exceptions app's static page: Rails' controller headers are not on it.
+    crate::http::bare(response)
 }
 
 /// How a handler fails.

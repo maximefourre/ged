@@ -207,7 +207,8 @@ pub fn refuse(ctx: &Ctx, method: &Method, req: &Request) -> Response {
             .map_or_else(|| req.uri().path().to_owned(), |pq| pq.as_str().to_owned());
         ctx.with_session(|s| s.return_to = Some(target));
     }
-    ctx.redirect("/admins/sign_in")
+    // Warden's failure app answers, not a controller: no controller headers.
+    crate::http::bare(ctx.redirect("/admins/sign_in"))
 }
 
 /// `GET /admin`: the dashboard sends you to the documents.
