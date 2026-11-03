@@ -315,3 +315,9 @@ réécriture de `AGENTS.md`, `docs/architecture/c4.md`.
 - `rust/ged/src/admin/documents_stub.rs` (T10) est provisoire : GET et POST minimaux
   pour la session admin et la page status. T11 le supprime et le remplace dans
   `documents.rs`.
+
+## Répartition des modèles révisée (2026-11-03, demande du propriétaire)
+
+Pour ménager le quota Claude : T11, T13, T14, T15 et T16 passent sur Grok (effort high,
+config du propriétaire). Sonnet 5.5 medium reste sur les relectures, les intégrations
+et les correctifs des tâches qu'il a écrites (T7, T9, T10).
