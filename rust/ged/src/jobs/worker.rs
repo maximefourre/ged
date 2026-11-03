@@ -8,7 +8,7 @@ use sqlx::postgres::PgPoolOptions;
 use tokio::sync::watch;
 
 use super::Registry;
-use super::deliver_callback::{CallbackPolicy, DeliverCallbackJob, PolicyNotWired};
+use super::deliver_callback::{CallbackPolicy, DeliverCallbackJob, production_policy};
 use super::env::PipelineEnv;
 use super::heartbeat::HeartbeatConfig;
 use super::pool::{Runner, RunnerConfig};
@@ -129,7 +129,7 @@ pub async fn perform_now(
         .connect(database_url)
         .await?;
     let env = PipelineEnv::from_config(db.clone(), Some(max_upload_bytes));
-    let registry = registry(&env, Arc::new(PolicyNotWired));
+    let registry = registry(&env, production_policy());
     let job = registry
         .get(kind)
         .ok_or_else(|| format!("unknown job {kind}"))?;
@@ -159,7 +159,7 @@ pub async fn run(
         .await?;
     let env = PipelineEnv::from_config(db.clone(), Some(max_upload_bytes));
     // Integration (T7 lands `policy::callback_url`): pass its `decide` adapter here.
-    let registry = Arc::new(registry(&env, Arc::new(PolicyNotWired)));
+    let registry = Arc::new(registry(&env, production_policy()));
     let (stop, rx) = watch::channel(false);
 
     let mut runners = tokio::task::JoinSet::new();
@@ -220,7 +220,7 @@ mod tests {
             .connect_lazy("postgres://unused@localhost/unused")
             .unwrap();
         let env = PipelineEnv::from_config(db, None);
-        let r = registry(&env, Arc::new(PolicyNotWired));
+        let r = registry(&env, production_policy());
         for kind in [
             "StoreDocumentJob",
             "DeliverCallbackJob",

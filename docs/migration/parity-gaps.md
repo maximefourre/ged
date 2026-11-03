@@ -383,12 +383,12 @@ affaiblie : messages d'erreur, payload du callback et statuts sont ceux de Rails
 - **Message d'erreur d'un fichier de staging manquant** : reproduit le texte Ruby
   (`No such file or directory @ rb_sysopen - <chemin>`), avec le chemin du staging Rust.
 
-À brancher à l'intégration (hors du périmètre de T9, `policy::callback_url` est à T7) :
+Branché à l'intégration (vague 6, M4) :
 
-- Le worker enregistre `DeliverCallbackJob` avec `PolicyNotWired`, qui **refuse tout**
-  (fail-closed, métrique `refused`) tant que l'adaptateur de
-  `policy::callback_url::decide(url, true)` n'est pas passé à
-  `jobs::worker::registry`. Aucune livraison ne part sans cela.
+- Le worker et `ged run-job` enregistrent `DeliverCallbackJob` avec `SsrfPolicy`
+  (`jobs::deliver_callback::production_policy()`), adaptateur de
+  `policy::callback_url::decide(url, true)` : résolution unique, adresse approuvée
+  épinglée, refus = `refused`, jamais de retry. Le stub `PolicyNotWired` est supprimé.
 - Cas SSRF `999.1.1.1` et `[::1]` (report de la vague 3) : ils relèvent de la policy
   (T7), pas du job ; le job ne fait que consommer la décision.
 - `ged run-job <Kind> [json]` (= `Job.perform_now`) alimente `Backend::run_job` du

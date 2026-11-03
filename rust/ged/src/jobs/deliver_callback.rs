@@ -20,6 +20,7 @@ use super::env::PipelineEnv;
 use super::store_document::request_id;
 use super::{Job, JobError, timed};
 use crate::domain::document::Document;
+use crate::policy::callback_url;
 use crate::telemetry::{self, CallbackOutcome, JobClass, JobQueue};
 
 pub const KIND: &str = "DeliverCallbackJob";
@@ -31,19 +32,33 @@ const MAX_ATTEMPTS: i32 = 5;
 ///
 /// `Ok(ip)`: the address to pin. `Err(reason)`: the refusal message
 /// (`must not target a private or internal address`, ...). Production wiring
-/// adapts `policy::callback_url::decide(url, true)` to this.
+/// is [`SsrfPolicy`].
 pub trait CallbackPolicy: Send + Sync + 'static {
     fn decide(&self, url: &str) -> BoxFuture<'static, Result<IpAddr, String>>;
 }
 
-/// Fail-closed stand-in until `policy::callback_url` (T7) is wired: every
-/// delivery is refused (logged, counted `refused`, not retried), never sent.
-pub struct PolicyNotWired;
+/// Production policy: `policy::callback_url::decide(url, resolve: true)`.
+/// The hostname is resolved once and the approved address is returned for
+/// pinning. Fail-closed: a decision without an address to pin is a refusal.
+pub struct SsrfPolicy;
 
-impl CallbackPolicy for PolicyNotWired {
-    fn decide(&self, _url: &str) -> BoxFuture<'static, Result<IpAddr, String>> {
-        Box::pin(async { Err("is not vetted: the callback policy is not wired".to_owned()) })
+impl CallbackPolicy for SsrfPolicy {
+    fn decide(&self, url: &str) -> BoxFuture<'static, Result<IpAddr, String>> {
+        let url = url.to_owned();
+        Box::pin(async move {
+            let decision = callback_url::decide(&url, true)
+                .await
+                .map_err(|refusal| refusal.message().to_owned())?;
+            decision
+                .ipaddr
+                .ok_or_else(|| callback_url::UNRESOLVABLE_MESSAGE.to_owned())
+        })
     }
+}
+
+/// The policy the worker and `ged run-job` wire in.
+pub fn production_policy() -> std::sync::Arc<dyn CallbackPolicy> {
+    std::sync::Arc::new(SsrfPolicy)
 }
 
 pub struct DeliverCallbackJob {
@@ -214,4 +229,49 @@ fn describe(e: &reqwest::Error) -> String {
         source = cause.source();
     }
     text
+}
+
+#[cfg(test)]
+mod policy_wiring_tests {
+    use super::*;
+    use crate::policy::callback_url::{BLOCKED_MESSAGE, INVALID_MESSAGE};
+
+    async fn decide(url: &str) -> Result<IpAddr, String> {
+        SsrfPolicy.decide(url).await
+    }
+
+    #[tokio::test]
+    async fn it_pins_a_routable_literal_address() {
+        assert_eq!(
+            decide("https://93.184.216.34/hook").await,
+            Ok("93.184.216.34".parse().unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn it_refuses_internal_targets_with_the_policy_message() {
+        for url in [
+            "http://127.0.0.1/hook",
+            "http://169.254.169.254/latest/meta-data",
+            "http://10.0.0.5/hook",
+            "http://2130706433/hook",
+            "http://localhost/hook",
+        ] {
+            assert_eq!(decide(url).await, Err(BLOCKED_MESSAGE.to_owned()), "{url}");
+        }
+    }
+
+    #[tokio::test]
+    async fn it_refuses_a_url_that_is_not_http() {
+        assert_eq!(
+            decide("ftp://example.com/x").await,
+            Err(INVALID_MESSAGE.to_owned())
+        );
+    }
+
+    #[test]
+    fn the_production_policy_is_the_ssrf_one() {
+        // compile-time wiring: what `registry` callers pass in production
+        let _: std::sync::Arc<dyn CallbackPolicy> = production_policy();
+    }
 }

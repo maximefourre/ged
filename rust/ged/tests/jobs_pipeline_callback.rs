@@ -1,6 +1,6 @@
 //! T9: `DeliverCallbackJob`: payload, SSRF decision, IP pinning, retries.
-//! `policy::callback_url` belongs to T7 and is not in this base, so the
-//! decision is a stub honouring the wave-6 contract:
+//! The decision is injected through `CallbackPolicy` (production wiring is
+//! `SsrfPolicy`, see `deliver_callback`), so these tests pin loopback hooks:
 //! `decide(url, resolve: true) -> Result<pinned address, refusal reason>`.
 
 mod pipeline_support;
