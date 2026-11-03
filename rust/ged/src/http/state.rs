@@ -5,6 +5,7 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 use crate::auth::{JwksCache, TokenValidator};
 use crate::config::Config;
+use crate::storage::{StagingStore, Storage};
 
 /// Shared by every handler. Cheap to clone.
 #[derive(Clone)]
@@ -13,6 +14,10 @@ pub struct AppState {
     pub db: PgPool,
     /// Process-local JWKS cache, shared by every request.
     pub jwks: Arc<JwksCache>,
+    /// Document files (Active Storage's disk service: `storage/xx/yy/<key>`).
+    pub storage: Storage,
+    /// Raw bytes of async uploads awaiting their job (`storage/staging/<id>`).
+    pub staging: StagingStore,
 }
 
 impl AppState {
@@ -25,9 +30,22 @@ impl AppState {
             config: Arc::new(config),
             db,
             jwks,
+            storage: Storage::new(STORAGE_DIR),
+            staging: StagingStore::new(format!("{STORAGE_DIR}/staging")),
         }
     }
+
+    /// Where files live instead of the default `storage/` (tests).
+    pub fn with_storage(mut self, storage: Storage, staging: StagingStore) -> Self {
+        self.storage = storage;
+        self.staging = staging;
+        self
+    }
 }
+
+/// Rails' `Rails.root/storage`, relative to the working directory (the
+/// compose `storage` volume is mounted there for `web` and `worker`).
+pub const STORAGE_DIR: &str = "storage";
 
 impl AppState {
     /// A state whose pool connects on first use, for code (and tests) that

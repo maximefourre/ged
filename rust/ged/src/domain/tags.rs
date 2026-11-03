@@ -10,12 +10,12 @@ pub const MAX_KEY_LENGTH: usize = 100;
 pub const MAX_VALUE_LENGTH: usize = 500;
 
 /// Ruby's `String#strip`: ASCII whitespace and NUL only.
-fn ruby_strip(text: &str) -> &str {
+pub(crate) fn ruby_strip(text: &str) -> &str {
     text.trim_matches(|c| matches!(c, '\0' | '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' '))
 }
 
 /// Ruby's `String#downcase` maps character by character (no final-sigma rule).
-fn ruby_downcase(text: &str) -> String {
+pub(crate) fn ruby_downcase(text: &str) -> String {
     text.chars().flat_map(char::to_lowercase).collect()
 }
 

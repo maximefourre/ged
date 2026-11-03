@@ -135,7 +135,10 @@ impl Document {
         Ok(done.rows_affected())
     }
 
-    /// `restore!`: brings a trashed document back.
+    /// `restore!`: brings a *trashed* document back. Conditional on the row
+    /// being trashed: restoring a live document (a double click, a stale page,
+    /// a race with the purge) changes nothing — `updated_at` included — and
+    /// answers `None`, as does an unknown id.
     pub async fn restore(
         conn: &mut PgConnection,
         id: Uuid,
@@ -143,7 +146,7 @@ impl Document {
     ) -> sqlx::Result<Option<Document>> {
         sqlx::query_as(sql(&format!(
             "UPDATE documents SET deleted_at = NULL, purge_at = NULL, updated_at = $2 \
-             WHERE id = $1 RETURNING {COLUMNS}"
+             WHERE id = $1 AND deleted_at IS NOT NULL RETURNING {COLUMNS}"
         )))
         .bind(id)
         .bind(now)

@@ -244,6 +244,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          description: >-
+            The request body exceeds `GED_MAX_UPLOAD_BYTES` (default 50 MiB;
+            the limit applies to the whole multipart body, not only the file).
+            The edge rejects it before authentication, with an **empty body**
+            (no JSON `error`) and no `Content-Type`. Nothing is stored.
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 

@@ -8,7 +8,7 @@ workspace = true
 
 [dependencies]
 argon2 = "0.6.0"
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 bytes = "1.12.1"
 chrono = "0.4.45"
 clap = { version = "4", features = ["derive"] }
@@ -27,6 +27,8 @@ opentelemetry = "0.33"
 opentelemetry_sdk = "0.33"
 opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace", "metrics"] }
 regex = "1"
+tokio-util = { version = "0.7", features = ["io"] }
+multer = "3"
 
 [dev-dependencies]
 base64 = "0.23.1"

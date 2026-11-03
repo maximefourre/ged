@@ -16,6 +16,7 @@ pub struct Storage {
 }
 
 /// A stored file.
+#[derive(Clone)]
 pub struct Stored {
     pub key: String,
     pub written: Written,

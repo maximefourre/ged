@@ -299,3 +299,30 @@ Comportement de Solid Queue 1.5.0 relu dans le gem
 - Index `index_jobs_ready (queue, id) INCLUDE (run_at)` : les retries futurs sont
   écartés sans visiter le tas ; le tri reste `ORDER BY id`. À réévaluer en T15 si la file
   grossit.
+
+## API documents, départements, uploads (T7)
+
+- **Répertoire de stockage :** `storage/` relatif au répertoire courant (comme
+  `Rails.root/storage`, volume `storage` du compose), staging dans
+  `storage/staging/<id>`. Aucune nouvelle variable d'environnement.
+- **Limite de taille :** `GED_MAX_UPLOAD_BYTES` s'applique au **corps entier** de la
+  requête (comme `MAX_REQUEST_BODY` de Thruster), pas au seul fichier : un fichier
+  d'exactement la limite est refusé (413 à corps vide, avant l'authentification quand
+  `Content-Length` l'annonce, sinon pendant la lecture). Un corps multipart cassé
+  est un 400 avant l'authentification, comme Rack.
+- **Upload async :** le fichier est d'abord écrit dans le stockage (le corps est
+  analysé avant de savoir si `callback_url` est présent), puis **renommé** vers le
+  staging dans la transaction qui insère la requête et met le job en file : aucun
+  fichier de staging sans ligne, aucune ligne sans job.
+- **Documents d'un département en corbeille :** Rails lève un 500 (`nil.self_and_ancestors`)
+  sur show/download/delete d'un document vivant dont le département est en corbeille
+  (état normalement inatteignable) ; le Rust répond 403 (fail-closed).
+- **`updated_at` d'un document créé :** Rails le fait avancer de quelques ms après la
+  création (attache Active Storage) ; le Rust le laisse égal à `created_at`.
+- **Parties texte multipart :** plafonnées à 4 Mio au total (400 au-delà) ; Rails n'a
+  pas ce plafond. Un fichier envoyé sous un autre nom que `file` est ignoré.
+- **En-têtes de réponse :** `ETag` faible, `Cache-Control` et en-têtes de sécurité de
+  Rails ne sont pas encore émis par le Rust (hors assertions de parité).
+- **`CallbackUrlPolicy` :** à la requête, `999.1.1.1` n'est pas une adresse (aucun
+  encodage `inet_aton`) : traité comme un nom, accepté (202, observé sur Rails) ; la
+  livraison le refuse (non résolu). Le pinning lui-même est dans T9.

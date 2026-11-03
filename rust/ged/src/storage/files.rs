@@ -41,6 +41,7 @@ impl From<io::Error> for StorageError {
 
 /// What was written: size, SHA-256 (hex) and the first bytes (enough for
 /// content-type detection).
+#[derive(Clone)]
 pub struct Written {
     pub byte_size: u64,
     pub checksum: String,

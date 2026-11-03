@@ -50,3 +50,7 @@ tmp_test_data/
 /rust/e2e/playwright-report/
 /rust/e2e/blob-report/
 /rust/e2e/.auth/
+
+# Rust binary storage (uploads, staging) when run from rust/
+/rust/storage/*
+/rust/*/storage/*

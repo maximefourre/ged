@@ -171,7 +171,7 @@ fn ruby_to_i(value: &Value) -> i64 {
 
 /// `String#to_i` (base 10): leading ASCII whitespace, one sign, an optional
 /// `0d` prefix, then digits where a single `_` between digits is allowed.
-fn string_to_i(s: &str) -> i64 {
+pub(crate) fn string_to_i(s: &str) -> i64 {
     let t = s.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']);
     let (negative, rest) = match t.as_bytes().first() {
         Some(b'-') => (true, &t[1..]),

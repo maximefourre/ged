@@ -7,6 +7,7 @@ pub mod db;
 pub mod domain;
 pub mod http;
 pub mod jobs;
+pub mod policy;
 pub mod seed;
 pub mod telemetry;
 
