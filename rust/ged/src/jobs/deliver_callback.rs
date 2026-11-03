@@ -134,6 +134,13 @@ async fn deliver(env: &PipelineEnv, policy: &dyn CallbackPolicy, id: Uuid) -> Re
 
     let url = reqwest::Url::parse(&row.callback_url)
         .map_err(|e| JobError::Discard(format!("invalid callback_url: {e}")))?;
+    // An IP-literal host cannot be pinned: the client connects to whatever the
+    // URL parser makes of it. Connect only if that is the vetted address.
+    if let Err(reason) = literal_matches(&url, ip) {
+        telemetry::callback_deliveries(CallbackOutcome::Refused);
+        eprintln!("Callback refused for upload_request {id}: callback_url {reason}");
+        return Ok(());
+    }
     let outcome = telemetry::trace_outgoing_http("POST", &row.callback_url, async {
         let result = post(&url, ip, &payload).await;
         (result.as_ref().copied().unwrap_or(0), result)
@@ -146,6 +153,25 @@ async fn deliver(env: &PipelineEnv, policy: &dyn CallbackPolicy, id: Uuid) -> Re
         }
         Ok(status) => Err(fail_delivery(format!("callback returned HTTP {status}"))),
         Err(message) => Err(fail_delivery(message)),
+    }
+}
+
+/// Fail-closed check for IP-literal hosts: the address `reqwest` would dial
+/// (WHATWG parsing, which differs from the policy's `inet_aton`) must be
+/// exactly the one the policy approved. Hostnames are pinned instead.
+fn literal_matches(url: &reqwest::Url, vetted: IpAddr) -> Result<(), String> {
+    // `host_str` is the WHATWG serialisation: canonical dotted quad for any
+    // IPv4 encoding, bracketed for IPv6; a domain name does not parse.
+    let host = url.host_str().unwrap_or_default();
+    let Ok(dialled) = host.trim_matches(['[', ']']).parse::<IpAddr>() else {
+        return Ok(());
+    };
+    if dialled == vetted {
+        Ok(())
+    } else {
+        Err(format!(
+            "is not vetted: the client would connect to {dialled}, the policy approved {vetted}"
+        ))
     }
 }
 

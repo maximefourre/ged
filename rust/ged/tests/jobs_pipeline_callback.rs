@@ -405,3 +405,58 @@ async fn the_queue_gives_up_after_exactly_five_attempts() {
     assert_eq!(f.count("SELECT attempts::bigint FROM jobs").await, 5);
     f.finish().await;
 }
+
+/// R1: for an IP-literal host there is nothing to pin, `reqwest` connects to
+/// whatever WHATWG parsing makes of the URL. That must be the very address the
+/// policy vetted, else policy and client disagree (GED-SEC-08 class).
+async fn deliver_to_literal(host: &str, vetted: &str) -> (Result<(), JobError>, Vec<String>) {
+    let f = Fixture::new().await;
+    let hook = Hook::start(200).await;
+    let url = format!("http://{host}:{}/hook", hook.addr.port());
+    let (id, _) = completed_request(&f, &url).await;
+    let policy = Arc::new(Pin {
+        ip: vetted.parse().unwrap(),
+        asked: Arc::default(),
+    });
+    let result = DeliverCallbackJob::new(f.env.clone(), policy)
+        .perform(args(id))
+        .await;
+    let requests = hook.requests();
+    f.finish().await;
+    (result, requests)
+}
+
+#[tokio::test]
+async fn a_literal_ipv4_host_in_any_encoding_is_delivered_when_policy_and_client_agree() {
+    for host in [
+        "127.0.0.1",
+        "2130706433",
+        "0x7f000001",
+        "0x7f.1",
+        "0177.0.0.1",
+        "127.1",
+    ] {
+        let (result, requests) = deliver_to_literal(host, "127.0.0.1").await;
+        assert_eq!(result, Ok(()), "{host}");
+        assert_eq!(requests.len(), 1, "{host}");
+    }
+}
+
+#[tokio::test]
+async fn a_literal_host_the_client_reads_differently_than_the_policy_is_refused_unretried() {
+    // (host as stored, address the policy vetted instead of what reqwest uses)
+    for (host, vetted) in [
+        ("2130706433", "8.8.8.8"),   // decimal
+        ("0x7f000001", "8.8.8.8"),   // hex
+        ("0177.0.0.1", "177.0.0.1"), // octal read as decimal
+        ("127.1", "127.0.0.2"),      // short form
+        ("[::1]", "127.0.0.1"),      // IPv6 vs IPv4 loopback
+        ("[::1]", "::2"),
+        ("[::ffff:127.0.0.1]", "127.0.0.1"), // IPv4-mapped vs plain IPv4
+        ("127.0.0.1", "::ffff:127.0.0.1"),
+    ] {
+        let (result, requests) = deliver_to_literal(host, vetted).await;
+        assert_eq!(result, Ok(()), "{host} vs {vetted}: refusal is final");
+        assert!(requests.is_empty(), "{host} vs {vetted} was contacted");
+    }
+}

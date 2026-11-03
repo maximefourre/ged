@@ -265,3 +265,49 @@ async fn a_run_overtaken_by_reconcile_stores_nothing_and_keeps_the_staging_file(
     assert!(f.jobs().await.is_empty());
     f.finish().await;
 }
+
+/// Review M2: the failure path is guarded by the claim like the success path.
+/// A slow run overtaken by reconcile (a new run now holds the request in
+/// `processing`) that then fails must not mark it failed, queue a second
+/// callback or delete the staging file the new run needs.
+#[tokio::test]
+async fn an_overtaken_run_that_fails_leaves_the_new_runs_request_and_staging_alone() {
+    let f = Fixture::new().await;
+    let dept = f.department("Compta", None).await;
+    let id = f
+        .upload_request(dept, "pending", CALLBACK, Some(b"slow"))
+        .await;
+    sqlx::raw_sql(
+        "CREATE FUNCTION slow_fail() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN PERFORM pg_sleep(1); RAISE EXCEPTION 'late failure'; END $$; \
+         CREATE TRIGGER slow_fail BEFORE INSERT ON documents \
+         FOR EACH ROW EXECUTE FUNCTION slow_fail();",
+    )
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let job = StoreDocumentJob::new(f.env.clone());
+    let running = tokio::spawn(job.perform(args(id)));
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    // reconcile reset it and a new run claimed it: `pending` -> `processing`
+    // is the request's new owner; the old run no longer holds the claim.
+    sqlx::query("UPDATE upload_requests SET status = 'pending' WHERE id = $1")
+        .bind(id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE upload_requests SET status = 'processing', updated_at = (clock_timestamp() AT TIME ZONE 'UTC') WHERE id = $1",
+    )
+    .bind(id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    running.await.unwrap().unwrap();
+
+    let (status, error, _) = f.status(id).await;
+    assert_eq!((status.as_str(), error), ("processing", None));
+    assert!(f.env.staging.exists(id).await, "the new run still needs it");
+    assert!(f.jobs().await.is_empty(), "no callback from the old run");
+    f.finish().await;
+}

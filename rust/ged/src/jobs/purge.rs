@@ -108,7 +108,7 @@ impl PurgeDeletedDocumentsJob {
         for department in trashed {
             let result = async {
                 if department.references_cleared(&self.env.db).await? {
-                    department.purge(&self.env.db).await?;
+                    self.purge_department(department.id).await?;
                 }
                 Ok::<_, sqlx::Error>(())
             }
@@ -117,6 +117,32 @@ impl PurgeDeletedDocumentsJob {
                 failures.note(&format!("department {}", department.id), &e);
             }
         }
+    }
+
+    /// Hard-deletes one department (and its grants) if, and only if, it is
+    /// still trashed: restored since the trash was listed, it stays. The row
+    /// is locked and re-checked in the transaction. `false` = nothing purged.
+    pub async fn purge_department(&self, id: i64) -> Result<bool, sqlx::Error> {
+        let mut tx = self.env.db.begin().await?;
+        let trashed: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM departments WHERE id = $1 AND deleted_at IS NOT NULL FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if trashed.is_none() {
+            return Ok(false);
+        }
+        sqlx::query("DELETE FROM client_department_accesses WHERE department_id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM departments WHERE id = $1 AND deleted_at IS NOT NULL")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(true)
     }
 
     /// Files under the storage root no `stored_files` row points to (a crash

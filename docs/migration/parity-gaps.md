@@ -379,7 +379,7 @@ affaiblie : messages d'erreur, payload du callback et statuts sont ceux de Rails
 - **Livraison HTTP.** `reqwest` : un client par livraison avec l'adresse épinglée via
   `resolve(host, ip:port)` (Host, SNI et certificat gardent le nom d'hôte), ni proxy
   ni redirection suivie (un 3xx est un échec comme en `Net::HTTP`), délais 5 s
-  connexion / 10 s lecture. Un hôte littéral IP n'est pas épinglé (déjà vérifié).
+  connexion / 10 s lecture. Un hôte littéral IP ne peut pas être épinglé : l'adresse que `reqwest` composerait (parsing WHATWG) est comparée strictement à celle validée par la policy, et toute différence (encodage décimal/hexa/octal/court, IPv6, IPv4-mappé) est refusée sans retry (testé).
 - **Message d'erreur d'un fichier de staging manquant** : reproduit le texte Ruby
   (`No such file or directory @ rb_sysopen - <chemin>`), avec le chemin du staging Rust.
 

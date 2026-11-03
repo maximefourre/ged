@@ -82,11 +82,11 @@ async fn store(env: &PipelineEnv, id: Uuid) -> Result<(), JobError> {
     // `UploadRequest.find` raising RecordNotFound: nothing to ever retry.
     let request =
         request.ok_or_else(|| JobError::Discard(format!("upload request {id} not found")))?;
-    if !claim(&env.db, id).await.map_err(retry)? {
+    let Some(claim) = claim(&env.db, id).await.map_err(retry)? else {
         return Ok(());
-    }
+    };
 
-    let outcome = store_and_complete(env, id, &request).await;
+    let outcome = store_and_complete(env, id, &request, claim).await;
     let result = match outcome {
         Ok(Outcome::Completed) => {
             telemetry::documents_uploaded(UploadMode::Async);
@@ -97,7 +97,13 @@ async fn store(env: &PipelineEnv, id: Uuid) -> Result<(), JobError> {
         Ok(Outcome::Superseded) => return Ok(()),
         Err(message) => {
             eprintln!("Async upload {id} failed: {message}");
-            fail(&env.db, id, &message).await.map_err(retry)
+            match fail(&env.db, id, claim, &message).await {
+                Ok(true) => Ok(()),
+                // Overtaken meanwhile: the new run owns the request and
+                // needs the staging file, like the `Superseded` success path.
+                Ok(false) => return Ok(()),
+                Err(e) => Err(retry(e)),
+            }
         }
     };
     // `ensure`: the staging file never outlives the attempt.
@@ -107,17 +113,23 @@ async fn store(env: &PipelineEnv, id: Uuid) -> Result<(), JobError> {
     result
 }
 
+/// Proof of ownership of a request: the `updated_at` written by [`claim`].
+/// A later run (after a reconcile reset) stamps a different value, so a stale
+/// run can neither complete nor fail the request it no longer holds.
+#[derive(Clone, Copy)]
+struct Claim(NaiveDateTime);
+
 /// Atomic pending -> processing: a reconcile re-enqueue racing the original
-/// job must not store the document twice.
-async fn claim(db: &PgPool, id: Uuid) -> Result<bool, sqlx::Error> {
-    let done = sqlx::query(
-        "UPDATE upload_requests SET status = 'processing', updated_at = (now() AT TIME ZONE 'UTC') \
-         WHERE id = $1 AND status = 'pending'",
+/// job must not store the document twice. `None`: someone else has it.
+async fn claim(db: &PgPool, id: Uuid) -> Result<Option<Claim>, sqlx::Error> {
+    let stamp: Option<NaiveDateTime> = sqlx::query_scalar(
+        "UPDATE upload_requests SET status = 'processing', updated_at = (clock_timestamp() AT TIME ZONE 'UTC') \
+         WHERE id = $1 AND status = 'pending' RETURNING updated_at",
     )
     .bind(id)
-    .execute(db)
+    .fetch_optional(db)
     .await?;
-    Ok(done.rows_affected() == 1)
+    Ok(stamp.map(Claim))
 }
 
 enum Outcome {
@@ -130,6 +142,7 @@ async fn store_and_complete(
     env: &PipelineEnv,
     id: Uuid,
     request: &Request,
+    claim: Claim,
 ) -> Result<Outcome, String> {
     let path = env.staging.path(id);
     let file = tokio::fs::File::open(&path)
@@ -144,7 +157,7 @@ async fn store_and_complete(
         .map_err(|e| e.to_string())?;
     let key = stored.key.clone();
 
-    let committed = create_and_complete(env, id, request, stored).await;
+    let committed = create_and_complete(env, id, request, claim, stored).await;
     if !matches!(committed, Ok(Outcome::Completed)) {
         // Rolled back: the bytes written for it are unreachable, drop them.
         if let Err(e) = env.storage.delete(&key).await {
@@ -158,6 +171,7 @@ async fn create_and_complete(
     env: &PipelineEnv,
     id: Uuid,
     request: &Request,
+    claim: Claim,
     stored: crate::storage::Stored,
 ) -> Result<Outcome, String> {
     let mut tx = env.db.begin().await.map_err(|e| e.to_string())?;
@@ -183,10 +197,11 @@ async fn create_and_complete(
     })?;
     let completed = sqlx::query(
         "UPDATE upload_requests SET status = 'completed', document_id = $2, \
-         updated_at = (now() AT TIME ZONE 'UTC') WHERE id = $1 AND status = 'processing'",
+         updated_at = (now() AT TIME ZONE 'UTC') WHERE id = $1 AND status = 'processing' AND updated_at = $3",
     )
     .bind(id)
     .bind(document.id)
+    .bind(claim.0)
     .execute(&mut *tx)
     .await
     .map_err(|e| e.to_string())?
@@ -209,19 +224,25 @@ fn callback_job(id: Uuid) -> JobPayload {
     )
 }
 
-/// Marks the request failed and queues its callback, atomically.
-async fn fail(db: &PgPool, id: Uuid, message: &str) -> Result<(), sqlx::Error> {
+/// Marks the request failed and queues its callback, atomically, only while
+/// this run still holds the claim (`processing`). `false`: not the owner.
+async fn fail(db: &PgPool, id: Uuid, claim: Claim, message: &str) -> Result<bool, sqlx::Error> {
     let mut tx = db.begin().await?;
-    sqlx::query(
+    let done = sqlx::query(
         "UPDATE upload_requests SET status = 'failed', error_message = $2, updated_at = (now() AT TIME ZONE 'UTC') \
-         WHERE id = $1",
+         WHERE id = $1 AND status = 'processing' AND updated_at = $3",
     )
     .bind(id)
     .bind(message)
+    .bind(claim.0)
     .execute(&mut *tx)
     .await?;
+    if done.rows_affected() == 0 {
+        return Ok(false);
+    }
     queue::enqueue(&mut tx, callback_job(id), QueueName::Default).await?;
-    tx.commit().await
+    tx.commit().await?;
+    Ok(true)
 }
 
 /// Ruby's `File.open` failure text, which ends up in `error_message`.

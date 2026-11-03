@@ -246,3 +246,49 @@ async fn orphan_files_and_part_files_are_swept_after_a_day() {
     );
     f.finish().await;
 }
+
+/// Review M3: a department restored between the listing of the trash and its
+/// purge keeps itself and its grants (same guard as `purge_at` for documents).
+#[tokio::test]
+async fn a_department_restored_before_its_purge_is_kept_with_its_grants() {
+    let f = Fixture::new().await;
+    let dept = f.department("Restored", None).await;
+    sqlx::query("INSERT INTO app_clients (client_identifier, created_at, updated_at) VALUES ('c', now(), now())")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO client_department_accesses (app_client_id, department_id, created_at, updated_at) \
+         SELECT id, $1, now(), now() FROM app_clients",
+    )
+    .bind(dept)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    f.trash_department(dept).await;
+    // ... the admin restores it after the job listed the trash:
+    sqlx::query("UPDATE departments SET deleted_at = NULL WHERE id = $1")
+        .bind(dept)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+
+    assert!(!job(&f).purge_department(dept).await.unwrap());
+
+    assert_eq!(f.count("SELECT count(*) FROM departments").await, 1);
+    assert_eq!(
+        f.count("SELECT count(*) FROM client_department_accesses")
+            .await,
+        1
+    );
+    // still trashed and free: it is purged, grants included
+    f.trash_department(dept).await;
+    assert!(job(&f).purge_department(dept).await.unwrap());
+    assert_eq!(f.count("SELECT count(*) FROM departments").await, 0);
+    assert_eq!(
+        f.count("SELECT count(*) FROM client_department_accesses")
+            .await,
+        0
+    );
+    f.finish().await;
+}
