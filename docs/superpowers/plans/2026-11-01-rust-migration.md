@@ -298,3 +298,17 @@ réécriture de `AGENTS.md`, `docs/architecture/c4.md`.
 - **T7 :** test d'upload exactement à la limite, 413 à corps vide reproduit et documenté
   dans `docs/api/openapi.yaml`.
 - **T9 :** cas SSRF `999.1.1.1` et `[::1]`.
+
+## Contrats de la vague 6 (décidés par l'orchestrateur)
+
+- Jobs : `JobPayload::new(kind, args)` + `queue::enqueue`. Kinds et args figés :
+  `StoreDocumentJob` `{"upload_request_id": uuid}` sur `uploads` ;
+  `DeliverCallbackJob` `{"upload_request_id": uuid}`, `ReconcileUploadRequestsJob` `{}`,
+  `PurgeDeletedDocumentsJob` `{}` sur `default`. T7 enqueue, T9 implémente et enregistre.
+- `rust/ged/src/policy/callback_url.rs` appartient à T7 : contrôle à la requête et
+  `decide(url, resolve: true) -> Result<Decision, Refusal>` avec l'adresse résolue à
+  épingler. T9 le consomme sans le modifier.
+- `rust/ged/src/domain/upload_request.rs` appartient à T7.
+- Reports de la relecture T6 : garde `purge_at` à la purge, orphelins `.part` et échec
+  de suppression (T9) ; restore conditionnel (T7) ; CSP d'aperçu (T11). Dashboard
+  `GED_OTEL=1` sur stack Docker complète : T14.
