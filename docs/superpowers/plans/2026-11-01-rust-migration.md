@@ -321,3 +321,5 @@ réécriture de `AGENTS.md`, `docs/architecture/c4.md`.
 Ponctuellement, pour ménager le quota Claude de ce chantier : T11, T13, T14, T15 et T16
 passent sur Grok (effort high, config du propriétaire). Sonnet 5.5 medium reste sur les
 relectures, les intégrations et les correctifs des tâches qu'il a écrites (T7, T9, T10).
+- Report T7 C2 : balayage des fichiers orphelins de staging après crash (Review Focus 2),
+  à faire par le propriétaire de T9 après l'intégration de la vague 6.
