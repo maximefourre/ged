@@ -312,3 +312,6 @@ réécriture de `AGENTS.md`, `docs/architecture/c4.md`.
 - Reports de la relecture T6 : garde `purge_at` à la purge, orphelins `.part` et échec
   de suppression (T9) ; restore conditionnel (T7) ; CSP d'aperçu (T11). Dashboard
   `GED_OTEL=1` sur stack Docker complète : T14.
+- `rust/ged/src/admin/documents_stub.rs` (T10) est provisoire : GET et POST minimaux
+  pour la session admin et la page status. T11 le supprime et le remplace dans
+  `documents.rs`.
