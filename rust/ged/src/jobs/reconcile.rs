@@ -222,11 +222,18 @@ async fn purge_old_terminal_requests(
     Ok(())
 }
 
-/// Staging files with no live pending request (rows deleted by hand, ...);
-/// anything this old is garbage — stuck requests are handled long before.
+/// Safe age margin before an unreferenced staging file counts as an orphan
+/// (same as Rails' `ORPHAN_BLOB_AGE`): far above `STUCK_AFTER` and any upload.
+pub const ORPHAN_STAGING_AGE: Duration = Duration::from_secs(86_400);
+
+/// Staging sweep. Beyond Rails (which only drops files older than 30 days),
+/// `<uuid>` / `<uuid>.part` files older than `ORPHAN_STAGING_AGE` go when no
+/// pending/processing request owns them: a crash between the file write and
+/// the row insert, or a terminal request whose cleanup failed. The staging of
+/// a pending/processing request is never touched. Other files keep Rails'
+/// 30-day rule.
 async fn purge_old_staging_files(env: &PipelineEnv, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
-    let cutoff: SystemTime = now.into();
-    let cutoff = cutoff - RETENTION;
+    let now: SystemTime = now.into();
     let Ok(mut dir) = tokio::fs::read_dir(env.staging.root()).await else {
         return Ok(()); // no staging directory yet
     };
@@ -237,9 +244,33 @@ async fn purge_old_staging_files(env: &PipelineEnv, now: DateTime<Utc>) -> Resul
         let Ok(meta) = tokio::fs::metadata(&path).await else {
             continue;
         };
-        if meta.is_file() && meta.modified().is_ok_and(|m| m < cutoff) {
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let doomed = match crate::storage::staging::StagingStore::parse_name(&name) {
+            Some((id, _)) => {
+                modified < now - ORPHAN_STAGING_AGE && !is_live_request(env, id).await?
+            }
+            None => modified < now - RETENTION,
+        };
+        if doomed {
             let _ = tokio::fs::remove_file(&path).await;
         }
     }
     Ok(())
+}
+
+/// Checked after the age test and right before deleting, so a request created
+/// meanwhile is seen.
+async fn is_live_request(env: &PipelineEnv, id: Uuid) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM upload_requests WHERE id = $1 AND status IN ('pending', 'processing'))",
+    )
+    .bind(id)
+    .fetch_one(&env.db)
+    .await
 }

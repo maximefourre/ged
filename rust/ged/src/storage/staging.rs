@@ -53,6 +53,18 @@ impl StagingStore {
         }
     }
 
+    /// Parses a directory entry name: `<uuid>` (a staged upload) or
+    /// `<uuid>.part` (a write cut short). Anything else is not ours.
+    pub fn parse_name(name: &str) -> Option<(Uuid, bool)> {
+        let (stem, part) = match name.strip_suffix(".part") {
+            Some(stem) => (stem, true),
+            None => (name, false),
+        };
+        // `Uuid::parse_str` also accepts simple/braced forms; we only write hyphenated.
+        let id = Uuid::parse_str(stem).ok()?;
+        (id.hyphenated().to_string() == stem).then_some((id, part))
+    }
+
     pub async fn exists(&self, id: Uuid) -> bool {
         tokio::fs::try_exists(self.path(id)).await.unwrap_or(false)
     }
@@ -148,6 +160,19 @@ mod tests {
         let err = store.write(id, Cut(rx, false), 1000).await.unwrap_err();
         assert!(matches!(err, StorageError::Io(_)));
         assert!(entries(&store).is_empty(), "{:?}", entries(&store));
+    }
+
+    #[test]
+    fn parse_name_recognises_staging_and_part_files_only() {
+        let id = Uuid::new_v4();
+        assert_eq!(StagingStore::parse_name(&id.to_string()), Some((id, false)));
+        assert_eq!(
+            StagingStore::parse_name(&format!("{id}.part")),
+            Some((id, true))
+        );
+        assert_eq!(StagingStore::parse_name("notes.txt"), None);
+        assert_eq!(StagingStore::parse_name(&id.simple().to_string()), None);
+        assert_eq!(StagingStore::parse_name(&format!("{id}.tmp")), None);
     }
 
     #[test]

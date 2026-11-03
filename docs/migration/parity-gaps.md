@@ -329,9 +329,14 @@ Comportement de Solid Queue 1.5.0 relu dans le gem
 - **Fichiers orphelins après un crash (upload async) :** un `kill -9`/OOM entre
   l'écriture du fichier (`storage/xx/yy/<key>` puis `staging/<id>`) et le `COMMIT`
   laisse un fichier sans ligne. Rails a la même fenêtre (staging écrit après
-  `create!`, enqueue après). Aucun balayage n'existe : à confier à T9 (fichiers
-  `staging/*` sans `upload_requests` correspondante, `storage/**` sans `stored_files`,
-  au-delà d'un âge minimal). Tant que T9 ne l'a pas fait, c'est un écart connu.
+  `create!`, enqueue après). **Staging : traité par T9** (ajout par rapport à
+  Rails, qui ne purge le staging qu'après 30 jours) : `ReconcileUploadRequestsJob`
+  supprime `staging/<uuid>` et `staging/<uuid>.part` de plus d'un jour
+  (`ORPHAN_STAGING_AGE`) dont aucune requête `pending`/`processing` n'est propriétaire
+  (orphelin de crash, ou requête terminale dont le nettoyage a échoué) ; le staging
+  d'une requête vivante n'est jamais supprimé, les autres noms gardent la règle des
+  30 jours. **Reste ouvert :** `storage/**` sans `stored_files` (relève de la purge
+  quotidienne, hors de ce balayage).
 - **Zone id IPv6 dans `callback_url` :** `[fe80::1%25eth0]` est refusé (`Invalid`) à la
   requête par le Rust ; Ruby le lit comme un nom, accepté à la requête et refusé à la
   livraison. Direction plus sûre.

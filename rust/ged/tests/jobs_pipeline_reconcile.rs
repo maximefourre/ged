@@ -7,7 +7,7 @@ use chrono::Utc;
 use ged::jobs::queue::{self, QueueName};
 use ged::jobs::reconcile::ReconcileUploadRequestsJob;
 use ged::jobs::scheduler::{self, Cadence};
-use pipeline_support::Fixture;
+use pipeline_support::{Fixture, age_file};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -189,6 +189,63 @@ async fn staging_files_older_than_thirty_days_are_swept() {
 
     assert!(!f.env.staging.exists(old).await);
     assert!(f.env.staging.exists(recent).await);
+    f.finish().await;
+}
+
+/// C2 (T7 review): a crash between the staging write and the row insert leaves
+/// `<uuid>` or `<uuid>.part` with no request; swept after a safe margin (1 day).
+#[tokio::test]
+async fn orphan_staging_files_are_swept_after_a_day_but_not_before() {
+    let f = Fixture::new().await;
+    let root = f.env.staging.root().to_owned();
+    let (old, young, old_part, young_part) = (
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+    );
+    let files = [
+        (old, "", 2),
+        (young, "", 0),
+        (old_part, ".part", 2),
+        (young_part, ".part", 0),
+    ];
+    for (id, ext, days) in files {
+        let path = root.join(format!("{id}{ext}"));
+        std::fs::write(&path, b"x").unwrap();
+        if days > 0 {
+            age_file(&path, days);
+        }
+    }
+
+    job(&f).run(Utc::now()).await.unwrap();
+
+    assert!(!root.join(old.to_string()).exists());
+    assert!(!root.join(format!("{old_part}.part")).exists());
+    assert!(root.join(young.to_string()).exists());
+    assert!(root.join(format!("{young_part}.part")).exists());
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn staging_of_live_requests_is_never_swept_but_terminal_ones_are() {
+    let f = Fixture::new().await;
+    let dept = f.department("Compta", None).await;
+    let mut ids = Vec::new();
+    for status in ["pending", "processing", "completed", "failed"] {
+        let id = f.upload_request(dept, status, CALLBACK, Some(b"x")).await;
+        age_file(&f.env.staging.path(id), 2);
+        ids.push((status, id));
+    }
+    // keep pending/processing from being recovered: they are young rows
+    queue::pause(&f.pool, QueueName::Uploads).await.unwrap();
+
+    job(&f).run(Utc::now()).await.unwrap();
+
+    for (status, id) in ids {
+        let live = matches!(status, "pending" | "processing");
+        assert_eq!(f.env.staging.exists(id).await, live, "{status}");
+    }
     f.finish().await;
 }
 
