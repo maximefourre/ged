@@ -1,0 +1,45 @@
+{% extends "admin/layout.html" %}
+{% block content %}
+<header class="page-head">
+  <h1>{{ title() }}</h1>
+</header>
+<form class="form-card" {% if let Some(id) = id %}action="/admin/app_clients/{{ id }}" accept-charset="UTF-8" method="post"><input type="hidden" name="_method" value="patch" />{% else %}action="/admin/app_clients" accept-charset="UTF-8" method="post">{% endif %}<input type="hidden" name="authenticity_token" value="{{ chrome.csrf }}" />
+  <div class="field">
+    <label for="app_client_client_identifier">Client identifier</label>
+    <input class="input" type="text" value="{{ identifier }}" name="app_client[client_identifier]" id="app_client_client_identifier" />
+  </div>
+  <div class="field">
+    <label for="app_client_description">Description</label>
+    <input class="input" type="text" value="{{ description }}" name="app_client[description]" id="app_client_description" />
+  </div>
+  <div class="field">
+    <span class="field-label">Department access</span>
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Department</th><th>Read</th><th>Write</th></tr>
+        </thead>
+        <tbody>
+          {% for row in grid %}
+            <tr>
+              <td>{% if row.deeper %}<span class="tree-guide">{{ row.indent }}└─ </span>{% endif %}{{ row.name }}{% if row.trashed %} <span class="muted">(trashed)</span>{% endif %}</td>
+              <td>
+                <input type="hidden" name="app_client[access][{{ row.id }}][read]" value="0" autocomplete="off" />
+                <input type="checkbox" name="app_client[access][{{ row.id }}][read]" id="app_client_access_{{ row.id }}_read" value="1"{% if row.read %} checked="checked"{% endif %} />
+              </td>
+              <td>
+                <input type="hidden" name="app_client[access][{{ row.id }}][write]" value="0" autocomplete="off" />
+                <input type="checkbox" name="app_client[access][{{ row.id }}][write]" id="app_client_access_{{ row.id }}_write" value="1"{% if row.write %} checked="checked"{% endif %} />
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="form-actions">
+    <input type="submit" name="commit" value="{{ submit() }}" class="btn btn-primary" data-disable-with="{{ submit() }}" />
+    <a class="btn" href="/admin/app_clients">Cancel</a>
+  </div>
+</form>
+{% endblock %}

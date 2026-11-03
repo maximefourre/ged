@@ -1,0 +1,125 @@
+{% extends "admin/layout.html" %}
+{% block content %}
+<header class="page-head">
+  <h1>Status</h1>
+</header>
+
+<h2 class="section-title">System health</h2>
+<div class="card">
+  <ul class="health-list">
+    {% for check in checks %}
+      <li class="health-row">
+        <span class="badge {{ check.state.badge() }}">{{ check.state.as_str() }}</span>
+        <span class="strong">{{ check.name }}</span>
+        <span class="muted">{{ check.detail }}</span>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+
+<h2 class="section-title">Upload pipeline</h2>
+<div class="queue{% if paused %} is-paused{% endif %}">
+  <span class="badge {% if paused %}warn{% else %}ok{% endif %}">{% if paused %}paused{% else %}active{% endif %}</span>
+  <span>uploads queue</span>
+  <span class="spacer"></span>
+  <a class="btn btn-sm" href="/admin/upload_requests">Manage on Upload requests</a>
+</div>
+<div class="stat-grid">
+  {% for (status, n) in by_status %}
+    <div class="stat">
+      <span class="num">{{ n }}</span>
+      <span class="lbl">{{ status }} requests</span>
+    </div>
+  {% endfor %}
+  {% for (queue, depth) in depths %}
+    <div class="stat">
+      <span class="num">{{ depth }}</span>
+      <span class="lbl">{{ queue }} queue depth</span>
+    </div>
+  {% endfor %}
+  <div class="stat">
+    <span class="num">{{ scheduled }}</span>
+    <span class="lbl">scheduled jobs</span>
+  </div>
+  <div class="stat">
+    <span class="num">{{ in_flight }}</span>
+    <span class="lbl">jobs in flight</span>
+  </div>
+  <div class="stat">
+    <span class="num">{{ failed }}</span>
+    <span class="lbl">failed jobs</span>
+  </div>
+</div>
+{% if !failures.is_empty() %}
+  <div class="card">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Job</th><th>Error</th><th>Failed at</th></tr>
+        </thead>
+        <tbody>
+          {% for failure in failures %}
+            <tr>
+              <td class="strong">{{ failure.kind }}</td>
+              <td class="muted">{{ failure.error }}</td>
+              <td class="date">{{ failure.at }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}
+
+<h2 class="section-title">Documents &amp; storage</h2>
+<div class="stat-grid">
+  <div class="stat">
+    <span class="num">{{ live }}</span>
+    <span class="lbl">documents</span>
+  </div>
+  <div class="stat">
+    <span class="num">{{ trashed }}</span>
+    <span class="lbl">in trash</span>
+  </div>
+  <div class="stat">
+    <span class="num">{{ purgeable }}</span>
+    <span class="lbl">awaiting purge</span>
+  </div>
+  <div class="stat">
+    <span class="num">{{ volume }}</span>
+    <span class="lbl">stored volume</span>
+  </div>
+  <div class="stat">
+    <span class="num">{{ sync }} / {{ asynchronous }}</span>
+    <span class="lbl">sync / async uploads</span>
+  </div>
+  <div class="stat">
+    <span class="num">{{ uploads_24h }}</span>
+    <span class="lbl">uploads last 24h</span>
+  </div>
+  <div class="stat">
+    <span class="num">{{ uploads_7d }}</span>
+    <span class="lbl">uploads last 7 days</span>
+  </div>
+</div>
+{% if !top.is_empty() %}
+  <div class="card">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Department</th><th>Stored volume</th><th>Documents</th></tr>
+        </thead>
+        <tbody>
+          {% for t in top %}
+            <tr>
+              <td class="strong">{{ t.name }}</td>
+              <td>{{ t.volume }}</td>
+              <td>{{ t.documents }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

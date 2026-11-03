@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Ged</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <script>
+      // Apply the saved (or OS) theme before first paint.
+      (function () {
+        try {
+          document.documentElement.dataset.theme = localStorage.getItem("ged-theme") ||
+            (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        } catch (e) {}
+      })();
+    </script>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="application-name" content="Ged">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="csrf-param" content="authenticity_token" />
+<meta name="csrf-token" content="{{ chrome.csrf }}" />
+    
+    <link rel="icon" href="/icon.png" type="image/png">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon.png">
+
+    <link rel="stylesheet" href="{{ chrome.css }}" />
+    <script type="importmap" data-turbo-track="reload">{
+  "imports": {
+    "application": "{{ chrome.js }}"
+  }
+}</script>
+<link rel="modulepreload" href="{{ chrome.js }}">
+<script type="module">import "application"</script>
+  </head>
+
+  <body>
+    {% if !chrome.flashes.is_empty() %}
+      <div class="flashes flashes-floating">
+        {% for (kind, msg) in chrome.flashes %}
+          <div class="flash flash-{{ kind }}">{{ msg }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </body>
+</html>

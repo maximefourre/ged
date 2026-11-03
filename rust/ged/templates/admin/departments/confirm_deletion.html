@@ -1,0 +1,35 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% block content %}
+<header class="page-head">
+  <h1>Delete {{ name }}</h1>
+</header>
+
+<div class="form-card">
+  <p>This department holds {{ live_docs }} active and {{ trashed_docs }} trashed document(s).</p>
+  {% if pending_requests > 0 %}
+    <p class="muted">{{ pending_requests }} pending upload request(s): trashing the department will fail them; moving re-targets them.</p>
+  {% endif %}
+
+  {% if !target.options.is_empty() %}
+    <form action="/admin/departments/{{ self.id }}/move_documents" accept-charset="UTF-8" method="post"><input type="hidden" name="authenticity_token" value="{{ chrome.csrf }}" />
+      <div class="field">
+        <label for="target_department_id">Move everything to</label>
+        <select name="target_department_id" id="target_department_id" class="select">
+{% for o in target.options %}<option {% if o.selected %}selected="selected" {% endif %}value="{{ o.id }}">{{ o.label }}</option>
+{% endfor %}</select>
+      </div>
+      <div class="form-actions">
+        <input type="submit" name="commit" value="Move documents and delete department" class="btn btn-primary" data-disable-with="Move documents and delete department" />
+      </div>
+    </form>
+  {% else %}
+    <p class="muted">No other active department to move documents into.</p>
+  {% endif %}
+
+  <div class="form-actions">
+    {% call m::button_to("Trash department and its documents", format!("/admin/departments/{}/trash", self.id), "post", "btn btn-danger-solid", chrome.csrf, "") %}
+    <a class="btn btn-link" href="/admin/departments">Cancel</a>
+  </div>
+</div>
+{% endblock %}

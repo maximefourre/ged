@@ -393,3 +393,32 @@ affaiblie : messages d'erreur, payload du callback et statuts sont ceux de Rails
   (T7), pas du job ; le job ne fait que consommer la décision.
 - `ged run-job <Kind> [json]` (= `Job.perform_now`) alimente `Backend::run_job` du
   backend Rust des tests de parité.
+
+## Admin : session, CSRF, en-têtes (T10)
+
+Relevé sur le stack Rails le 2026-11-03, reproduit par `rust/ged/src/admin/`.
+
+- **Session** : cookie `_ged_session` signé (HMAC-SHA256, clé dérivée de
+  `SECRET_KEY_BASE`), non chiffré, `path=/; httponly; samesite=lax`. Rails le chiffre ;
+  seul le nom et les attributs sont observables. Un changement de mot de passe
+  invalide la session (comme Devise).
+- **Pas de CSP** : l'initialiseur Rails est entièrement commenté, donc aucun en-tête
+  `Content-Security-Policy` ni balise meta sur l'admin. Le Rust n'en émet pas non
+  plus (la CSP de l'aperçu de documents relève de T11). En-têtes par défaut posés sur
+  toute réponse : `X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`,
+  `X-XSS-Protection: 0`, `X-Permitted-Cross-Domain-Policies: none`,
+  `Referrer-Policy: strict-origin-when-cross-origin`.
+- **Durcissements** : la session est renouvelée (nouveau secret CSRF) à la connexion
+  et à la déconnexion ; un nom d'utilisateur inconnu coûte autant qu'un mauvais mot
+  de passe (hash leurre) ; une création concurrente d'un même nom de département ou
+  de client donne le 422 « has already been taken » au lieu d'un 500.
+- **Limite de connexions** : 10 par 3 minutes et par client. Le client est la
+  dernière adresse publique de `X-Forwarded-For` (sinon un seau commun) ; Rails
+  utilise `remote_ip`.
+- **500 reproduits** : parent de département inexistant (`parent_id=999999` ou
+  `abc`), `department=x` (scalaire à la place d'un hash), mise à la corbeille d'un
+  département qui a des enfants. `x=1` sans `department` donne 400.
+- **Flash** : un message survit aux requêtes qui ne font que rediriger
+  (`/admin` → `/admin/documents`), comme Rails.
+- **Provisoire** : `admin/documents_stub.rs` (GET/POST `/admin/documents`) est remplacé
+  par T11. Stockage des fichiers : `GED_STORAGE_ROOT` (défaut `storage`).

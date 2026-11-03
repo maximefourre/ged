@@ -1,0 +1,46 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% block content %}
+<header class="page-head">
+  <h1>Departments</h1>
+  <a class="btn btn-primary" href="/admin/departments/new">New department</a>
+</header>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr><th>Name</th><th>Documents</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr{% if row.trashed %} class="trashed"{% endif %} data-dept-id="{{ row.id }}"{% if let Some(p) = row.parent_id %} data-parent-id="{{ p }}"{% endif %}>
+            <td class="strong">
+              {% if row.has_children %}
+                {% if row.depth > 0 %}<span class="tree-guide">{{ row.indent() }}</span>{% endif %}<button type="button" class="tree-toggle" data-tree-toggle aria-expanded="true" aria-label="Replier {{ row.name }}">▾</button>
+              {% else if row.depth > 0 %}
+                <span class="tree-guide">{{ row.indent() }}└─ </span>
+              {% endif %}
+              {{ row.name }}
+            </td>
+            <td>{{ row.documents }}</td>
+            <td>
+              <div class="row-actions">
+                {% if row.trashed %}
+                  {% call m::button_to("Restore", format!("/admin/departments/{}/restore", row.id), "patch", "btn btn-sm", chrome.csrf, "") %}
+                {% else %}
+                  <a class="btn btn-link btn-sm" href="/admin/departments/{{ row.id }}/edit">Rename</a>
+                  {% call m::button_to("Delete", format!("/admin/departments/{}", row.id), "delete", "btn btn-danger btn-sm", chrome.csrf, format!("Delete {}?", row.name)) %}
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+        {% if rows.is_empty() %}
+          <tr><td colspan="3" class="empty">No departments yet.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

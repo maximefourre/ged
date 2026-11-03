@@ -1,0 +1,14 @@
+{% macro button_to(label, action, method, class, csrf, confirm) %}<form class="button_to" method="post" action="{{ action }}">{% if method != "post" %}<input type="hidden" name="_method" value="{{ method }}" />{% endif %}<button class="{{ class }}"{% if confirm != "" %} data-confirm="{{ confirm }}"{% endif %} type="submit">{{ label }}</button><input type="hidden" name="authenticity_token" value="{{ csrf }}" /></form>{% endmacro %}
+{% macro tag_chips(tags) %}{% if !tags.is_empty() %}
+  <div class="tags">
+    {% for (key, value) in tags %}
+      {% if let Some(v) = value %}
+        <span class="tag"><span class="k">{{ key }}</span><span class="v">{{ v }}</span></span>
+      {% else %}
+        <span class="tag solo"><span class="k">{{ key }}</span></span>
+      {% endif %}
+    {% endfor %}
+  </div>
+{% else %}
+  <span class="dash">—</span>
+{% endif %}{% endmacro %}

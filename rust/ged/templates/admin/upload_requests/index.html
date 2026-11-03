@@ -1,0 +1,62 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% block content %}
+<header class="page-head">
+  <h1>Upload requests</h1>
+</header>
+
+<div class="queue{% if paused %} is-paused{% endif %}">
+  {% if paused %}
+    <span class="badge warn">paused</span>
+    {% call m::button_to("Resume", "/admin/upload_queue_pause", "delete", "btn btn-sm", chrome.csrf, "") %}
+  {% else %}
+    <span class="badge ok">active</span>
+    {% call m::button_to("Pause", "/admin/upload_queue_pause", "post", "btn btn-sm", chrome.csrf, "") %}
+  {% endif %}
+  <span class="spacer"></span>
+  <span class="counts">{{ pending }} pending · {{ processing }} processing</span>
+</div>
+
+<form class="filters" action="/admin/upload_requests" accept-charset="UTF-8" method="get">
+  <select class="select" name="status" id="status"><option value="">all statuses</option>
+{% for (s, selected) in statuses %}<option {% if selected %}selected="selected" {% endif %}value="{{ s }}">{{ s }}</option>
+{% endfor %}</select>
+  <input type="submit" name="commit" value="Filter" class="btn" data-disable-with="Filter" />
+</form>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr><th>Request</th><th>Department</th><th>Filename</th><th>Tags</th><th>Status</th><th>Error</th><th>Uploaded by</th><th>Date</th></tr>
+      </thead>
+      <tbody>
+        {% for line in lines %}
+          <tr>
+            <td class="id">{{ line.id }}</td>
+            <td>
+              {{ line.department }}{% if line.trashed %} <span class="muted">(trashed)</span>{% endif %}
+            </td>
+            <td class="strong">{{ line.filename }}</td>
+            <td>{% call m::tag_chips(line.tags.clone()) %}</td>
+            <td><span class="badge {{ line.badge }}">{{ line.status }}</span></td>
+            <td class="muted">{% if !line.error.is_empty() %}{{ line.error }}{% else %}<span class="dash">—</span>{% endif %}</td>
+            <td class="muted">{{ line.uploaded_by }}</td>
+            <td class="date">{{ line.date }}</td>
+          </tr>
+        {% endfor %}
+        {% if lines.is_empty() %}
+          <tr><td colspan="8" class="empty">No upload requests match.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if newer.is_some() || older.is_some() %}
+  <div class="pager">
+    {% if let Some(link) = newer %}<a class="btn btn-sm" href="{{ link }}">← Newer</a>{% endif %}
+    {% if let Some(link) = older %}<a class="btn btn-sm" href="{{ link }}">Older →</a>{% endif %}
+  </div>
+{% endif %}
+{% endblock %}

@@ -18,6 +18,9 @@ pub struct AppState {
     pub storage: Storage,
     /// Raw bytes of async uploads awaiting their job (`storage/staging/<id>`).
     pub staging: StagingStore,
+
+    /// Admin sessions and login throttle.
+    pub admin: Arc<crate::admin::AdminRuntime>,
 }
 
 impl AppState {
@@ -27,6 +30,9 @@ impl AppState {
             config.oidc.jwks_url.clone().unwrap_or_default(),
         ));
         Self {
+            admin: Arc::new(crate::admin::AdminRuntime::new(
+                config.secret_key_base.as_deref(),
+            )),
             config: Arc::new(config),
             db,
             jwks,

@@ -1,0 +1,36 @@
+{% extends "admin/layout.html" %}
+{% block content %}
+<header class="page-head">
+  <h1>{{ title() }}</h1>
+</header>
+
+{% if let Some(id) = id %}
+<form class="form-card" action="/admin/departments/{{ id }}" accept-charset="UTF-8" method="post"><input type="hidden" name="_method" value="patch" /><input type="hidden" name="authenticity_token" value="{{ chrome.csrf }}" />
+  <div class="field">
+    <label for="department_name">Name</label>
+    <input class="input" type="text" value="{{ name }}" name="department[name]" id="department_name" />
+  </div>
+  <div class="form-actions">
+    <input type="submit" name="commit" value="Rename" class="btn btn-primary" data-disable-with="Rename" />
+    <a class="btn" href="/admin/departments">Cancel</a>
+  </div>
+</form>
+{% else %}
+<form class="form-card" action="/admin/departments" accept-charset="UTF-8" method="post"><input type="hidden" name="authenticity_token" value="{{ chrome.csrf }}" />
+  <div class="field">
+    <label for="department_name">Name</label>
+    <input class="input" type="text" value="{{ name }}" name="department[name]" id="department_name" />
+  </div>
+  <div class="field">
+    <label for="department_parent_id">Parent (blank = top-level)</label>
+    <select class="select" name="department[parent_id]" id="department_parent_id"><option value="" label=" "></option>
+{% for o in parents %}<option {% if o.selected %}selected="selected" {% endif %}value="{{ o.id }}">{{ o.label }}</option>
+{% endfor %}</select>
+  </div>
+  <div class="form-actions">
+    <input type="submit" name="commit" value="Create" class="btn btn-primary" data-disable-with="Create" />
+    <a class="btn" href="/admin/departments">Cancel</a>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>GED Admin</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <script>
+      // Set the theme before first paint (no flash). Toggle lives in application.js.
+      (function () {
+        try {
+          var t = localStorage.getItem("ged-theme") ||
+            (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+          document.documentElement.dataset.theme = t;
+        } catch (e) {}
+      })();
+    </script>
+    <meta name="csrf-param" content="authenticity_token" />
+<meta name="csrf-token" content="{{ chrome.csrf }}" />
+    <link rel="stylesheet" href="{{ chrome.css }}" />
+    <script type="importmap" data-turbo-track="reload">{
+  "imports": {
+    "application": "{{ chrome.js }}"
+  }
+}</script>
+<link rel="modulepreload" href="{{ chrome.js }}">
+<script type="module">import "application"</script>
+  </head>
+  <body class="admin">
+    <header class="topbar">
+      <a class="brand" href="/admin"><b>GED</b><span>Admin</span></a>
+      <nav class="nav">
+        {% for (label, path, _key, active) in chrome.nav() %}
+          <a class="nav-link{% if active %} is-active{% endif %}" href="{{ path }}">{{ label }}</a>
+        {% endfor %}
+      </nav>
+      <div class="topbar-right">
+        <button type="button" class="icon-btn" id="theme-toggle"
+                aria-label="Basculer clair / sombre" title="Basculer clair / sombre">
+          <span class="theme-ico theme-ico-dark">☾</span>
+          <span class="theme-ico theme-ico-light">☀</span>
+        </button>
+        {% if let Some(name) = chrome.username %}
+          <div class="who">
+            <span class="avatar">{{ chrome.initial() }}</span>
+            {{ name }}
+          </div>
+          <form class="button_to" method="post" action="/admins/sign_out"><input type="hidden" name="_method" value="delete" /><button class="btn btn-sm" type="submit">Log out</button><input type="hidden" name="authenticity_token" value="{{ chrome.csrf }}" /></form>
+        {% endif %}
+      </div>
+    </header>
+
+    <main class="content">
+      {% if !chrome.flashes.is_empty() %}
+        <div class="flashes">
+          {% for (kind, msg) in chrome.flashes %}
+            <div class="flash flash-{{ kind }}">{{ msg }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

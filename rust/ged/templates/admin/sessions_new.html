@@ -1,0 +1,20 @@
+{% extends "admin/auth_layout.html" %}
+{% block content %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-brand"><b>GED</b><span>Admin</span></div>
+    <h2>Log in</h2>
+    <p class="auth-lede">Espace d'administration réservé.</p>
+    <form class="new_admin" id="new_admin" action="/admins/sign_in" accept-charset="UTF-8" method="post"><input type="hidden" name="authenticity_token" value="{{ chrome.csrf }}" />
+      <div class="field">
+        <label for="admin_username">Username</label>
+        <input autofocus="autofocus" class="input" type="text" name="admin[username]" id="admin_username" />
+      </div>
+      <div class="field">
+        <label for="admin_password">Password</label>
+        <input class="input" type="password" name="admin[password]" id="admin_password" />
+      </div>
+      <input type="submit" name="commit" value="Log in" class="btn btn-primary" data-disable-with="Log in" />
+</form>  </div>
+</div>
+{% endblock %}

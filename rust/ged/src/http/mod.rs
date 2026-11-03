@@ -38,8 +38,9 @@ pub fn router(state: AppState) -> Router {
 /// [`router`] plus extra routes that get the same guards and error shaping
 /// (how tests exercise the edge with probe handlers).
 pub fn router_with(state: AppState, routes: Router<AppState>) -> Router {
-    routes
+    let app = routes
         .merge(crate::api::routes())
+        .merge(crate::admin::routes(state.clone()))
         .route("/up", get(up))
         // Rails parses the query (and an urlencoded body) before dispatching
         // to any matched route, so a bad one is a 400 even on `/up`. An
@@ -47,10 +48,12 @@ pub fn router_with(state: AppState, routes: Router<AppState>) -> Router {
         .route_layer(middleware::from_fn(guard_params))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(state.clone(), shield))
-        // Outermost: what Rails' controller layer adds to every answer it
-        // produced (and only those: the exceptions app and the edge are `bare`).
+        // Outermost of the app: what Rails' controller layer adds to every
+        // answer it produced (and only those: the exceptions app and the edge
+        // are `bare`). It covers the admin pages too, as in Rails.
         .layer(middleware::from_fn(rails_headers::layer))
-        .with_state(state)
+        .with_state(state);
+    crate::admin::wrap(app)
 }
 
 /// `Rails::HealthController#show`: the green page.
