@@ -88,16 +88,33 @@ pub fn salt_of(encrypted_password: &str) -> String {
 pub struct RateLimiter {
     limit: u32,
     window: Duration,
+    capacity: usize,
     hits: Mutex<HashMap<String, (u32, Instant)>>,
 }
+
+/// Most distinct clients tracked at once: a flood of keys cannot grow the
+/// table (nor the cost of an attempt) past this.
+const LIMITER_CAPACITY: usize = 10_000;
 
 impl RateLimiter {
     pub fn new(limit: u32, window: Duration) -> Self {
         Self {
             limit,
             window,
+            capacity: LIMITER_CAPACITY,
             hits: Mutex::new(HashMap::new()),
         }
+    }
+
+    #[cfg(test)]
+    fn with_capacity(mut self, capacity: usize) -> Self {
+        self.capacity = capacity;
+        self
+    }
+
+    #[cfg(test)]
+    fn tracked(&self) -> usize {
+        self.hits.lock().unwrap().len()
     }
 
     /// Counts one attempt for `key`; `true` when it is over the limit.
@@ -107,9 +124,27 @@ impl RateLimiter {
 
     fn throttled_at(&self, key: &str, now: Instant) -> bool {
         let mut hits = self.hits.lock().unwrap_or_else(|e| e.into_inner());
-        // Entries of finished windows are dead weight: drop them so a flood of
-        // distinct keys cannot grow the map without bound.
-        hits.retain(|_, (_, start)| now.duration_since(*start) < self.window);
+        // Sweep only when the table is full (an O(n) pass per attempt would be
+        // quadratic under a flood of keys): finished windows are dead weight.
+        if hits.len() >= self.capacity && !hits.contains_key(key) {
+            hits.retain(|_, (_, start)| now.duration_since(*start) < self.window);
+            // Still full of live windows: make room by evicting the oldest.
+            if hits.len() >= self.capacity
+                && let Some(oldest) = hits
+                    .iter()
+                    .min_by_key(|(_, (_, start))| *start)
+                    .map(|(k, _)| k.clone())
+            {
+                hits.remove(&oldest);
+            }
+        }
+        // An expired window for this very key restarts.
+        if hits
+            .get(key)
+            .is_some_and(|(_, start)| now.duration_since(*start) >= self.window)
+        {
+            hits.remove(key);
+        }
         let entry = hits.entry(key.to_owned()).or_insert((0, now));
         entry.0 += 1;
         entry.0 > self.limit
@@ -200,24 +235,56 @@ pub async fn new(Extension(ctx): Extension<Ctx>) -> Response {
     )
 }
 
-/// The throttling key: the client address as the nearest proxy saw it — the
-/// right-most `X-Forwarded-For` entry that is not a private address. Without
-/// one, all clients share a bucket (stricter, never looser).
-fn client_key(headers: &HeaderMap) -> String {
+/// The key the throttle counts a login under, after Rails' `request.remote_ip`
+/// (`ActionDispatch::RemoteIp`, default trusted proxies).
+///
+/// `X-Forwarded-For` is only believed when the TCP peer is itself a trusted
+/// proxy (loopback, private, link-local): then the client is the right-most
+/// forwarded address that is not a trusted proxy (else the left-most one, else
+/// the peer). From any other peer the header is client-controlled and ignored,
+/// so the key is the peer. Rails also believes the header from a public peer,
+/// which lets a directly exposed service be dodged with a forged header; this
+/// is deliberately stricter and identical behind a proxy. Without a peer
+/// address (never in production) all clients share one bucket.
+pub(crate) fn client_key(peer: Option<std::net::IpAddr>, headers: &HeaderMap) -> String {
     use std::net::IpAddr;
-    let private = |ip: &IpAddr| match ip {
-        IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
-        IpAddr::V6(v6) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
+    fn trusted(ip: &IpAddr) -> bool {
+        match ip.to_canonical() {
+            IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+            IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    || (v6.segments()[0] & 0xfe00) == 0xfc00
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80
+            }
+        }
+    }
+    let Some(peer) = peer.map(|p| p.to_canonical()) else {
+        return "unknown".to_owned();
     };
-    headers
+    if !trusted(&peer) {
+        return peer.to_string();
+    }
+    let forwarded: Vec<IpAddr> = headers
         .get_all("x-forwarded-for")
         .iter()
         .filter_map(|v| v.to_str().ok())
-        .flat_map(|v| v.split(','))
+        .flat_map(|v| v.split([',', ' ', '\t']))
         .filter_map(|v| v.trim().parse::<IpAddr>().ok())
-        .rfind(|ip| !private(ip))
-        .map_or_else(|| "unknown".to_owned(), |ip| ip.to_string())
+        .map(|ip| ip.to_canonical())
+        .rev()
+        .collect();
+    forwarded
+        .iter()
+        .chain(std::iter::once(&peer))
+        .find(|ip| !trusted(ip))
+        .or(forwarded.last())
+        .unwrap_or(&peer)
+        .to_string()
 }
+
+/// The throttling key of the current request, set by the guard.
+#[derive(Clone)]
+pub struct ClientKey(pub String);
 
 fn password_matches(stored: &str, candidate: &str) -> bool {
     PasswordHash::new(stored).is_ok_and(|parsed| {
@@ -227,31 +294,43 @@ fn password_matches(stored: &str, candidate: &str) -> bool {
     })
 }
 
+/// [`password_matches`] on the blocking pool: argon2 is CPU-bound and would
+/// otherwise stall an async worker thread for its whole duration.
+async fn password_matches_blocking(stored: String, candidate: String) -> bool {
+    tokio::task::spawn_blocking(move || password_matches(&stored, &candidate))
+        .await
+        .unwrap_or(false)
+}
+
 /// A valid hash that matches nothing: verifying against it keeps an unknown
-/// username as slow as a wrong password.
-fn decoy() -> &'static str {
+/// username as slow as a wrong password. Computed at boot (never on the first
+/// request) and fatal if it cannot be: an empty decoy would make unknown
+/// users answer instantly.
+pub fn make_decoy() -> String {
     use argon2::password_hash::PasswordHasher;
-    static DECOY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    DECOY.get_or_init(|| {
-        Argon2::default()
-            .hash_password(b"decoy")
-            .map(|h| h.to_string())
-            .unwrap_or_default()
-    })
+    let hash = Argon2::default()
+        .hash_password(b"decoy")
+        .expect("hashing the login decoy")
+        .to_string();
+    assert!(
+        PasswordHash::new(&hash).is_ok(),
+        "the login decoy must be a valid hash"
+    );
+    hash
 }
 
 /// `POST /admins/sign_in`.
 pub async fn create(
     State(state): State<AppState>,
     Extension(ctx): Extension<Ctx>,
-    headers: HeaderMap,
+    Extension(ClientKey(client)): Extension<ClientKey>,
     RequestParams(params): RequestParams,
 ) -> AdminResult {
     if ctx.admin().is_some() {
         ctx.flash("alert", ALREADY_SIGNED_IN);
         return Ok(ctx.redirect("/admin"));
     }
-    if state.admin.login_limiter.throttled(&client_key(&headers)) {
+    if state.admin.login_limiter.throttled(&client) {
         ctx.flash("alert", THROTTLED);
         return Ok(ctx.redirect("/admins/sign_in"));
     }
@@ -268,9 +347,9 @@ pub async fn create(
             .await
             .map_err(AdminError::from)?;
     let ok = match &row {
-        Some((_, hash)) => password_matches(hash, password),
+        Some((_, hash)) => password_matches_blocking(hash.clone(), password.to_owned()).await,
         None => {
-            let _ = password_matches(decoy(), password);
+            let _ = password_matches_blocking(state.admin.decoy.clone(), password.to_owned()).await;
             false
         }
     };
@@ -404,16 +483,72 @@ mod tests {
         assert!(!limiter.throttled_at("b", t0));
     }
 
-    #[test]
-    fn the_throttle_key_is_the_nearest_public_forwarded_address() {
+    fn xff(value: &str) -> HeaderMap {
         let mut h = HeaderMap::new();
-        assert_eq!(client_key(&h), "unknown");
-        h.insert("x-forwarded-for", "203.0.113.9, 10.0.0.2".parse().unwrap());
-        assert_eq!(client_key(&h), "203.0.113.9");
+        h.insert("x-forwarded-for", value.parse().unwrap());
+        h
+    }
+
+    fn key(peer: &str, headers: &HeaderMap) -> String {
+        client_key(Some(peer.parse().unwrap()), headers)
+    }
+
+    #[test]
+    fn a_public_peer_is_its_own_key_whatever_it_forwards() {
+        assert_eq!(key("198.51.100.4", &xff("1.1.1.1")), "198.51.100.4");
+        assert_eq!(key("198.51.100.4", &xff("10.0.0.1")), "198.51.100.4");
+        assert_eq!(key("198.51.100.4", &HeaderMap::new()), "198.51.100.4");
+    }
+
+    #[test]
+    fn a_trusted_proxy_peer_yields_the_rightmost_untrusted_forwarded_address() {
         // A spoofed prefix does not move the key: the proxy appended the real one.
-        h.insert("x-forwarded-for", "1.1.1.1, 198.51.100.4".parse().unwrap());
-        assert_eq!(client_key(&h), "198.51.100.4");
-        h.insert("x-forwarded-for", "garbage, 192.168.1.1".parse().unwrap());
-        assert_eq!(client_key(&h), "unknown");
+        assert_eq!(
+            key("10.0.0.2", &xff("1.1.1.1, 198.51.100.4")),
+            "198.51.100.4"
+        );
+        assert_eq!(
+            key("10.0.0.2", &xff("203.0.113.9, 172.16.0.3")),
+            "203.0.113.9"
+        );
+        assert_eq!(key("::ffff:10.0.0.2", &xff("203.0.113.9")), "203.0.113.9");
+        assert_eq!(key("fe80::1", &xff("2001:db8::1")), "2001:db8::1");
+    }
+
+    #[test]
+    fn a_trusted_proxy_peer_without_a_usable_header_falls_back_like_rails() {
+        // All trusted: Rails keeps the left-most forwarded address.
+        assert_eq!(
+            key("10.0.0.2", &xff("192.168.1.9, 10.0.0.3")),
+            "192.168.1.9"
+        );
+        // Garbage is dropped, leaving the peer.
+        assert_eq!(key("10.0.0.2", &xff("garbage")), "10.0.0.2");
+        assert_eq!(key("10.0.0.2", &HeaderMap::new()), "10.0.0.2");
+        assert_eq!(client_key(None, &xff("203.0.113.9")), "unknown");
+    }
+
+    #[test]
+    fn the_limiter_table_stays_bounded_and_the_boundary_is_exact() {
+        let limiter = login_limiter().with_capacity(100);
+        let t0 = Instant::now();
+        for i in 0..1_000 {
+            limiter.throttled_at(&format!("k{i}"), t0);
+        }
+        assert!(limiter.tracked() <= 100, "{}", limiter.tracked());
+        let limiter = login_limiter();
+        for _ in 0..11 {
+            limiter.throttled_at("ip", t0);
+        }
+        assert!(limiter.throttled_at("ip", t0 + Duration::from_secs(179)));
+        assert!(!limiter.throttled_at("ip", t0 + Duration::from_secs(180)));
+    }
+
+    #[test]
+    fn the_decoy_is_a_real_hash_that_matches_nothing_we_know() {
+        let decoy = make_decoy();
+        assert!(PasswordHash::new(&decoy).is_ok());
+        assert!(password_matches(&decoy, "decoy"));
+        assert!(!password_matches(&decoy, "password"));
     }
 }

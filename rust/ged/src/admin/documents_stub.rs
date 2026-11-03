@@ -64,6 +64,9 @@ pub async fn create(
         let field = match form.next_field().await {
             Ok(Some(f)) => f,
             Ok(None) => break,
+            Err(e) if e.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+                return Ok(StatusCode::PAYLOAD_TOO_LARGE.into_response_());
+            }
             Err(_) => return Err(AdminError::BadRequest),
         };
         let name = field.name().unwrap_or_default().to_owned();
@@ -73,7 +76,15 @@ pub async fn create(
                 let content_type = field.content_type().map(str::to_owned);
                 let mut bytes = Vec::new();
                 let mut field = field;
-                while let Some(chunk) = field.chunk().await.map_err(|_| AdminError::BadRequest)? {
+                loop {
+                    let chunk = match field.chunk().await {
+                        Ok(Some(chunk)) => chunk,
+                        Ok(None) => break,
+                        Err(e) if e.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+                            return Ok(StatusCode::PAYLOAD_TOO_LARGE.into_response_());
+                        }
+                        Err(_) => return Err(AdminError::BadRequest),
+                    };
                     if bytes.len() + chunk.len() > limit {
                         return Ok(StatusCode::PAYLOAD_TOO_LARGE.into_response_());
                     }
@@ -90,7 +101,13 @@ pub async fn create(
             other => {
                 let text = field.text().await.map_err(|_| AdminError::BadRequest)?;
                 match other {
-                    "authenticity_token" => token = Some(text),
+                    "authenticity_token" => {
+                        // A bad token ahead of the file: refuse before reading it.
+                        if !ctx.verify_csrf(Some(&text)) {
+                            return Ok(super::view::error_page(StatusCode::UNPROCESSABLE_ENTITY));
+                        }
+                        token = Some(text);
+                    }
                     "document[department_id]" => department = Some(text),
                     "document[tags_text]" => tags_text = text,
                     _ => {}

@@ -84,7 +84,9 @@ async fn serve() -> Result<(), Failure> {
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
     axum::serve(
         listener,
-        ged::telemetry::wrap(ged::router(AppState::new(config, pool))),
+        // The peer address feeds the admin login throttle (never a header).
+        ged::telemetry::wrap(ged::router(AppState::new(config, pool)))
+            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
     .with_graceful_shutdown(ged::telemetry::wait_for_shutdown_signal())
     .await?;

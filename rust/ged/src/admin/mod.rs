@@ -19,7 +19,8 @@ pub mod view;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::handler::Handler as _;
 use axum::http::header::{CONTENT_TYPE, COOKIE, HeaderValue, ORIGIN, SET_COOKIE};
 use axum::http::{Method, StatusCode};
 use axum::middleware::{self, Next};
@@ -36,6 +37,8 @@ use view::Ctx;
 pub struct AdminRuntime {
     codec: Codec,
     login_limiter: RateLimiter,
+    /// Hash verified for unknown usernames, built at boot.
+    decoy: String,
 }
 
 impl AdminRuntime {
@@ -55,19 +58,25 @@ impl AdminRuntime {
         Self {
             codec: Codec::new(&secret),
             login_limiter: session::login_limiter(),
+            decoy: session::make_decoy(),
         }
     }
 }
 
 /// The admin routes. Everything but the assets runs behind [`guard`].
 pub fn routes(state: AppState) -> Router<AppState> {
+    // Lift axum's 2 MiB multipart default: the handler enforces the real cap.
+    let upload_limit = usize::try_from(state.config.max_upload_bytes)
+        .unwrap_or(usize::MAX)
+        .saturating_add(1024 * 1024);
     let pages = Router::new()
         .route("/admins/sign_in", get(session::new).post(session::create))
         .route("/admins/sign_out", delete(session::destroy))
         .route("/admin", get(session::root))
         .route(
             "/admin/documents",
-            get(documents_stub::index).post(documents_stub::create),
+            get(documents_stub::index)
+                .post(documents_stub::create.layer(DefaultBodyLimit::max(upload_limit))),
         )
         .route("/admin/status", get(status::index))
         .route(
@@ -202,32 +211,73 @@ async fn guard(State(state): State<AppState>, req: Request, next: Next) -> Respo
     response
 }
 
-async fn run_guarded(state: &AppState, ctx: &Ctx, req: Request, next: Next) -> Response {
-    let method = req.method().clone();
-    let multipart = req
-        .headers()
+/// The one multipart route that reads its own token: the upload, whose token
+/// field may follow the file and so cannot be had without reading the file.
+fn is_upload(method: &Method, path: &str) -> bool {
+    *method == Method::POST && path == "/admin/documents"
+}
+
+fn is_multipart(req: &Request) -> bool {
+    req.headers()
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| {
             v.trim_start()
                 .to_ascii_lowercase()
                 .starts_with("multipart/form-data")
-        });
+        })
+}
+
+/// Buffers a (small) multipart body to read its `authenticity_token` field,
+/// then hands the body on untouched.
+async fn buffer_multipart(req: Request) -> Result<(Request, Option<String>), Box<Response>> {
+    use axum::extract::{FromRequest as _, Multipart};
+    let (parts, body) = req.into_parts();
+    let limited = http_body_util::Limited::new(body, FORM_BYTES_LIMIT);
+    let bytes = match limited.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(_) => return Err(Box::new(view::error_page(StatusCode::BAD_REQUEST))),
+    };
+    let copy = Request::from_parts(parts.clone(), Body::from(bytes.clone()));
+    let mut token = None;
+    if let Ok(mut form) = Multipart::from_request(copy, &()).await {
+        while let Ok(Some(field)) = form.next_field().await {
+            if field.name() == Some("authenticity_token") {
+                token = field.text().await.ok();
+                break;
+            }
+        }
+    }
+    Ok((Request::from_parts(parts, Body::from(bytes)), token))
+}
+
+async fn run_guarded(state: &AppState, ctx: &Ctx, req: Request, next: Next) -> Response {
+    let method = req.method().clone();
+    let defers_token = is_multipart(&req) && is_upload(&method, req.uri().path());
+    let multipart = !defers_token && is_multipart(&req);
 
     let (mut req, form) = match buffer_form(req).await {
         Ok(pair) => pair,
         Err(response) => return *response,
     };
+    let mut multipart_token = None;
+    if needs_csrf(&method) && multipart {
+        match buffer_multipart(req).await {
+            Ok((r, token)) => (req, multipart_token) = (r, token),
+            Err(response) => return *response,
+        }
+    }
 
-    // A multipart body can hold its token after the file: the handler checks
-    // it once it has read the whole form (`Ctx::verify_csrf`).
-    if needs_csrf(&method) && !multipart {
+    if needs_csrf(&method) {
+        // Origin is always checked, the upload included. Its token is checked
+        // by the handler once it has read the whole form (`Ctx::verify_csrf`);
+        // any other request, multipart or not, is checked here.
         let origin_ok = req
             .headers()
             .get(ORIGIN)
             .is_none_or(|o| o.to_str().is_ok_and(|o| o == ctx.base()));
-        let token = submitted_token(form.as_ref(), &req);
-        if !origin_ok || !ctx.verify_csrf(token.as_deref()) {
+        let token = submitted_token(form.as_ref(), &req).or(multipart_token);
+        if !origin_ok || !(defers_token || ctx.verify_csrf(token.as_deref())) {
             return view::error_page(StatusCode::UNPROCESSABLE_ENTITY);
         }
     }
@@ -243,6 +293,12 @@ async fn run_guarded(state: &AppState, ctx: &Ctx, req: Request, next: Next) -> R
     if admin.is_none() && !public {
         return session::refuse(ctx, &method, &req);
     }
+    let peer = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0.ip());
+    let client = session::client_key(peer, req.headers());
+    req.extensions_mut().insert(session::ClientKey(client));
     req.extensions_mut().insert(ctx.clone());
     next.run(req).await
 }

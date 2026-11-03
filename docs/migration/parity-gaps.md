@@ -412,9 +412,28 @@ Relevé sur le stack Rails le 2026-11-03, reproduit par `rust/ged/src/admin/`.
   et à la déconnexion ; un nom d'utilisateur inconnu coûte autant qu'un mauvais mot
   de passe (hash leurre) ; une création concurrente d'un même nom de département ou
   de client donne le 422 « has already been taken » au lieu d'un 500.
-- **Limite de connexions** : 10 par 3 minutes et par client. Le client est la
-  dernière adresse publique de `X-Forwarded-For` (sinon un seau commun) ; Rails
-  utilise `remote_ip`.
+- **Limite de connexions** : 10 par 3 minutes et par client, clé = adresse du pair TCP
+  (`ConnectInfo`). `X-Forwarded-For` n'est lu que si le pair est un proxy de confiance
+  (loopback, privé, link-local : la liste par défaut de `ActionDispatch::RemoteIp`) ;
+  le client est alors l'adresse la plus à droite qui n'est pas un proxy de confiance
+  (sinon la plus à gauche, sinon le pair), comme `request.remote_ip`. **Écart
+  (durcissement)** : Rails croit aussi l'en-tête d'un pair public, donc un service
+  exposé en direct s'y contourne avec un en-tête forgé ; le Rust ignore l'en-tête dans
+  ce cas. `Client-Ip` n'est pas lu (Rails lève `IpSpoofAttackError` s'il contredit
+  `X-Forwarded-For`). Derrière un proxy privé qui n'envoie pas `X-Forwarded-For`, tous
+  les clients partagent le seau du proxy, comme Rails. La table est plafonnée à
+  10 000 clients (éviction du plus ancien) ; le hash argon2 tourne hors du runtime
+  (`spawn_blocking`) et le hash leurre est calculé au démarrage (échec fatal).
+- **CSRF et multipart** : comme Rails, toute requête mutante (multipart compris) exige
+  un jeton valide (champ `authenticity_token` ou `X-CSRF-Token`) et un `Origin`
+  identique, sinon 422. Seul `POST /admin/documents` lit son jeton dans le handler
+  (le champ peut suivre le fichier) ; son `Origin` est vérifié par le garde.
+- **Mots de passe (M1, cutover)** : Devise stocke du bcrypt ; le Rust ne vérifie que
+  l'argon2 (PHC) et **ne reprend pas les hashes bcrypt** (décision du propriétaire :
+  aucune donnée réelle à migrer). Un hash bcrypt donne un 422 à la connexion. Étape
+  obligatoire de la bascule : `ged seed` (réécrit le hash de l'admin de
+  `GED_ADMIN_USERNAME`/`GED_ADMIN_PASSWORD` en argon2). Tout autre admin créé hors seed
+  doit être recréé. Testé : `a_devise_bcrypt_hash_is_refused_until_the_seed_rewrites_it`.
 - **500 reproduits** : parent de département inexistant (`parent_id=999999` ou
   `abc`), `department=x` (scalaire à la place d'un hash), mise à la corbeille d'un
   département qui a des enfants. `x=1` sans `department` donne 400.
@@ -422,3 +441,8 @@ Relevé sur le stack Rails le 2026-11-03, reproduit par `rust/ged/src/admin/`.
   (`/admin` → `/admin/documents`), comme Rails.
 - **Provisoire** : `admin/documents_stub.rs` (GET/POST `/admin/documents`) est remplacé
   par T11. Stockage des fichiers : `GED_STORAGE_ROOT` (défaut `storage`).
+  **Points bloquants T11** (revue T10, M3) : remplacer le stub entièrement ; lire les
+  champs de contrôle avant le fichier si possible, sans tamponner en mémoire un envoi
+  non authentifié par le jeton ; garder la limite explicite (`DefaultBodyLimit` levée
+  sur la route, 413 au-delà de `GED_MAX_UPLOAD_BYTES`, pas 400) ; garder le contrôle
+  d'`Origin` dans le garde ; le nom de fichier passe par `normalize_filename`.

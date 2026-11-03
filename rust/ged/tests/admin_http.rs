@@ -64,6 +64,11 @@ impl Reply {
 struct Browser {
     app: Router,
     cookie: Option<String>,
+    /// The TCP peer the server sees (public by default, like a client that
+    /// reaches the service directly).
+    peer: std::net::SocketAddr,
+    /// Extra request headers (e.g. a forged `X-Forwarded-For`).
+    extra: Vec<(String, String)>,
 }
 
 impl Browser {
@@ -71,10 +76,62 @@ impl Browser {
         Self {
             app: app.clone(),
             cookie: None,
+            peer: "203.0.113.50:40000".parse().unwrap(),
+            extra: Vec::new(),
         }
     }
 
+    fn at(app: &Router, peer: &str) -> Self {
+        let mut b = Self::new(app);
+        b.peer = format!("{peer}:40000").parse().unwrap();
+        b
+    }
+
     async fn send(&mut self, method: Method, uri: &str, form: Option<&str>) -> Reply {
+        let content_type = form.map(|_| "application/x-www-form-urlencoded");
+        self.send_raw(
+            method,
+            uri,
+            content_type,
+            form.unwrap_or("").to_owned(),
+            &[],
+        )
+        .await
+    }
+
+    /// A multipart POST/PATCH/DELETE carrying `parts` as `(name, value)` text fields.
+    async fn send_multipart(
+        &mut self,
+        method: Method,
+        uri: &str,
+        parts: &[(&str, &str)],
+        extra: &[(&str, &str)],
+    ) -> Reply {
+        let mut body = String::new();
+        for (name, value) in parts {
+            body.push_str(&format!(
+                "--XB\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            ));
+        }
+        body.push_str("--XB--\r\n");
+        self.send_raw(
+            method,
+            uri,
+            Some("multipart/form-data; boundary=XB"),
+            body,
+            extra,
+        )
+        .await
+    }
+
+    async fn send_raw(
+        &mut self,
+        method: Method,
+        uri: &str,
+        content_type: Option<&str>,
+        body: String,
+        extra: &[(&str, &str)],
+    ) -> Reply {
         let mut req = Request::builder()
             .method(method)
             .uri(uri)
@@ -83,19 +140,21 @@ impl Browser {
         if let Some(c) = &self.cookie {
             req = req.header(header::COOKIE, c);
         }
-        let body = match form {
-            Some(f) => {
-                req = req.header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
-                Body::from(f.to_owned())
-            }
-            None => Body::empty(),
-        };
-        let resp = self
-            .app
-            .clone()
-            .oneshot(req.body(body).unwrap())
-            .await
-            .unwrap();
+        if let Some(ct) = content_type {
+            req = req.header(header::CONTENT_TYPE, ct);
+        }
+        for (k, v) in self
+            .extra
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .chain(extra.iter().copied())
+        {
+            req = req.header(k, v);
+        }
+        let mut req = req.body(Body::from(body)).unwrap();
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(self.peer));
+        let resp = self.app.clone().oneshot(req).await.unwrap();
         let status = resp.status().as_u16();
         let headers = resp.headers().clone();
         for value in headers.get_all(header::SET_COOKIE) {
@@ -399,5 +458,240 @@ async fn assets_are_served_unchanged_with_a_long_cache() {
         assert_eq!(js.body, original, "JS must be Rails' file, unmodified");
     }
     assert_eq!(b.get("/assets/application-00000000.css").await.status, 404);
+    site.finish().await;
+}
+
+// --- review T10: B1 (multipart CSRF/Origin) ------------------------------
+
+#[tokio::test]
+async fn multipart_without_a_token_is_rejected_on_every_mutating_admin_route() {
+    let site = site().await;
+    let mut b = Browser::new(&site.app);
+    b.login(PASSWORD).await;
+    let cases = [
+        (Method::POST, "/admin/departments/1/trash"),
+        (Method::PATCH, "/admin/departments/1/restore"),
+        (Method::DELETE, "/admin/departments/1"),
+        (Method::DELETE, "/admin/app_clients/1"),
+        (Method::POST, "/admin/upload_queue_pause"),
+        (Method::DELETE, "/admin/upload_queue_pause"),
+        (Method::POST, "/admin/departments"),
+        (Method::POST, "/admin/documents"),
+        (Method::DELETE, "/admins/sign_out"),
+    ];
+    for (method, uri) in cases {
+        let r = b
+            .send_multipart(method.clone(), uri, &[("x", "1")], &[])
+            .await;
+        assert_eq!(r.status, 422, "{method} {uri}");
+    }
+    // The sign-out above must not have ended the session.
+    assert_eq!(b.get("/admin/departments").await.status, 200);
+    site.finish().await;
+}
+
+#[tokio::test]
+async fn multipart_with_a_foreign_origin_is_rejected_even_with_a_valid_token() {
+    let site = site().await;
+    let mut b = Browser::new(&site.app);
+    b.login(PASSWORD).await;
+    let token = b.token("/admin/documents").await;
+    for (method, uri) in [
+        (Method::POST, "/admin/documents"),
+        (Method::POST, "/admin/upload_queue_pause"),
+    ] {
+        let r = b
+            .send_multipart(
+                method.clone(),
+                uri,
+                &[("authenticity_token", &token)],
+                &[("origin", "http://evil.test")],
+            )
+            .await;
+        assert_eq!(r.status, 422, "{method} {uri}");
+    }
+    site.finish().await;
+}
+
+#[tokio::test]
+async fn multipart_with_a_valid_token_field_passes_the_guard() {
+    let site = site().await;
+    let mut b = Browser::new(&site.app);
+    b.login(PASSWORD).await;
+    let token = b.token("/admin/documents").await;
+    let r = b
+        .send_multipart(
+            Method::POST,
+            "/admin/upload_queue_pause",
+            &[("authenticity_token", &token)],
+            &[("origin", "http://ged.test")],
+        )
+        .await;
+    assert_eq!(r.status, 302, "{}", r.body);
+    site.finish().await;
+}
+
+// --- review T10: B2 (login throttle key, blocking hash) ------------------
+
+#[tokio::test]
+async fn forged_forwarded_for_from_a_public_peer_does_not_dodge_the_throttle() {
+    let site = site().await;
+    for i in 0..10 {
+        let mut b = Browser::new(&site.app);
+        b.extra
+            .push(("x-forwarded-for".into(), format!("198.51.100.{}", i + 1)));
+        assert_eq!(b.login("wrong").await.status, 422, "attempt {i}");
+    }
+    let mut b = Browser::new(&site.app);
+    b.extra
+        .push(("x-forwarded-for".into(), "198.51.100.200".into()));
+    let r = b.login(PASSWORD).await;
+    assert_eq!(
+        r.status, 302,
+        "the eleventh attempt from one peer is throttled"
+    );
+    site.finish().await;
+}
+
+#[tokio::test]
+async fn one_peer_exhausting_its_attempts_does_not_lock_out_another() {
+    let site = site().await;
+    for _ in 0..11 {
+        let mut b = Browser::at(&site.app, "198.51.100.7");
+        // Forging a private address must not reach a shared bucket either.
+        b.extra.push(("x-forwarded-for".into(), "10.0.0.1".into()));
+        b.login("wrong").await;
+    }
+    let mut other = Browser::at(&site.app, "198.51.100.8");
+    assert_eq!(other.login(PASSWORD).await.status, 303);
+    site.finish().await;
+}
+
+#[tokio::test]
+async fn behind_a_trusted_proxy_clients_are_counted_by_forwarded_address() {
+    let site = site().await;
+    for _ in 0..11 {
+        let mut b = Browser::at(&site.app, "10.0.0.2");
+        b.extra
+            .push(("x-forwarded-for".into(), "192.0.2.10".into()));
+        b.login("wrong").await;
+    }
+    let mut other = Browser::at(&site.app, "10.0.0.2");
+    other
+        .extra
+        .push(("x-forwarded-for".into(), "192.0.2.11".into()));
+    assert_eq!(other.login(PASSWORD).await.status, 303);
+    let mut same = Browser::at(&site.app, "10.0.0.2");
+    same.extra
+        .push(("x-forwarded-for".into(), "192.0.2.10".into()));
+    assert_eq!(same.login(PASSWORD).await.status, 302);
+    site.finish().await;
+}
+
+#[tokio::test]
+async fn password_hashing_does_not_block_the_async_runtime() {
+    let site = site().await;
+    let mut warm = Browser::new(&site.app);
+    let t = std::time::Instant::now();
+    warm.login("wrong").await;
+    let baseline = t.elapsed();
+
+    let mut b = Browser::at(&site.app, "198.51.100.9");
+    let max_gap = std::sync::Arc::new(std::sync::Mutex::new(std::time::Duration::ZERO));
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ticker = {
+        let (gap, stop) = (max_gap.clone(), stop.clone());
+        tokio::spawn(async move {
+            let mut last = std::time::Instant::now();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                let now = std::time::Instant::now();
+                let mut g = gap.lock().unwrap();
+                *g = (*g).max(now - last);
+                last = now;
+            }
+        })
+    };
+    b.login("wrong").await;
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    ticker.await.unwrap();
+    let gap = *max_gap.lock().unwrap();
+    assert!(
+        gap < baseline / 2,
+        "runtime stalled {gap:?} during a login of {baseline:?}"
+    );
+    site.finish().await;
+}
+
+// --- review T10: M1 (Devise bcrypt hashes are not carried over) ----------
+
+#[tokio::test]
+async fn a_devise_bcrypt_hash_is_refused_until_the_seed_rewrites_it() {
+    let site = site().await;
+    sqlx::query("UPDATE admins SET encrypted_password = $1")
+        .bind("$2a$12$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234")
+        .execute(&site.pool)
+        .await
+        .unwrap();
+    let mut b = Browser::new(&site.app);
+    assert_eq!(b.login(PASSWORD).await.status, 422);
+
+    let env = |k: &str| match k {
+        "RAILS_ENV" => Some("test".to_owned()),
+        "SECRET_KEY_BASE" => Some("k".repeat(64)),
+        "GED_ADMIN_USERNAME" => Some("admin".to_owned()),
+        "GED_ADMIN_PASSWORD" => Some(PASSWORD.to_owned()),
+        _ => None,
+    };
+    seed::run(&site.pool, &Config::from_lookup(&env).unwrap())
+        .await
+        .unwrap();
+    let mut b = Browser::new(&site.app);
+    assert_eq!(b.login(PASSWORD).await.status, 303);
+    site.finish().await;
+}
+
+// --- review T10: M3 (provisional upload stub) ----------------------------
+
+#[tokio::test]
+async fn the_stub_upload_takes_files_above_two_mebibytes_and_refuses_oversize_with_413() {
+    let site = site().await;
+    let mut b = Browser::new(&site.app);
+    b.login(PASSWORD).await;
+    let token = b.token("/admin/documents").await;
+    let dept: i64 = sqlx::query_scalar(
+        "INSERT INTO departments (name, created_at, updated_at) VALUES ('d', now(), now()) RETURNING id",
+    )
+    .fetch_one(&site.pool)
+    .await
+    .unwrap();
+    let upload = |size: usize| {
+        let file = "a".repeat(size);
+        format!(
+            "--XB\r\nContent-Disposition: form-data; name=\"authenticity_token\"\r\n\r\n{token}\r\n\
+             --XB\r\nContent-Disposition: form-data; name=\"document[department_id]\"\r\n\r\n{dept}\r\n\
+             --XB\r\nContent-Disposition: form-data; name=\"document[file]\"; filename=\"big.txt\"\r\nContent-Type: text/plain\r\n\r\n{file}\r\n--XB--\r\n"
+        )
+    };
+    let r = b
+        .send_raw(
+            Method::POST,
+            "/admin/documents",
+            Some("multipart/form-data; boundary=XB"),
+            upload(3 * 1024 * 1024),
+            &[],
+        )
+        .await;
+    assert_eq!(r.status, 302, "{}", r.body);
+    let r = b
+        .send_raw(
+            Method::POST,
+            "/admin/documents",
+            Some("multipart/form-data; boundary=XB"),
+            upload(52_428_800 + 1),
+            &[],
+        )
+        .await;
+    assert_eq!(r.status, 413);
     site.finish().await;
 }
