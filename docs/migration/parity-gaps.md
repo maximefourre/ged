@@ -209,12 +209,22 @@ gem installé, pas supposé) :
 - un token sans `kid` est refusé ; un `kid` inconnu force un seul rafraîchissement
   par fenêtre de 30 s (rotation de clés).
 
+Non couvert en comparaison live (`auth_matrix`, stack de parité configuré en
+binding `audience` et `GED_CLIENT_ID_CLAIM` par défaut) : le binding `scope`
+(`GED_OIDC_REQUIRED_SCOPE`, claims `scope`/`scp`) et `GED_CLIENT_ID_CLAIM`
+personnalisé, ainsi que `nbf == now` (trop fragile en live). Ces trois points
+sont couverts côté Rust seul par `auth_validator.rs` et lus sur le code Rails.
+
 Écarts connus, volontaires, tous plus stricts que Rails (fail-closed) :
 
-- `exp`/`nbf` booléen, tableau ou objet, ou payload JSON qui n'est pas un objet :
-  Rails lève `NoMethodError`/`TypeError` (500, sondé sur `jwt` 3.2.0) ; le Rust
-  répond 401 `invalid token`. Le 500 n'est pas reproduit, volontairement (pas de
-  cas dans `auth_matrix`, qui n'asserte que des comportements identiques).
+- `exp` ou `nbf` booléen, tableau ou objet, ou payload JSON qui n'est pas un
+  objet : Rails lève `NoMethodError`/`TypeError` (500, sondé sur `jwt` 3.2.0) ;
+  le Rust répond 401 `invalid token` pour chacune de ces formes, `exp` comme
+  `nbf` (`check_time` rejette tout `exp`/`nbf` qui n'est ni nombre, ni chaîne,
+  ni `null`, au lieu de le lire comme `0`, ce qui aurait accepté un `nbf`). Le
+  500 n'est pas reproduit, volontairement (pas de cas dans `auth_matrix`, qui
+  n'asserte que des comportements identiques) ; couvert par les tests de
+  `token_validator.rs` et `auth_validator.rs`.
 - claim d'identifiant `true` : Rails le passe à `find_by` (403 `client not
   registered`, ou correspondance avec un client nommé `"t"`) ; le Rust refuse en
   401. Un tableau non vide : Rails fait un `IN` et peut authentifier le premier

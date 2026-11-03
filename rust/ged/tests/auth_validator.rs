@@ -123,6 +123,27 @@ async fn exp_given_as_a_string_is_read_like_string_to_i() {
 }
 
 #[tokio::test]
+async fn nbf_that_is_not_number_string_or_null_is_rejected_not_read_as_zero() {
+    // Rails answers 500 here; Rust fails closed with a 401-bound error.
+    let f = Fixture::new().await;
+    let mut c = claims("erp-app");
+    for bad in [
+        json!(true),
+        json!(false),
+        json!([1]),
+        json!([]),
+        json!({}),
+        json!({"v": 1}),
+    ] {
+        c["nbf"] = bad.clone();
+        assert!(
+            f.id(audience_cfg(), &sign(&c)).await.is_err(),
+            "nbf {bad} must be rejected"
+        );
+    }
+}
+
+#[tokio::test]
 async fn an_exp_beyond_i64_is_far_future_not_zero() {
     // Ruby bignum: still valid, exactly like Rails.
     let f = Fixture::new().await;

@@ -320,20 +320,16 @@ async fn auth_aud_as_an_array_needs_the_expected_audience_in_it() {
 }
 
 #[tokio::test]
-async fn auth_token_without_kid_is_rejected() {
-    use base64::Engine as _;
+async fn auth_token_with_a_valid_signature_but_no_kid_is_rejected() {
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     let w = World::new().await;
-    // Re-encode the genuine header without its kid; the signature then no
-    // longer matches, but the kid check comes first on both backends and
-    // the outcome is the same generic 401 either way.
-    let parts: Vec<&str> = w.token.split('.').collect();
-    let header = json!({ "alg": "RS256", "typ": "JWT" });
-    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    let token = format!(
-        "{}.{}.{}",
-        b64.encode(header.to_string()),
-        parts[1],
-        parts[2]
-    );
-    assert_rejected(&w, &token, "no kid").await;
+    // Signed with the provider's real key and valid claims, header without
+    // `kid`: the signature is good, so only the missing-kid rule can reject it
+    // (the control below proves the same key + claims with a kid are accepted).
+    let claims = w.template.fresh_claims();
+    let key = EncodingKey::from_rsa_pem(forge::signing_key_pem().as_bytes()).expect("RSA key");
+    let token = encode(&Header::new(Algorithm::RS256), &claims, &key).expect("sign");
+    assert_rejected(&w, &token, "valid signature, no kid").await;
+    let with_kid = forge::sign_rs256(&claims, w.template.kid());
+    assert_accepted(&w, &with_kid, "same key and claims, with kid").await;
 }

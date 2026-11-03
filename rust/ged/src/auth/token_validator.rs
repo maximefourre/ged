@@ -205,8 +205,15 @@ fn string_to_i(s: &str) -> i64 {
 }
 
 /// `exp <= now` is expired and `nbf > now` is premature, both only when the
-/// claim is present (as in `jwt` 3.2).
+/// claim is present (as in `jwt` 3.2). A claim that is neither a number, a
+/// string nor `null` (bool, array, object) makes Rails raise (500); here it is
+/// rejected (401) rather than read as `0`, which would accept an `nbf`.
 fn check_time(claims: &Value, now: i64) -> Result<(), InvalidToken> {
+    for name in ["exp", "nbf"] {
+        if let Some(Value::Bool(_) | Value::Array(_) | Value::Object(_)) = claims.get(name) {
+            return Err(InvalidToken(format!("invalid {name} claim type")));
+        }
+    }
     if let Some(exp) = claims.get("exp")
         && ruby_to_i(exp) <= now
     {
@@ -294,6 +301,30 @@ mod tests {
         assert!(check_time(&json!({"nbf": "-99999999999999999999"}), now).is_ok());
         assert!(check_time(&json!({"exp": "99999999999999999999"}), now).is_ok());
         assert!(check_time(&json!({"exp": "-99999999999999999999"}), now).is_err());
+    }
+
+    #[test]
+    fn exp_or_nbf_that_is_not_number_string_or_null_is_rejected_never_read_as_zero() {
+        // Rails raises (500) on these; Rust fails closed (401). In particular
+        // `nbf` must not fall back to 0 ("already valid").
+        for bad in [
+            json!(true),
+            json!(false),
+            json!([1]),
+            json!([]),
+            json!({}),
+            json!({"v": 1}),
+        ] {
+            for claim in ["exp", "nbf"] {
+                let err = check_time(&json!({ claim: bad.clone() }), 100)
+                    .expect_err(&format!("{claim}={bad} must be rejected"));
+                assert!(err.0.contains(claim), "{err}");
+            }
+        }
+        // Number, string and null stay on the Ruby `to_i` path.
+        assert!(check_time(&json!({"nbf": null}), 100).is_ok());
+        assert!(check_time(&json!({"nbf": "5"}), 100).is_ok());
+        assert!(check_time(&json!({"exp": 1e30}), 100).is_ok());
     }
 
     #[test]
