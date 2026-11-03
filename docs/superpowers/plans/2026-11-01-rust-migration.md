@@ -316,8 +316,8 @@ réécriture de `AGENTS.md`, `docs/architecture/c4.md`.
   pour la session admin et la page status. T11 le supprime et le remplace dans
   `documents.rs`.
 
-## Répartition des modèles (2026-11-03)
+## Répartition des modèles révisée (2026-11-03, demande du propriétaire)
 
-Répartition d'origine conservée : Grok pour T11 et T12, Sonnet 5.5 medium pour le reste,
-les relectures et les intégrations. Un passage temporaire sur Grok a été envisagé à
-cause d'une limite d'usage ponctuelle, puis annulé par le propriétaire.
+Ponctuellement, pour ménager le quota Claude de ce chantier : T11, T13, T14, T15 et T16
+passent sur Grok (effort high, config du propriétaire). Sonnet 5.5 medium reste sur les
+relectures, les intégrations et les correctifs des tâches qu'il a écrites (T7, T9, T10).
