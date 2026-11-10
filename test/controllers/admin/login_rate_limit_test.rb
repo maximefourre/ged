@@ -6,6 +6,8 @@ class Admin::LoginRateLimitTest < ActionDispatch::IntegrationTest
     Admin.create!(username: "alice", password: "secret123")
   end
 
+  teardown { Admins::SessionsController::RATE_LIMIT_STORE.clear }
+
   test "repeated login attempts are rate limited" do
     10.times do
       post admin_session_path, params: { admin: { username: "alice", password: "wrong" } }
