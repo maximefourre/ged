@@ -34,6 +34,7 @@ services:
 
   web:
     build: .
+    command: ["ged", "serve"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,8 +49,11 @@ services:
       GED_OIDC_AUDIENCE: ${GED_OIDC_AUDIENCE:-http://web:80}
       GED_ADMIN_USERNAME: ${GED_ADMIN_USERNAME:-admin}
       GED_ADMIN_PASSWORD: ${GED_ADMIN_PASSWORD:?set GED_ADMIN_PASSWORD}
-      # OpenTelemetry export. Empty endpoint = OTel entirely disabled (see
-      # config/initializers/opentelemetry.rb), so this is harmless by default.
+      # Axum listens here. The published port stays host:80 (Thruster's old port).
+      PORT: "80"
+      GED_MAX_UPLOAD_BYTES: ${GED_MAX_UPLOAD_BYTES:-52428800}
+      # OpenTelemetry export. Empty endpoint = OTel entirely disabled, so this
+      # is harmless by default.
       # To enable with the local backend below, set in .env:
       #   COMPOSE_PROFILES=otel
       #   GED_OTEL_ENDPOINT=http://otel-lgtm:4318
@@ -60,34 +64,29 @@ services:
       # before it reaches Rack (no tempfile written). Mirrors Document::MAX_BYTE_SIZE.
       MAX_REQUEST_BODY: ${GED_MAX_UPLOAD_BYTES:-52428800}
     ports:
-      # 80 is Thruster (X-Sendfile + compression in front of Puma, see
-      # Dockerfile CMD); mapping Puma's 3000 directly would bypass it.
-      # GED_WEB_PORT lets bin/worktree-stack publish an isolated host port per
-      # worktree; defaults to 3000 for the primary-tree stack.
+      # Container port 80 is `ged serve` (`PORT=80`). GED_WEB_PORT publishes
+      # an isolated host port per worktree; the primary tree uses 3000.
       - "${GED_WEB_PORT:-3000}:80"
     volumes:
       - storage:/rails/storage
     healthcheck:
-      # Workers depend on web being healthy: bin/docker-entrypoint runs
-      # db:prepare only for `rails server`, so web must have prepared the
-      # schemas before a worker boots. start_period covers that first boot.
-      test: ["CMD", "curl", "-f", "http://localhost/up"]
+      # Workers depend on web being healthy: the entrypoint migrates only for
+      # `ged serve` (and `rails server` on the Rails overlay), so web must be
+      # up before a worker boots. start_period covers that first boot.
+      test: ["CMD", "curl", "-f", "http://127.0.0.1/up"]
       interval: 5s
       timeout: 3s
       retries: 24
       start_period: 60s
 
-  # Solid Queue supervisor (dispatcher + scheduler + worker pools from
-  # config/queue.yml). Scale on the same host, hot, without touching web:
-  #   docker compose up -d --scale worker=N   (bin/worktree-stack up --scale worker=N)
-  # Replicas coordinate via Postgres (FOR UPDATE SKIP LOCKED); recurring
-  # tasks are deduped by the unique [task_key, run_at] index. Shares the
-  # storage volume with web: staging files (storage/staging/) are written by
-  # web and read here; Active Storage blobs are written here and served by
-  # web — same-host scaling only (see the worker-scaling spec).
+  # Job worker (`ged worker`: uploads + default pools, scheduler, heartbeat).
+  # Same image as web. Scale on the same host, hot, without touching web:
+  #   bin/worktree-stack scale N
+  # Replicas coordinate via Postgres (FOR UPDATE SKIP LOCKED). Shares the
+  # storage volume with web — same-host scaling only.
   worker:
     build: .
-    command: ["./bin/jobs"]
+    command: ["ged", "worker"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,8 +98,10 @@ services:
       RAILS_ENV: production
       JOB_THREADS: ${JOB_THREADS:-3}
       JOB_CONCURRENCY: ${JOB_CONCURRENCY:-1}
-      # oidc_config.rb raises at boot in production without these, even
-      # though the worker never validates tokens.
+      GED_MAX_UPLOAD_BYTES: ${GED_MAX_UPLOAD_BYTES:-52428800}
+      SOLID_QUEUE_SHUTDOWN_TIMEOUT: ${SOLID_QUEUE_SHUTDOWN_TIMEOUT:-30}
+      # Production boot refuses to start without these, even though the
+      # worker never validates tokens.
       GED_OIDC_ISSUER: http://oauth-provider:9292
       GED_OIDC_JWKS_URL: http://oauth-provider:9292/.well-known/jwks.json
       GED_OIDC_AUDIENCE: ${GED_OIDC_AUDIENCE:-http://web:80}

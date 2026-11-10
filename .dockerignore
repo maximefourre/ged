@@ -45,3 +45,6 @@
 # Ignore Docker-related files
 /.dockerignore
 /Dockerfile*
+
+# Host cargo output. The image compiles ged itself.
+/rust/target

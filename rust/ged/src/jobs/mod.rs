@@ -81,6 +81,14 @@ impl Registry {
     pub fn has(&self, kind: &str) -> bool {
         self.jobs.contains_key(kind)
     }
+
+    /// Registered kind names, sorted. The C4 guard uses this so a new job
+    /// that never appears in `docs/architecture/c4.md` fails the build.
+    pub fn kinds(&self) -> Vec<&'static str> {
+        let mut names: Vec<_> = self.jobs.keys().copied().collect();
+        names.sort_unstable();
+        names
+    }
 }
 
 /// Records `ged.job.duration` around a job body (the Rails

@@ -77,11 +77,19 @@ fn database_url(config: &Config) -> Result<&str, Failure> {
         .ok_or_else(|| "DATABASE_URL is not set".into())
 }
 
+/// IPv6 when the stack allows it (so `localhost` hits `/up`), else IPv4.
+async fn bind_listen(port: &str) -> Result<tokio::net::TcpListener, Failure> {
+    match tokio::net::TcpListener::bind(format!("[::]:{port}")).await {
+        Ok(listener) => Ok(listener),
+        Err(_) => Ok(tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?),
+    }
+}
+
 async fn serve() -> Result<(), Failure> {
     let config = load_config()?;
     let pool = db::connect_lazy(database_url(&config)?)?;
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".into());
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
+    let listener = bind_listen(&port).await?;
     axum::serve(
         listener,
         // The peer address feeds the admin login throttle (never a header).

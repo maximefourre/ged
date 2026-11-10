@@ -26,6 +26,12 @@
 # by calling `bin/worktree-stack db-port`, so each worktree runs against its own
 # isolated Postgres (no shared Homebrew PG, no cross-worktree migration clashes).
 #
+# The default stack is Rust: one image, `ged serve` on web and `ged worker`
+# on worker. Rails stays bootable until T16:
+#   GED_STACK=rails bin/worktree-stack up
+# Commands after `up` (exec, seed, scale, logs, down) follow the stack that
+# was last started, unless GED_STACK is set again.
+#
 # Usage:
 #   bin/worktree-stack up [--scale worker=N]
 #                                   build + start the full stack (detached);
@@ -38,7 +44,8 @@
 #   bin/worktree-stack db           start ONLY Postgres, wait until healthy
 #                                   (the dev/test loop — Rails runs natively)
 #   bin/worktree-stack db-port      print this worktree's host Postgres port
-#   bin/worktree-stack seed         create the admin user (first boot only)
+#   bin/worktree-stack seed         create the admin user (first boot only):
+#                                   `ged seed` on Rust, `bin/rails db:seed` on Rails
 #   bin/worktree-stack down [-v]    stop + remove containers (-v also volumes)
 #   bin/worktree-stack clean        full ménage: down -v + remove built images
 #   bin/worktree-stack <cmd> ...    passthrough to `docker compose` (ps, logs…)
@@ -105,6 +112,47 @@ ensure_env() {
   fi
 }
 
+# Remembers which image `up` started so later exec/seed/scale hit that stack.
+stack_state_file() {
+  printf '%s/ged-worktree-stack-%s\n' "${TMPDIR:-/tmp}" "$slug"
+}
+
+remember_stack() {
+  printf '%s\n' "$1" > "$(stack_state_file)"
+}
+
+active_stack() {
+  if [ -n "${GED_STACK:-}" ]; then
+    printf '%s\n' "$GED_STACK"
+    return
+  fi
+  local f
+  f="$(stack_state_file)"
+  if [ -f "$f" ]; then
+    tr -d '[:space:]' < "$f"
+    return
+  fi
+  printf '%s\n' rust
+}
+
+compose_as() {
+  local stack="$1"
+  shift
+  ensure_env
+  case "$stack" in
+    rust)
+      docker compose -f "$ROOT/docker-compose.yml" "$@"
+      ;;
+    rails)
+      docker compose -f "$ROOT/docker-compose.yml" -f "$ROOT/docker-compose.rails.yml" "$@"
+      ;;
+    *)
+      echo "GED_STACK=$stack: expected rust or rails" >&2
+      exit 1
+      ;;
+  esac
+}
+
 urls() {
   cat <<EOF
 
@@ -126,9 +174,11 @@ shift || true
 
 case "$cmd" in
   up)
-    ensure_env
-    echo "▶ project=$COMPOSE_PROJECT_NAME  web=$web_port  oauth=$oauth_port  db=$db_port"
-    docker compose up --build -d "$@"
+    # Unset GED_STACK means Rust, even if a previous `up` started Rails.
+    stack="${GED_STACK:-rust}"
+    echo "▶ project=$COMPOSE_PROJECT_NAME  stack=$stack  web=$web_port  oauth=$oauth_port  db=$db_port"
+    compose_as "$stack" up --build -d "$@"
+    remember_stack "$stack"
     urls
     echo
     echo "  First boot only — create the admin user:"
@@ -139,8 +189,7 @@ case "$cmd" in
     # rebuilds nor recreates anything (unlike `up --scale`, whose --build
     # recreates web whenever the build context changed). Surplus replicas
     # get SIGTERM and drain in-flight jobs (stop_grace_period).
-    ensure_env
-    docker compose up -d --no-build --no-recreate \
+    compose_as "$(active_stack)" up -d --no-build --no-recreate \
       --scale "worker=${1:?usage: bin/worktree-stack scale N}" worker
     ;;
   db)
@@ -148,10 +197,9 @@ case "$cmd" in
     # accepts connections (`up -d` returns before the healthcheck passes).
     # ensure_env is required: Compose interpolates the whole file even for a
     # single service, so web's ${SECRET_KEY_BASE:?} aborts a .env-less start.
-    ensure_env
-    docker compose up -d postgres
+    compose_as "$(active_stack)" up -d postgres
     printf '▶ postgres on host port %s — waiting' "$db_port"
-    until docker compose exec -T postgres pg_isready -U "${GED_DB_USER:-postgres}" >/dev/null 2>&1; do
+    until compose_as "$(active_stack)" exec -T postgres pg_isready -U "${GED_DB_USER:-postgres}" >/dev/null 2>&1; do
       printf '.'
       sleep 1
     done
@@ -162,16 +210,21 @@ case "$cmd" in
     echo "$db_port"
     ;;
   seed)
-    docker compose exec web bin/rails db:seed
+    stack="$(active_stack)"
+    case "$stack" in
+      rails) compose_as "$stack" exec web bin/rails db:seed ;;
+      rust) compose_as "$stack" exec -T web ged seed ;;
+      *) echo "GED_STACK=$stack: expected rust or rails" >&2; exit 1 ;;
+    esac
     ;;
   down)
-    docker compose down "$@"
+    compose_as "$(active_stack)" down "$@"
     ;;
   clean)
-    docker compose down -v --rmi local "$@"
+    compose_as "$(active_stack)" down -v --rmi local "$@"
     ;;
   urls|url)
-    echo "▶ project=$COMPOSE_PROJECT_NAME  web=$web_port  oauth=$oauth_port  db=$db_port"
+    echo "▶ project=$COMPOSE_PROJECT_NAME  stack=$(active_stack)  web=$web_port  oauth=$oauth_port  db=$db_port"
     urls
     ;;
   help|-h|--help)
@@ -181,6 +234,6 @@ case "$cmd" in
   *)
     # Passthrough: any other docker compose subcommand (ps, logs, exec, …)
     # with this worktree's project + ports already exported.
-    docker compose "$cmd" "$@"
+    compose_as "$(active_stack)" "$cmd" "$@"
     ;;
 esac

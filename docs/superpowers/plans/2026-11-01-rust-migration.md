@@ -264,10 +264,14 @@ dates, `ged migrate`, `ged seed`.
 **Files :** `Dockerfile`, `docker-compose.yml`, `bin/worktree-stack`, `bin/ci`,
 `.github/workflows/ci.yml`, tests de garde.
 
-- [ ] Image Rust unique pour `web` et `worker`, volume et ports inchangés.
-- [ ] `db`, `db-port`, `up`, `scale`, `clean` pilotent le Rust.
-- [ ] Porter les gardes C4, API docs et couverture des queues.
+- [x] Image Rust unique pour `web` et `worker`, volume et ports inchangés.
+- [x] `db`, `db-port`, `up`, `scale`, `clean` pilotent le Rust.
+- [x] Porter les gardes C4, API docs et couverture des queues.
 - [ ] Vérifier : `bin/worktree-stack up`, `scale 3`, parité complète contre la stack.
+      `up` et `scale 3` sont verts. La parité Rust reste rouge sur
+      `api_documents::api_delete_soft_deletes_the_document_and_keeps_it_for_the_retention_window` :
+      `PATCH /admin/deleted_documents/:id/restore` répond 404 tant que T11 n'a pas
+      branché la corbeille (`admin/mod.rs` le dit). Rails, le même test, répond 302.
 
 ### T15 — Validation perf et chaos (S)
 

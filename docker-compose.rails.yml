@@ -1,0 +1,12 @@
+# Selected by `GED_STACK=rails bin/worktree-stack`. Keeps the Rails image
+# bootable for parity and fuzz until T16. Service names, ports, volumes and
+# environment come from docker-compose.yml.
+services:
+  web:
+    build:
+      dockerfile: Dockerfile.rails
+    command: ["./bin/thrust", "./bin/rails", "server"]
+  worker:
+    build:
+      dockerfile: Dockerfile.rails
+    command: ["./bin/jobs"]

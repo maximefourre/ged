@@ -41,3 +41,4 @@ tempfile = "3.27.0"
 tower = { version = "0.5", features = ["util"] }
 uuid = { version = "1.29.0", features = ["v7"] }
 opentelemetry_sdk = { version = "0.33", features = ["testing"] }
+serde_yaml = "0.9"

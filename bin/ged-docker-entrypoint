@@ -1,0 +1,28 @@
+#!/bin/sh
+# Web boots migrate the database, then exec the command. Workers do not:
+# they wait on web's healthcheck, the same split as bin/docker-entrypoint.
+set -eu
+
+create_database() {
+  url=${DATABASE_URL:?DATABASE_URL is not set}
+  url=${url%%\?*}
+  name=${url##*/}
+  admin=${url%/*}/postgres
+  case $name in
+    *[!A-Za-z0-9_]*)
+      echo "ged entrypoint: refusing database name $name" >&2
+      exit 1
+      ;;
+  esac
+  exists=$(psql "$admin" -tAc "SELECT 1 FROM pg_database WHERE datname = '$name'" | tr -d '[:space:]')
+  if [ "$exists" != "1" ]; then
+    psql "$admin" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$name\""
+  fi
+}
+
+if [ "${1:-}" = "ged" ] && [ "${2:-}" = "serve" ]; then
+  create_database
+  ged migrate
+fi
+
+exec "$@"

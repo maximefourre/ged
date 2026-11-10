@@ -1,19 +1,24 @@
 //! The Rust `ged` binary as the backend under test.
 //!
-//! By default the adapter builds `ged`, creates a scratch business database on
-//! this worktree's Postgres, runs `ged migrate` and `ged seed`, then starts
-//! `ged serve` on a free port, configured like the compose stack's `web`
-//! service (production mode: its boot-time checks are part of the contract).
-//! The server lives for the whole test process and is stopped by a watchdog
-//! when that process exits.
+//! By default the adapter talks to this worktree's compose stack (`ged serve`
+//! / `ged worker`), the same way the Rails adapter talks to Rails. `run_job`
+//! execs `ged run-job` inside the `web` container so the job sees the shared
+//! storage volume.
 //!
-//! To attach to a server you already run (the compose stack, later), set both
-//! `GED_BASE_URL` and `DATABASE_URL`: nothing is spawned.
+//! `GED_RUST_SPAWN=1` builds `ged`, creates a scratch database on this
+//! worktree's Postgres, runs `ged migrate` and `ged seed`, then starts
+//! `ged serve` on a free port. The worker is a child of this process: `reset`
+//! stops it, truncates the business tables, and starts it again on the same
+//! database. Each process owns `ged_rust_parity_<pid>`, so a parallel test
+//! binary cannot drop the database out from under the worker.
+//!
+//! Set both `GED_BASE_URL` and `DATABASE_URL` to attach to a server that is
+//! already running somewhere else. Nothing is spawned.
 
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -24,30 +29,66 @@ use sqlx::{Connection, PgConnection, PgPool};
 use crate::backend::Backend;
 use crate::stack::{admin_credentials, stack};
 
-/// Database created for the spawned server.
-const DATABASE: &str = "ged_rust_parity";
+/// Prefix of the scratch database created for [`spawn`]. The pid suffix keeps
+/// parallel `cargo test` binaries from dropping each other's database.
+const DATABASE_PREFIX: &str = "ged_rust_parity";
 
 pub struct RustBackend {
     pool: PgPool,
     base_url: String,
+    /// `GED_RUST_SPAWN=1`: this process owns `ged serve` and `ged worker`.
+    spawned: bool,
 }
 
 struct Running {
     base_url: String,
     database_url: String,
+    spawned: bool,
+}
+
+struct SpawnEnv {
+    ged: PathBuf,
+    envs: Vec<(String, String)>,
+    worker_pid_file: PathBuf,
+}
+
+static SPAWN_ENV: OnceLock<SpawnEnv> = OnceLock::new();
+static WORKER: Mutex<Option<Child>> = Mutex::new(None);
+
+fn database_name_for(pid: u32) -> String {
+    format!("{DATABASE_PREFIX}_{pid}")
+}
+
+fn worker_slot() -> std::sync::MutexGuard<'static, Option<Child>> {
+    WORKER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn running() -> &'static Running {
     static RUNNING: OnceLock<Running> = OnceLock::new();
     RUNNING.get_or_init(|| {
+        if std::env::var("GED_RUST_SPAWN").ok().as_deref() == Some("1") {
+            return spawn();
+        }
         let explicit_url = std::env::var("GED_BASE_URL").ok().filter(|v| !v.is_empty());
         let explicit_db = std::env::var("DATABASE_URL").ok().filter(|v| !v.is_empty());
         match (explicit_url, explicit_db) {
             (Some(base), Some(db)) => Running {
                 base_url: base.trim_end_matches('/').to_owned(),
                 database_url: db,
+                spawned: false,
             },
-            _ => spawn(),
+            // One side missing: `stack()` fills it from the worktree compose
+            // file. The server under test is that stack, not a local spawn.
+            _ => {
+                let stack = stack();
+                Running {
+                    base_url: stack.base_url.clone(),
+                    database_url: stack.database_url.clone(),
+                    spawned: false,
+                }
+            }
         }
     })
 }
@@ -105,28 +146,126 @@ fn block_on<T: Send>(f: impl std::future::Future<Output = T> + Send) -> T {
     })
 }
 
+fn is_safe_db_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+fn pid_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Drops this process's scratch database, the legacy shared name, and names
+/// left by dead pids. A live sibling's database is left alone.
+async fn prepare_scratch_database(server_url: &str, name: &str) {
+    assert!(is_safe_db_name(name), "unsafe database name {name}");
+    let mut conn = PgConnection::connect(server_url).await.unwrap_or_else(|e| {
+        panic!("connect {server_url}: {e} (is `bin/worktree-stack db` running?)")
+    });
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT datname FROM pg_database \
+         WHERE datname = 'ged_rust_parity' \
+            OR datname LIKE 'ged\\_rust\\_parity\\_%' ESCAPE '\\'",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .expect("list parity databases");
+    let me = std::process::id();
+    for (existing,) in rows {
+        if !is_safe_db_name(&existing) {
+            continue;
+        }
+        let drop_it = if existing == "ged_rust_parity" {
+            true
+        } else if let Some(rest) = existing.strip_prefix("ged_rust_parity_") {
+            rest.parse::<u32>()
+                .is_ok_and(|pid| pid == me || !pid_alive(pid))
+        } else {
+            false
+        };
+        if !drop_it {
+            continue;
+        }
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS {existing} WITH (FORCE)"
+        )))
+        .execute(&mut conn)
+        .await
+        .expect("drop a stale parity database");
+    }
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+        .execute(&mut conn)
+        .await
+        .expect("create the scratch database");
+}
+
+fn stop_spawned_worker() -> Result<(), String> {
+    let mut slot = worker_slot();
+    let Some(mut child) = slot.take() else {
+        return Ok(());
+    };
+    let pid = child.id();
+    let _ = Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let deadline = Instant::now() + Duration::from_secs(35);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                if let Some(env) = SPAWN_ENV.get() {
+                    let _ = std::fs::remove_file(&env.worker_pid_file);
+                }
+                return Ok(());
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                if let Some(env) = SPAWN_ENV.get() {
+                    let _ = std::fs::remove_file(&env.worker_pid_file);
+                }
+                return Ok(());
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => return Err(format!("wait for ged worker: {e}")),
+        }
+    }
+}
+
+fn start_spawned_worker() -> Result<(), String> {
+    stop_spawned_worker()?;
+    let env = SPAWN_ENV.get().ok_or("spawned ged env is missing")?;
+    let child = Command::new(&env.ged)
+        .arg("worker")
+        .env_clear()
+        .envs(env.envs.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("start ged worker: {e}"))?;
+    std::fs::write(&env.worker_pid_file, child.id().to_string())
+        .map_err(|e| format!("record worker pid: {e}"))?;
+    *worker_slot() = Some(child);
+    Ok(())
+}
+
 fn spawn() -> Running {
     let ged = ged_binary().clone();
     let stack = stack();
     let server_url = with_database(&stack.database_url, "postgres");
-    let database_url = with_database(&stack.database_url, DATABASE);
+    let name = database_name_for(std::process::id());
+    let database_url = with_database(&stack.database_url, &name);
 
-    block_on(async {
-        let mut conn = PgConnection::connect(&server_url)
-            .await
-            .unwrap_or_else(|e| {
-                panic!("connect {server_url}: {e} (is `bin/worktree-stack db` running?)")
-            });
-        for sql in [
-            format!("DROP DATABASE IF EXISTS {DATABASE} WITH (FORCE)"),
-            format!("CREATE DATABASE {DATABASE}"),
-        ] {
-            sqlx::query(sqlx::AssertSqlSafe(sql))
-                .execute(&mut conn)
-                .await
-                .expect("prepare the scratch database");
-        }
-    });
+    block_on(prepare_scratch_database(&server_url, &name));
 
     let (admin_user, admin_password) = admin_credentials();
     let port = TcpListener::bind("127.0.0.1:0")
@@ -167,14 +306,27 @@ fn spawn() -> Running {
     run("migrate");
     run("seed");
 
-    // The watchdog (the `web` and `worker` services of the compose stack) ends the
-    // server and the job worker when this test process goes away (statics
-    // are never dropped), without leaving a daemon behind.
+    let worker_pid_file =
+        std::env::temp_dir().join(format!("ged-parity-worker-{}.pid", std::process::id()));
+    let owned_envs: Vec<(String, String)> = envs
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), v.clone()))
+        .collect();
+    let _ = SPAWN_ENV.set(SpawnEnv {
+        ged: ged.clone(),
+        envs: owned_envs,
+        worker_pid_file: worker_pid_file.clone(),
+    });
+
+    // The watchdog ends `ged serve` and the worker pid when this test process
+    // goes away (statics are never dropped). `reset` restarts the worker
+    // itself, so the shell must not own that process.
     let script = r#"
         "$GED" serve & child=$!
-        "$GED" worker & jobs=$!
         while kill -0 "$PARENT" 2>/dev/null && kill -0 "$child" 2>/dev/null; do sleep 1; done
-        kill "$child" "$jobs" 2>/dev/null; wait "$child" "$jobs" 2>/dev/null
+        kill "$child" 2>/dev/null
+        if [ -f "$WORKER_PID" ]; then kill "$(cat "$WORKER_PID")" 2>/dev/null; fi
+        wait "$child" 2>/dev/null
     "#;
     let mut watchdog = Command::new("sh")
         .args(["-c", script])
@@ -182,18 +334,21 @@ fn spawn() -> Running {
         .envs(envs.iter().map(|(k, v)| (*k, v.as_str())))
         .env("GED", &ged)
         .env("PARENT", std::process::id().to_string())
+        .env("WORKER_PID", &worker_pid_file)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
         .expect("start ged serve");
     std::thread::spawn(move || watchdog.wait());
+    start_spawned_worker().expect("start ged worker");
 
     let base_url = format!("http://127.0.0.1:{port}");
     wait_until_up(&base_url);
     Running {
         base_url,
         database_url,
+        spawned: true,
     }
 }
 
@@ -225,6 +380,7 @@ impl RustBackend {
         Self {
             pool,
             base_url: r.base_url.clone(),
+            spawned: r.spawned,
         }
     }
 }
@@ -240,27 +396,50 @@ impl Backend for RustBackend {
     }
 
     async fn run_job(&self, name: &str) -> Result<(), String> {
-        // `ged run-job` is `Job.perform_now`; same database and working
-        // directory (so the same `storage/`) as the server.
-        let out = Command::new(ged_binary())
-            .args(["run-job", name])
-            .env_clear()
-            .env("RAILS_ENV", "test")
-            .env("DATABASE_URL", &running().database_url)
-            .output()
-            .map_err(|e| format!("run ged run-job {name}: {e}"))?;
-        if out.status.success() {
-            Ok(())
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(format!("invalid job name {name:?}"));
+        }
+        if self.spawned {
+            // Same env and working directory as the spawned server, so the
+            // job sees the same `storage/` and the same database.
+            let env = SPAWN_ENV.get().ok_or("spawned ged env is missing")?;
+            let out = Command::new(&env.ged)
+                .args(["run-job", name])
+                .env_clear()
+                .envs(env.envs.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+                .output()
+                .map_err(|e| format!("run ged run-job {name}: {e}"))?;
+            if out.status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{name}: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                ))
+            }
         } else {
-            Err(format!(
-                "{name}: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            ))
+            // Compose web and worker share the storage volume. A host-side
+            // `ged run-job` would miss those files.
+            crate::stack::exec("web", &["ged", "run-job", name]).map(|_| ())
         }
     }
 
     async fn reset(&self) -> Result<(), String> {
-        crate::backend::reset_business_tables(&self.pool).await
+        // Stop the spawned worker before truncating, then start it again on
+        // the database that still exists. The compose worker is the stack's:
+        // it stays up and keeps its pool.
+        if self.spawned {
+            tokio::task::spawn_blocking(stop_spawned_worker)
+                .await
+                .map_err(|e| format!("stop ged worker: {e}"))??;
+        }
+        let truncated = crate::backend::reset_business_tables(&self.pool).await;
+        if self.spawned {
+            tokio::task::spawn_blocking(start_spawned_worker)
+                .await
+                .map_err(|e| format!("start ged worker: {e}"))??;
+        }
+        truncated
     }
 
     /// Files are served by the app itself; only a sendfile header could
@@ -335,5 +514,19 @@ impl MigratedDatabase {
         .execute(&mut conn)
         .await
         .expect("drop the scratch database");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::database_name_for;
+
+    #[test]
+    fn each_process_gets_its_own_parity_database() {
+        let first = database_name_for(10);
+        let second = database_name_for(11);
+        assert_eq!(first, "ged_rust_parity_10");
+        assert_ne!(first, second);
+        assert_ne!(first, "ged_rust_parity");
     }
 }

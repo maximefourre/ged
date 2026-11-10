@@ -13,6 +13,8 @@ CI.run do
   step "Rust: fmt", "cd rust && mise exec -- cargo fmt --check"
   step "Rust: clippy", "cd rust && mise exec -- cargo clippy --all-targets -- -D warnings"
   step "Rust: tests", "cd rust && mise exec -- cargo test"
+  step "Docker: compose config", "bin/worktree-stack config --quiet"
+  step "Docker: compose config (rails)", "env GED_STACK=rails bin/worktree-stack config --quiet"
   step "Tests: Seeds", "env RAILS_ENV=test bin/rails db:seed:replant"
 
   # Optional: set a green GitHub commit status to unblock PR merge.
