@@ -109,6 +109,7 @@ Backend (parity) : base_url(), db(), run_job(name), reset()
 | 7 | T11, T14 (parallèles) | T7, T9, T10 |
 | 8 | T13, T15 (parallèles) | T11, T14 |
 | 9 | T16 | T13, T15 |
+| 10 | Revue finale (Fable 5.2) | T16 intégré |
 
 T9 dans la vague 6 ne dépend que de `DocumentCreator` et de la file ; son acceptation
 complète (parité `api_async_*`) se vérifie après intégration de T7. T15 et T13
@@ -287,6 +288,22 @@ réécriture de `AGENTS.md`, `docs/architecture/c4.md`.
 - [ ] ADR de clôture dans codebase memory, réindexation.
 - [ ] Vérifier : `bin/ci` vert sans Rails, `bin/worktree-stack up` prêt pour ta
   validation. Le merge vers `main` attend ta confirmation explicite.
+
+### Vague 10 — Revue finale de la branche (Fable 5.2, demande du propriétaire)
+
+Un worker Fable 5.2 relit, en lecture seule, toute la branche d'intégration contre `main`,
+après l'intégration de T16 et avant la stack de validation du propriétaire.
+
+- [ ] Vérifier au lancement que l'identifiant du modèle Fable 5.2 est accepté. S'il ne
+  l'est pas, faire un rapport au propriétaire sans substituer un autre modèle.
+- [ ] Périmètre : la spec entière contre le code, la sécurité d'abord (auth JWT et session,
+  SSRF, CSRF, en-têtes, limites, chemins de fichiers), puis l'exactitude de la file de
+  jobs (exactement une fois pour les documents), la parité des erreurs et les écarts admis
+  de `parity-gaps.md`, la doc (`AGENTS.md`, `c4.md`, `openapi.yaml`).
+- [ ] Livrable : rapport avec verdict APPROVE ou CHANGES et constats `fichier:ligne`
+  classés par gravité. Les correctifs éventuels repartent vers l'auteur de la tâche
+  concernée, puis une nouvelle vérification complète par l'orchestrateur.
+- [ ] Ensuite seulement : `bin/worktree-stack up` pour la validation du propriétaire.
 
 ## Reports de la relecture de la vague 3
 
