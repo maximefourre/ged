@@ -24,7 +24,7 @@ Full specification: `docs/superpowers/specs/2026-07-08-ged-design.md`
   (30-day retention before hard purge); admin can restore from Trash within the
   window, or move/trash a department's contents before removing it
 - **Two auth paths** — application clients authenticate via OAuth2 client_credentials
-  (JWT/JWKS); admin users via Devise username/password
+  (JWT/JWKS); admin users via a username/password session (argon2id)
 - **Admin UI** — manage departments, register application clients, upload/list/tag
   documents, restore from Trash
 - **API documentation** — OpenAPI 3.1 spec served at `GET /api/docs` (Redoc
@@ -33,42 +33,37 @@ Full specification: `docs/superpowers/specs/2026-07-08-ged-design.md`
 
 ## Installation (local development)
 
-Rails runs natively (mise); only **Postgres runs in Docker** — one isolated
-container per git worktree, so concurrent worktrees never share a database.
-There is **no Homebrew Postgres**. If you still run one, **stop it first** so it
+The app is Rust (`ged`). **Postgres runs in Docker** — one isolated container
+per git worktree, so concurrent worktrees never share a database. There is
+**no Homebrew Postgres**. If you still run one, **stop it first** so it
 doesn't hold port 5432: `brew services stop postgresql@17`.
 
-    brew install mise           # (or install Ruby yourself) — no Postgres needed
-    mise install                # ruby from .mise.toml
-    bundle install
-    bin/worktree-stack db       # start the Dockerised Postgres, wait until ready
-    bin/rails db:setup          # create + migrate + seed (admin/changeme)
-    bin/rails test              # main app tests
-    (cd oauth-provider && bundle install && bundle exec rake)  # provider tests
-    bin/dev                     # http://localhost:3000 → admin UI
+    brew install mise
+    mise install                # Rust and Ruby from .mise.toml
+    bin/worktree-stack db       # Dockerised Postgres for this worktree
+    cd rust && cargo test -p ged
+    (cd oauth-provider && bundle install && bundle exec rake)
 
-`config/database.yml` auto-derives the host Postgres port from the current
-worktree (via `bin/worktree-stack db-port`), so `bin/rails test` / `bin/dev`
-connect to the right container automatically. Shortcut: `bin/setup` runs
-bundle + starts Postgres + prepares the database in one step.
+`bin/worktree-stack db-port` prints the host port. The full stack (web,
+worker, oauth-provider) is `bin/worktree-stack up`, then
+`bin/worktree-stack seed`. Ruby remains only for `oauth-provider/`,
+`bin/perf-upload` and `bin/monkey`.
 
 ## Deployment (Docker)
 
-For production or integrated testing (postgres, oauth provider, rails, and a
-dedicated Solid Queue `worker` service, all in containers). `worker` runs jobs
-only (`./bin/jobs`) and shares the `storage` volume with `web`; hot-scale it on
-the same host without touching `web` or rebuilding:
+`web` (`ged serve`) and `worker` (`ged worker`) share one image and the
+`storage` volume. Scale the worker on the same host without rebuilding:
 
-    docker compose up -d --scale worker=N     # or: bin/worktree-stack scale N
+    bin/worktree-stack scale N
 
 Create a `.env` file at the repo root (gitignored; read automatically by compose):
 
-    printf 'SECRET_KEY_BASE=%s\nGED_ADMIN_PASSWORD=changeme\n' "$(bin/rails secret)" > .env
+    printf 'SECRET_KEY_BASE=%s\nGED_ADMIN_PASSWORD=changeme\n' "$(openssl rand -hex 64)" > .env
 
 Boot the full stack:
 
-    docker compose up --build -d
-    docker compose exec web bin/rails db:seed     # first boot only: create admin
+    bin/worktree-stack up
+    bin/worktree-stack seed     # first boot: create the admin
 
 ## Setup
 
@@ -168,9 +163,9 @@ an optional compose profile with a provisioned **GED overview** dashboard:
     #   COMPOSE_PROFILES=otel
     #   GED_OTEL_ENDPOINT=http://otel-lgtm:4318
 
-Grafana: `http://localhost:3300` (anonymous admin, dev only). For host-native
-`bin/dev` against the same backend:
-`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 bin/dev`.
+Grafana: `http://localhost:3300` (anonymous admin, dev only). A host-native
+`ged serve` exports to the same backend with
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`.
 
 ### Cutover to production IdP
 

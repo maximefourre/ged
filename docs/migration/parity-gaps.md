@@ -2,6 +2,33 @@
 
 Divergences entre le test Ruby et le contrat observable sur le stack, retenues
 exprès. Une ligne n'entre ici qu'avec une réponse réelle du stack Rails.
+Les mesures ci-dessous restent le journal. Le dépôt courant ne contient plus
+Rails : la suite de parité parle à Rust seul.
+
+## Rejouer Rails depuis le tag `rails-final`
+
+Le tag local `rails-final` pointe sur `aba3d4b` (pas poussé). C'est le dernier
+arbre où `GED_STACK=rails` et l'adaptateur `rust/parity/src/rails.rs` existent.
+La parité Rails y avait été mesurée en vague 8 : 320 passed, 0 failed. Elle
+n'a pas été relancée au moment de la suppression.
+
+Pour rejouer une comparaison :
+
+```sh
+git worktree add ../ged-rails-final rails-final
+cd ../ged-rails-final
+# cet arbre a encore GED_STACK=rails et bin/rails
+bin/worktree-stack up          # avec GED_STACK=rails, ports isolés
+```
+
+Depuis cet arbre-ci (Rust), `diff_fuzz` compare deux URLs. Il n'importe pas
+l'adaptateur Rails. Campagnes finales, déjà enregistrées plus bas (2026-11-11) :
+seed 13, 100000 requêtes, `documented=1769`, `undocumented=0`, 233 s ; seed 29,
+100000 requêtes, `documented=1604`, `undocumented=0`, 236 s. Pour les refaire,
+construire le binaire dans `rust/` et passer `--rails-url` / `--rails-db` de la
+worktree `rails-final` avec `--rust-url` / `--rust-db` de la stack Rust. Le
+golden `rust/parity/fixtures/rails_business_schema.sql` se régénère en
+dumpant les tables métier de cette stack Rails, pas depuis ce dépôt.
 
 ## Taille d'upload : 413 au bord, 422 dans le modèle
 

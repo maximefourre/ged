@@ -5,411 +5,277 @@ departments (folders, the permission boundary) and per-document key→value
 tags. Accessed mostly by other internal applications over an API secured with
 OAuth2/JWT bearer tokens, plus a minimal admin web UI for humans.
 
-Full design: `docs/superpowers/specs/2026-07-08-ged-design.md`. Read it before
-making architectural changes — this file is a quick-reference summary, the spec
-is the source of truth.
+The application is the Rust crate `ged` (`rust/`). The Rails application was
+removed in T16; the local tag `rails-final` (not pushed) is that tree, for
+replaying a Rails stack later. Full design of the product:
+`docs/superpowers/specs/2026-07-08-ged-design.md`. Migration design:
+`docs/superpowers/specs/2026-11-01-rust-migration-design.md`. This file is the
+quick reference; those specs stay the historical source for decisions already
+taken.
 
 ## Workflow (mandatory)
 
 - **Always work in a dedicated git worktree and branch** — never edit directly
-  on `main` or in the primary working tree. Create an isolated worktree +
-  feature branch for every task before making changes. Each worktree runs its
-  own Dockerised dev/test Postgres — `bin/worktree-stack db` once per session,
-  then `bin/rails test`/`bin/dev` natively — so concurrent worktrees never
-  collide on a shared database (that's separate from the full integrated
-  `bin/worktree-stack up` stack used for pre-merge validation).
-- **Keep history linear — rebase over merge whenever possible** — update a
-  feature branch from `main` with `git rebase main` (never `git merge main`
-  into it), and land finished work with a rebase + fast-forward
-  (`git rebase main` then `git merge --ff-only`, or an equivalent
-  rebase/squash PR merge) instead of a merge commit. Only fall back to a real
-  merge commit if a rebase would rewrite commits already pushed/shared in a
-  way the user doesn't want rewritten — flag that tradeoff to the user instead
-  of silently merging.
+  on `main` or in the primary working tree. Each worktree runs its own
+  Dockerised Postgres: `bin/worktree-stack db` once per session, then
+  `cargo test -p ged` from `rust/`. Concurrent worktrees do not share a
+  database. The full integrated stack is `bin/worktree-stack up`.
+- **Keep history linear — rebase over merge whenever possible.** Update a
+  feature branch from `main` with `git rebase main`. Land finished work with
+  a rebase and a fast-forward. Only fall back to a merge commit if a rebase
+  would rewrite commits already pushed, and flag that tradeoff instead of
+  merging silently.
 - **Always get the user's explicit confirmation before the final merge** — do
-  not merge back into `main` (or open/complete a PR) without validating the
-  result with the user first.
-- **Commit, push, and open PRs only on request** — never commit/push/merge
-  proactively; wait for the user's explicit go-ahead (consistent with the
-  merge-confirmation rule above).
-- **Finish a feature with a testable, isolated stack** — when the work in a
-  worktree is done, finalize it on the worktree branch (rebase onto latest
-  `main` there, not the other way around) and bring up its own Docker stack
-  with `bin/worktree-stack up`. Each worktree gets an isolated
-  `COMPOSE_PROJECT_NAME` + host ports (data volumes are namespaced too), so it
-  runs alongside `main` and other worktrees for independent testing. Let the
-  user validate against that stack before any merge. On repatriating into
-  `main`, rebase + fast-forward merge (see above), then do the ménage:
-  `bin/worktree-stack clean` (drops its containers, volumes, and
-  locally-built images), then remove the worktree.
-- **Green checks before proposing a merge** — `bin/ci` must pass (at minimum
-  `bin/rails test` + `bin/rubocop`); report the actual output, don't claim
-  success without running it. Rust checks in `bin/ci` are `cargo fmt`,
-  `cargo clippy`, and `cargo test -p ged`. Parity is a separate step,
-  `cargo test -p parity`, and it runs only when this worktree's compose
-  stack answers `GET /up`. `GED_BACKEND` is the active stack from
-  `bin/worktree-stack active`: `GED_STACK` when it is set, otherwise the
-  name remembered by `up`, otherwise `rust`. When nothing answers, `bin/ci`
-  prints `Parity: skipped` and does not record that skip as a parity pass.
-- **Keep docs in sync when scope changes** — update `docs/api/openapi.yaml`
-  when adding/renaming an `/api/v1` endpoint (a test fails otherwise),
-  `docs/architecture/c4.md` when adding a compose service, a job, a service
-  object or a queue pool (a test fails otherwise too — see below), and this
-  `AGENTS.md` when conventions change.
-- **Go through specs/plans for architectural changes** — capture the design in
-  `docs/superpowers/specs/` and the steps in `docs/superpowers/plans/` before
-  touching code, rather than improvising.
+  not merge back into `main` (or open or complete a PR) without the user
+  validating the result.
+- **Commit, push, and open PRs only on request.**
+- **Finish a feature with a testable, isolated stack.** Rebase the worktree
+  branch onto latest `main`, then `bin/worktree-stack up`. Each worktree gets
+  its own `COMPOSE_PROJECT_NAME`, host ports and volumes. Let the user
+  validate before any merge. On repatriating into `main`, rebase and
+  fast-forward, then `bin/worktree-stack clean` and remove the worktree.
+- **Green checks before proposing a merge.** `bin/ci` must pass. It runs
+  `cargo fmt`, `cargo clippy -D warnings`, `cargo test -p ged`, the
+  `oauth-provider` rake suite, `ruby -c` on `bin/perf-upload` and
+  `bin/monkey`, compose config, and `docker build` when Docker answers.
+  Playwright (`rust/e2e`) and `cargo test -p parity` run only when this
+  worktree's stack answers `GET /up`. When nothing answers, `bin/ci` prints
+  `Parity: skipped` and `Playwright: skipped` and does not record that skip
+  as a pass. The only backend is Rust. `GED_BACKEND=rails` is rejected.
+- **Keep docs in sync when scope changes.** Update `docs/api/openapi.yaml`
+  when adding or renaming an `/api/v1` route (`rust/ged/tests/guards_api_docs.rs`
+  fails otherwise), `docs/architecture/c4.md` when adding a compose service,
+  a job, a service module or a queue pool (`rust/ged/tests/guards_c4.rs`),
+  and this file when conventions change.
+- **Go through specs and plans for architectural changes** — capture the
+  design in `docs/superpowers/specs/` and the steps in
+  `docs/superpowers/plans/` before touching code.
 
 ## Stack
 
-- **Ruby on Rails** — single app, API-only controllers under `/api/v1/...` for
-  application clients, regular controllers + ERB views for the admin UI
-- **PostgreSQL** — app data (departments, documents, app_clients, admins)
-- **Active Storage** (local disk service) — document file storage
-- **Devise** — admin UI username/password session login
-- **`jwt` gem** — validates bearer tokens from app clients against a JWKS endpoint
-- **OpenTelemetry** — traces + custom metrics over OTLP, entirely disabled
-  unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set (see the implementation map);
-  optional `grafana/otel-lgtm` backend under the `otel` compose profile
-- **Docker Compose** — `web` (Rails/Puma), `worker` (Solid Queue, scalable
-  via `--scale worker=N`), `postgres`, `oauth-provider`;
-  `bin/worktree-stack up` boots an isolated per-worktree copy for testing (see
-  the Workflow section). `postgres` also publishes a host port
-  (`${GED_DB_PORT:-5432}`), so the **dev/test database always runs in Docker**
-  (no Homebrew Postgres): `bin/worktree-stack db` starts just Postgres for the
-  native `bin/rails test`/`bin/dev` loop, and `db-port` prints the port
-  `config/database.yml` auto-derives.
+- **Rust** — one binary, `ged`, workspace `rust/`. `ged serve` is the HTTP
+  process (Axum). `ged worker` claims jobs. `ged migrate`, `ged seed` and
+  `ged run-job` are the operational commands. Pinned in the image at Rust
+  1.99.1; local development uses mise (`rust` stable in `.mise.toml`).
+- **PostgreSQL 17** — business tables and job tables in one database.
+- **Local disk** — blobs and staging files under `/rails/storage` in the
+  container (the path name is kept). The compose volume is `storage`.
+- **Admin session** — username and password, argon2id, signed cookie. Not
+  Devise. `ged seed` writes the admin from `GED_ADMIN_USERNAME` /
+  `GED_ADMIN_PASSWORD`. A leftover bcrypt hash is refused until seed rewrites it.
+- **JWT** — `jsonwebtoken`, RS256, JWKS fetched by `JwksCache`.
+- **OpenTelemetry** — traces and custom metrics over OTLP, disabled unless
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Optional `grafana/otel-lgtm` under
+  the `otel` compose profile.
+- **Docker Compose** — `web` (`ged serve`), `worker` (`ged worker`, scalable),
+  `postgres`, `oauth-provider`, and `otel-lgtm` (profile `otel`). One image
+  (`Dockerfile`) for web and worker. `bin/worktree-stack up` boots an isolated
+  copy. `bin/worktree-stack db` starts only Postgres for host-native tests.
+- **Ruby that remains** — `oauth-provider/` (Sinatra, its own Gemfile),
+  `bin/perf-upload` and `bin/monkey` (stdlib only). There is no app Gemfile.
 
 ## Repo layout
 
-- `docs/superpowers/specs/` — design specs (source of truth for architecture
-  decisions)
-- `docs/superpowers/plans/` — implementation plans (checkbox progress tracking,
-  designed for resuming and/or delegation to subagents)
-- `docs/api/` — `openapi.yaml` (OpenAPI 3.1 contract, hand-maintained source of
-  truth for the API) and `bruno/` (ready-to-run Bruno collection)
-- `docs/architecture/c4.md` — C4 model of the system as Mermaid diagrams (L1
-  context, L2 containers, L3 components for `web` and `worker`, plus dynamic
-  views of the auth chain, the async upload pipeline, and soft-delete/purge).
-  Read it first to get oriented; the prose here stays the source of truth.
-  Kept honest by `test/integration/c4_diagrams_test.rb`, which fails when a
-  compose service, an `app/jobs/` class, an `app/services/` object, a
-  `config/recurring.yml` task or a `config/queue.yml` pool is missing from it.
-- `oauth-provider/` — temporary standalone OAuth2 dev provider (own Gemfile)
+- `rust/ged` — the application
+- `rust/parity` — black-box HTTP and business-table suite, Rust only
+- `rust/e2e` — Playwright against the admin UI
+- `docs/superpowers/specs/` — design specs (historical; do not rewrite them
+  to pretend the decisions were always Rust)
+- `docs/superpowers/plans/` — implementation plans, including the migration
+  plan. Leave them as the record of the work.
+- `docs/api/` — `openapi.yaml` and the Bruno collection
+- `docs/architecture/c4.md` — C4 diagrams, checked by `guards_c4.rs`
+- `docs/migration/` — parity inventory and the accepted gaps. `diff_fuzz`
+  replay instructions live in `parity-gaps.md`.
+- `oauth-provider/` — temporary OAuth2 dev provider
+- `observability/grafana/` — provisioned "GED overview" dashboard
+- `bin/worktree-stack`, `bin/ci`, `bin/perf-upload`, `bin/monkey`
 
 ## Key architectural decisions
 
 - **Permission model:** departments are folders and the permission boundary.
-  Access to a department covers its whole subtree — no finer-grained
-  per-subfolder permissions. Each grant (`client_department_accesses` row)
-  carries independent `can_read` / `can_write` booleans (DB check: at least
-  one true; "no access" = no row). READ gates list/show/download/poll, WRITE
-  gates upload/delete/replace-tags/create-sub-department; write does **not**
-  imply read (a write-only client still gets the created document echoed back
-  — that's the result of its write, not a read). Read and write cascade
-  independently down the subtree; child grants never escalate upward. The
-  admin app-client form is a per-department Read/Write checkbox grid.
+  Access to a department covers its whole subtree. Each grant carries
+  independent `can_read` / `can_write` (at least one true; no access means no
+  row). READ gates list, show, download and poll. WRITE gates upload, delete,
+  replace-tags and create-sub-department. Write does not imply read: a
+  write-only client still receives the document it just created. Read and
+  write cascade independently down the subtree; child grants never escalate
+  upward. An unknown mode is an error, never a silent read.
 - **Two auth paths:** application clients use OAuth2 client_credentials JWTs
-  (validated as a resource server via JWKS); admins use a separate built-in
-  username/password login, unrelated to the OIDC flow.
-- **Client provisioning is manual:** app clients are registered by an admin and
-  explicitly mapped to department access — never auto-provisioned from JWT
-  claims, since the real IdP's claim structure isn't known yet.
-- **Local OAuth2 provider is temporary:** the company's real IdP isn't
-  accessible yet, so a separate small Sinatra app (`jwt` gem, SQLite storage,
-  in `oauth-provider/`) issues dev/test RS256 JWTs and exposes a JWKS endpoint
-  in the `oauth-provider` Docker Compose service. Cutting over to
-  the real IdP later is a config change (JWKS URL/issuer) on the `web` service,
-  not a code change. During this stopgap, registering a test client requires two
-  steps: register it in `oauth-provider` to get credentials, then register the
-  same client_id in the GED admin UI to grant department access.
-- **Document upload has two modes** on the same `POST /api/v1/documents`
-  endpoint: synchronous (default, returns the document UUID inline) and
-  asynchronous (triggered by a `callback_url` param — returns `202 Accepted`
-  immediately, stores the file via an ActiveJob background job, then POSTs the
-  result to the callback URL). Async exists for large/slow uploads where the
-  caller doesn't want to hold the connection open. Kafka-topic delivery was
-  considered but deferred — callback URL only for now.
-- **No full-text search, no document versioning, no automated backups** in this
-  pass — see the spec's Non-goals section before adding these.
-- **Tags are a key→value map, not a registry:** `documents.tags` is a
-  single-level jsonb map (`{"type": "facture", "urgent": null}`, GIN-indexed),
-  validated/normalized by the `KvTaggable` concern (also on
-  `upload_requests.tags`). Tags are passed at upload (`tags[type]=facture`),
-  replaced wholesale via `PUT /api/v1/documents/:id/tags`, and filtered with
-  `?tag=<key>` / `?tag=<key>&tag_value=<value>`. There are no `/api/v1/tags`
-  endpoints and no admin tags section.
-- **Readonly document metadata:** every document also exposes a system-managed,
-  readonly `metadata` block (`uploaded_at`, `updated_at`, `upload_mode`),
-  serialized separately from the client-owned `tags` map so replace-the-whole-map
-  semantics stay intact. `uploaded_at` is a denormalized column (sync = creation
-  time; async = the originating request's `created_at`, passed by
-  `StoreDocumentJob`); the indexation date is the top-level `created_at` and the
-  owner is `uploaded_by` (not duplicated). `stored_async` is a plain boolean flag
-  that drives `upload_mode` — deliberately no `upload_request_id` link, so those
-  rows can be purged later. `Document#metadata_hash` is the single serialized
-  shape, reused by `document_json` and the async callback/polling payloads.
-  Documents are filterable by `?uploaded_by=`, `?upload_mode=sync|async`, and
-  ISO8601 ranges `?uploaded_after/before`, `?indexed_after/before`,
-  `?updated_after/before` (invalid value → 400).
-- **Deleting a document is logical, with a 30-day purge window:** `DELETE
-  /api/v1/documents/:id` and the admin delete soft-delete (hide the document,
-  keep its file) instead of destroying it, so an admin can restore it from the
-  Trash within the retention window; a scheduled job hard-deletes documents once
-  the window elapses. The parallel async **upload_request** purge already exists
-  (`ReconcileUploadRequestsJob`, 30-day terminal-request cleanup) and is
-  unchanged.
-- **Bulk document actions (admin UI + API):** the admin documents index has a
-  multi-select toolbar (row checkboxes + `#select-all`, plain JS — no
-  Stimulus/Turbo) driving two actions: bulk soft-delete
-  (`POST /admin/documents/bulk_destroy`, `Document.bulk_soft_delete` —
-  `update_all` over the given ids, same semantics/retention as the single
-  delete) and an admin-only bulk ZIP download
-  (`GET /admin/documents/bulk_download`), streamed entry-by-entry by
-  `DocumentZipper` (via the `zip_kit` gem's `ZipKit::RailsStreaming`) so
-  files never buffer fully in memory; ZIP entries are named
-  `"#{id}-#{filename}"` since filenames aren't unique. The API exposes the
-  same bulk soft-delete as `DELETE /api/v1/documents/bulk_destroy`
-  (`document_ids[]`, max 500), fail-closed: any id outside the caller's
-  **write**-accessible departments (or unknown/already-deleted) 403s/404s the
-  whole request rather than partially applying it. There is no bulk-download
-  API endpoint — ZIP export is admin-UI only.
-- **Departments are soft-deleted too, but purge-gated on their references, not
-  a timer:** trashing a department (`Department#soft_delete!`) is **leaf-only**
-  (checked **unscoped** — a trashed child still blocks its parent) and, in one
-  transaction, hides the department (`deleted_at`) and bulk-trashes its live
-  docs via `update_all` (identical `purge_at = now + Document::RETENTION`).
-  A trashed department is API-invisible (fail-closed via `default_scope`, so no
-  new uploads land in it) and greyed in the admin index. `restore!` brings the
-  department **and all its trashed docs** back; `clear_soft_delete!` un-greys
-  the department only (used when a single doc is restored). The admin delete
-  flow (`Admin::DepartmentsController#destroy`) branches to a
-  `confirm_deletion` resolution page when the department still holds docs or
-  upload_requests: **Move** everything (live + trashed docs and upload_requests)
-  to another department then hard-delete the source, or **Trash** the department
-  and its docs. Departments with sub-departments keep today's blocking error.
-  There is **no `departments.purge_at` column** — a trashed department is
-  hard-deleted by `PurgeDeletedDocumentsJob` only once all of its referencing
-  rows (trashed docs, upload_requests, unscoped children) are gone (~30 days),
-  which cascades its `client_department_accesses`.
+  validated as a resource server via JWKS. Admins use the built-in
+  username/password session, unrelated to the OIDC flow.
+- **Client provisioning is manual.** App clients are registered by an admin
+  and mapped to departments. They are never auto-provisioned from JWT claims.
+- **The local OAuth2 provider is temporary.** `oauth-provider/` issues dev
+  RS256 JWTs and exposes JWKS. Cutting over to the company IdP is a config
+  change (`GED_OIDC_*`) on `web` and `worker`, not a code change. Registering
+  a test client is two steps: register it in `oauth-provider`, then register
+  the same `client_id` in the admin UI.
+- **Document upload has two modes** on `POST /api/v1/documents`: synchronous
+  (default, returns the document id) and asynchronous (`callback_url` →
+  `202`, file staged, `StoreDocumentJob`, then `DeliverCallbackJob` POSTs the
+  result). Kafka was considered and deferred.
+- **No full-text search, no document versioning, no automated backups.**
+- **Tags are a key→value map, not a registry.** `documents.tags` is a
+  single-level jsonb object, GIN-indexed. Tags are set at upload, replaced
+  wholesale via `PUT /api/v1/documents/:id/tags`, and filtered with
+  `?tag=` / `?tag_value=`. There is no `/api/v1/tags` collection.
+- **Readonly metadata** is separate from tags: `uploaded_at`, `updated_at`,
+  `upload_mode`. `uploaded_at` is sync creation time, or the originating
+  request's `created_at` for async. `stored_async` drives `upload_mode`.
+  There is no `upload_request_id` on the document. Filters: `uploaded_by`,
+  `upload_mode=sync|async`, and ISO8601 `uploaded_after/before`,
+  `indexed_after/before`, `updated_after/before` (invalid value → 400).
+- **Deleting a document is logical, with a 30-day purge window.** API and
+  admin delete set `deleted_at` and `purge_at`. An admin can restore from
+  Trash. `PurgeDeletedDocumentsJob` hard-deletes past-due rows and their
+  files. `ReconcileUploadRequestsJob` still purges terminal upload requests
+  after 30 days.
+- **Bulk actions:** the admin documents index has a multi-select toolbar
+  (no Stimulus, no Turbo) for bulk soft-delete and a ZIP download streamed
+  entry by entry (`DocumentZipper` / `admin::zip_stream`). ZIP entries are
+  named `{id}-{filename}`. The API bulk soft-delete is
+  `DELETE /api/v1/documents/bulk_destroy` (`document_ids[]`, max 500),
+  fail-closed: any id outside the caller's write-accessible departments
+  rejects the whole request. There is no bulk-download API.
+- **Departments are soft-deleted, purge-gated on references, not a timer.**
+  Trashing a department is leaf-only (checked unscoped — a trashed child
+  still blocks its parent) and, in one transaction, hides the department and
+  bulk-trashes its live documents. A trashed department is API-invisible.
+  Restore brings the department and its trashed documents back. The admin
+  delete flow offers Move or Trash when the department still holds documents
+  or upload requests. Departments with sub-departments stay blocked. There
+  is no `departments.purge_at`. `PurgeDeletedDocumentsJob` hard-deletes a
+  trashed leaf department only once nothing references it, which cascades
+  `client_department_accesses`. Name uniqueness includes trashed rows, so
+  recreating a trashed name is a validation error.
 
 ## How the pieces fit (implementation map)
 
-- **Bearer auth chain:** `Api::V1::BaseController#authenticate_app_client!` →
-  `Auth::TokenValidator.call` → `Auth::JwksCache` (process-local singleton,
-  300s TTL, serves stale keys on refresh failure, fails closed if never
-  fetched). Department authorization = `authorize_department!(dept, mode:)` +
-  `AppClient#can_access?(dept, mode)` — `mode` (`:read`/`:write`) is required
-  on both, so a forgotten mode fails loudly instead of silently authorizing
-  the wrong verb (walks `Department#self_and_ancestors` over the grants where
-  the mode's column is true). Fail-closed on the value too: an unknown mode
-  (typo, string, `nil`) raises `ArgumentError` in `granted_department_ids`
-  rather than defaulting to `can_read` — so a mistyped `:write` can never
-  authorize a write via the read column. List scopes use
-  `accessible_department_ids(:read)`; `find_authorized_document(mode:)` splits
-  show/download (`:read`) from destroy (`:write`).
-- **Async upload flow:** controller creates an `UploadRequest` (uuid pk) +
-  writes raw bytes to `StagingStore` (`storage/staging/<id>`) → 202 →
-  `StoreDocumentJob` (runs on the dedicated `uploads` queue) builds the
-  `Document` and marks the request completed **in one transaction** (a crash
-  in between would otherwise let reconcile re-store the document —
-  crash-recovery is exactly-once for documents, at-least-once for job runs
-  and callbacks), applies `upload_request.tags`, and deletes the staging
-  file →
-  `DeliverCallbackJob` POSTs
-  `{ request_id, status, document_id, error_message, tags, metadata }` (tags and
-  metadata `null` until the document exists) to the `callback_url` (5 attempts,
-  polynomial backoff, logs on final failure). `GET /api/v1/upload_requests/:id`
-  mirrors the same payload shape for polling. **SSRF guard:**
-  `CallbackUrlPolicy` blocks non-routable `callback_url` targets (loopback,
-  RFC1918, link-local incl. cloud metadata, CGNAT, IPv4-mapped IPv6) —
-  syntactically at request time in `UploadRequest` (422, no DNS) and with DNS
-  resolution in `DeliverCallbackJob` (refuse + log, no retry). Request-time
-  parsing also normalizes numeric IPv4 encodings itself via an `inet_aton`
-  helper (decimal `2130706433`, hex `0x7f000001`, octal `0177.0.0.1`, short
-  `127.1`), so numeric-loopback forms are caught before any resolver — and
-  identically on Darwin and glibc, which disagree on octal. At delivery,
-  `decide(url, resolve: true)` resolves **once** via `Addrinfo.getaddrinfo`
-  (the same libc path `Net::HTTP` uses) and the job **pins** the approved
-  address (`http.ipaddr=`, keeping the hostname for Host/SNI/cert), so there is
-  no resolve/connect rebinding window; an unresolvable host is refused (nothing
-  to pin). Design: `docs/superpowers/specs/2026-07-15-callback-ssrf-pinning-design.md`;
-  security audit findings live in `docs/security/`.
-- **Upload queue pause:** `UploadQueue` (facade over Solid Queue's native
-  pause) backs the Pause/Resume button on `/admin/upload_requests`. Pausing
-  stops claiming new `StoreDocumentJob`s; running jobs finish and their
-  callbacks (on `default`) still deliver. `ReconcileUploadRequestsJob` skips
-  pending re-enqueues while paused. Solid Queue runs in every environment
-  (dev: inside Puma via `bin/dev`, queue database `ged_development_queue`).
-- **Jobs in production run in a dedicated `worker` compose service**
-  (`./bin/jobs`, same image as web), hot-scalable on the same host with
-  `bin/worktree-stack scale N` (= `docker compose up -d --no-build
-  --no-recreate --scale worker=N worker`) — no rebuild, web and existing
-  workers untouched; replicas coordinate via Postgres. `scale` does not recreate existing containers and keeps the env they
-  were created with; new replicas take the current shell's env, so export the
-  same `GED_*` variables as for `up` (or put them in `.env`) before `scale`. (`up --scale
-  worker=N` also works but its `--build` recreates containers whenever the
-  build context changed.) `config/
-  queue.yml` splits two pools: `uploads` (env knobs `JOB_THREADS` ×
-  `JOB_CONCURRENCY`) and a small fixed `default` — **no `"*"` pool** (would
-  let an uploads backlog starve callbacks/reconcile); every `queue_as` must
-  be listed there, enforced by `test/jobs/queue_coverage_test.rb`. Web and
-  worker share the `storage` volume (staging + Active Storage blobs), so
-  scaling is same-host only — multi-host needs object storage first (see
-  `docs/superpowers/specs/2026-07-13-worker-scaling-design.md`). Dev still
-  runs Solid Queue inside Puma (`bin/dev` sets `SOLID_QUEUE_IN_PUMA`); the
-  test env keeps the `:test` adapter but has the queue schema loaded
-  (`ged_test_queue`).
-- **Document creation is shared, controllers are not:** the admin UI does not
-  reuse the API controllers (despite a spec sentence suggesting it) — instead
-  `Api::V1::DocumentsController`, `Admin::DocumentsController`, and
-  `StoreDocumentJob` all create documents through the `DocumentCreator`
-  service. Listing/download logic is still per-controller.
-- **Soft delete + purge:** `Document#soft_delete!` sets `deleted_at` +
-  `purge_at` (= `+ Document::RETENTION`, 30 days); a
-  `default_scope { where(deleted_at: nil) }` hides soft-deleted rows on every
-  read path, with `with_deleted` / `deleted` / `purgeable` (`unscope`) as the
-  escape hatches used by the Trash and the purge job. Admin Trash is
-  `Admin::DeletedDocumentsController` (`index` over `Document.deleted`,
-  `restore` → `Document#restore!`), linked in the top-bar nav.
-  `PurgeDeletedDocumentsJob` (`Document.purgeable.find_each(&:destroy!)`,
-  scheduled daily in `config/recurring.yml`) hard-deletes past-due rows;
-  `destroy!` fires Active Storage's default async blob purge. The same job then
-  hard-deletes trashed **leaf departments** (`Department.deleted`) whose
-  references are all clear — checked explicitly & unscoped, because the
-  `restrict_with_error` associations are default-scoped and never see trashed
-  rows: no `Document.with_deleted` under it, no `upload_requests`, no
-  `Department.with_deleted` children (the last covers the trash-child-then-parent
-  ordering — the parent clears the run after its last trashed child purges);
-  each `destroy!` is rescued+logged so one bad row can't abort the pass.
-  `Department` mirrors the document soft-delete (`default_scope`,
-  `with_deleted`/`deleted`, `soft_delete!`/`restore!`/`clear_soft_delete!`,
-  `leaf?`), and its name-uniqueness validation carries
-  `conditions: -> { with_deleted }` so recreating/restoring a trashed name
-  hits a 422 validation error, not an unrescued `RecordNotUnique`. Two
-  collateral read paths were hardened for a nil (trashed) department: the admin
-  Trash view resolves names via a `Department.with_deleted` lookup (marking
-  `(trashed)`) instead of the scoped `belongs_to`, and
-  `Api::V1::UploadRequestsController#show` treats a nil department as
-  `RecordNotFound` (404, not 500).
-- **Admin UI is a hand-rolled design system, no framework:** one plain
-  `app/assets/stylesheets/application.css` (CSS custom-property tokens, served
-  by Propshaft, no build) styles a top-bar layout via class names on the views.
-  Light/dark is token-driven (`:root` vs `:root[data-theme="dark"]`), set before
-  paint by an inline script in the layout `<head>` and toggled by
-  `#theme-toggle` (persisted in `localStorage`, handled in the importmap
-  `application.js` — the only JS, no Stimulus/Turbo). The admin document upload
-  is a drag-and-drop dropzone (`[data-dropzone]` + `[data-dropzone-file]`,
-  progressive enhancement over a visible `<input type=file>` so Capybara's
-  `attach_file` still works). Tags render as key/value chips via
-  `admin/shared/_tag_chips`; upload-request status uses
-  `AdminHelper#status_badge_class`. Keep visible labels/field names stable —
-  `test/system/admin_ui_test.rb` and `test/controllers/admin/*` assert on them.
-- **API docs are served, hand-maintained:** `ApiDocsController`
-  (`ActionController::Base`, no auth — deliberately public) serves the committed
-  `docs/api/openapi.yaml` at `GET /api/v1/openapi.yaml` and a Redoc page at
-  `GET /api/docs`. The spec is written by hand; `test/integration/api_docs_test.rb`
-  fails if a routed `/api/v1` path is missing from it (structure only, not
-  params/shapes) — update the YAML when adding or renaming an endpoint.
-- **Observability is two independent layers.** (1) Admin status page
-  `/admin/status` (`Admin::StatusController` + `SystemHealth`/`DiskSpace`
-  services): system health checks (DB, Solid Queue worker heartbeats, JWKS via
-  the read-only `Auth::JwksCache#health` — never fetches, so no HTTP on page
-  load; storage disk via `df -Pk`), pipeline and document counts — all local,
-  zero dependencies. (2) OpenTelemetry: traces (Rails/PG-obfuscated/Net::HTTP
-  auto-instrumentation) + custom metrics behind the `Telemetry` facade
-  (`lib/telemetry.rb` — `ged.documents.uploaded`, `ged.callbacks.deliveries`,
-  `ged.job.duration`; attribute values must stay closed-set, never
-  filenames/tags/departments). `config/initializers/opentelemetry.rb` loads
-  the SDK **only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set** — the facade's
-  instruments are no-ops otherwise (only `opentelemetry-metrics-api` is loaded
-  at boot; the metrics SDK/exporter are experimental 0.x, minor-pinned).
-  Tests: `test/lib/telemetry_test.rb` guards the SDK stays dormant in test;
-  `TelemetryTestHelpers#capture_telemetry` records emissions. Local backend:
-  `grafana/otel-lgtm` compose service under the `otel` profile
-  (`GED_OTEL=1 bin/worktree-stack up`; Grafana on `GED_GRAFANA_PORT` base
-  3300, OTLP on `GED_OTLP_PORT` base 4318), provisioned "GED overview"
-  dashboard in `observability/grafana/` (Prometheus mangles metric names:
-  `ged_documents_uploaded_total` etc.; HTTP panels use Tempo span metrics —
-  Ruby emits traces only).
+Rust modules under `rust/ged/src/`:
+
+- `main.rs`, `lib.rs` — CLI: `serve`, `worker`, `migrate`, `seed`, `run-job`.
+- `config.rs` — environment, fail-closed boot in production.
+- `db.rs` — SQLx pool. `seed.rs` — admin password (argon2id).
+- `telemetry.rs` — `ged.documents.uploaded`, `ged.callbacks.deliveries`,
+  `ged.job.duration`. Attribute values stay a closed set.
+- `http/` — `error`, `json`, `params` (Rack-shaped query and body),
+  `rails_headers` (the response-header behaviour the API still matches),
+  `state`.
+- `api/` — `documents`, `tags`, `departments`, `upload_requests`, `docs`,
+  `ping`, `multipart`, `support`. Routes are `.route("/api/v1…")` literals;
+  `guards_api_docs.rs` requires each one in `docs/api/openapi.yaml`.
+- `admin/` — `session`, `csrf`, `departments`, `app_clients`, `documents`,
+  `upload_requests`, `trash`, `status`, `system_health`, `disk_space`,
+  `zip_stream`, `assets`, `view`. Askama templates live next to the screens.
+- `auth/` — `token_validator` (`TokenValidator`), `jwks_cache` (`JwksCache`,
+  300s TTL, stale on refresh failure, fail closed if never fetched),
+  `authenticated_client`.
+- `domain/` — `app_client`, `department`, `document`, `document_creator`
+  (`DocumentCreator`), `tags`, `upload_request`, `time`.
+- `policy/callback_url.rs` — `CallbackUrlPolicy`. Syntactic at request time
+  (422, no DNS), and one DNS resolution at delivery. The job connects to the
+  approved address and keeps the hostname for Host, SNI and the certificate.
+  Numeric IPv4 forms (decimal, hex, octal, short) are normalised in process.
+- `storage/` — `disk`, `staging` (`StagingStore`), `files`, `content_type`,
+  `disposition`, Marcel tables.
+- `jobs/` — `queue` (enqueue, claim with `FOR UPDATE SKIP LOCKED`, pause),
+  `worker` (`WorkerSettings`, pools), `pool`, `scheduler`, `store_document`
+  (`StoreDocumentJob`), `deliver_callback` (`DeliverCallbackJob`),
+  `reconcile` (`ReconcileUploadRequestsJob`), `purge`
+  (`PurgeDeletedDocumentsJob`), `heartbeat`, `env`.
+
+**Async upload.** The handler writes an `upload_requests` row and the bytes
+to `StagingStore`, returns 202, and enqueues `StoreDocumentJob` on `uploads`.
+The job inserts the document and marks the request completed in one
+transaction, then deletes the staging file and enqueues `DeliverCallbackJob`
+on `default`. The callback body is
+`{ request_id, status, document_id, error_message, tags, metadata }`
+(tags and metadata null until the document exists). Five attempts, polynomial
+backoff. `GET /api/v1/upload_requests/:id` returns the same shape.
+
+**Queues.** Two pools, no `"*"` pool. `uploads` is `JOB_THREADS` threads by
+`JOB_CONCURRENCY` processes. `default` is 2 threads, fixed. Pausing uploads
+stops new `StoreDocumentJob` claims; a running job finishes, and callbacks
+on `default` still deliver. Reconcile does not re-enqueue pending requests
+while uploads are paused. `rust/ged/tests/guards_queue.rs` fails if a
+`QueueName` is not drained.
+
+**Schedule** (`scheduler::default_schedule`, all on `default`):
+
+- `ReconcileUploadRequestsJob` every 10 minutes
+- `clear_finished_jobs` hourly at minute 12
+- `PurgeDeletedDocumentsJob` daily at 03:00 UTC
+
+**Scale.** `bin/worktree-stack scale N` is
+`docker compose up -d --no-build --no-recreate --scale worker=N worker`.
+It does not recreate existing containers. New replicas take the current
+shell environment, so export the same `GED_*` variables as for `up`.
+Same-host only, because of the shared storage volume.
+
+**API docs** are public: `GET /api/v1/openapi.yaml` and `GET /api/docs`
+(Redoc). The YAML is the file in `docs/api/openapi.yaml`, embedded at build.
+
+**Observability.** `/admin/status` is local: database, worker heartbeats,
+JWKS health (never fetches on page load), disk via `df`. OpenTelemetry loads
+only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Local backend:
+`GED_OTEL=1 bin/worktree-stack up` (Grafana on `GED_GRAFANA_PORT`, base 3300;
+OTLP on `GED_OTLP_PORT`, base 4318).
 
 ## Known gaps / pitfalls
 
-Correction plan with per-item status:
-`docs/superpowers/plans/2026-07-10-ged-corrections.md` (P1 bugs, P2 gaps,
-and P3 improvements fixed 2026-07-10, except P3-8 — `accessible_department_ids`
-perf, deliberately deferred until department counts grow). Standing
-pitfalls:
+Accepted behavioural gaps, with the measurement that justified each one, are
+`docs/migration/parity-gaps.md`. Do not weaken a parity assertion to hide one.
 
-- **Real-IdP cutover checklist:** point `GED_OIDC_ISSUER`/`GED_OIDC_JWKS_URL`
-  at the real IdP, set `GED_CLIENT_ID_CLAIM` to the claim carrying the client
-  id, and configure token binding isolation:
-  - If the IdP issues a separate audience per service: set `GED_OIDC_TOKEN_BINDING=audience`
-    (default) and `GED_OIDC_AUDIENCE` to GED's audience value; the app verifies
-    `aud` claim against it (required — app refuses to boot without it in production).
-  - If the IdP issues a shared audience for all services: set `GED_OIDC_TOKEN_BINDING=scope`
-    and `GED_OIDC_REQUIRED_SCOPE` to GED's URN scope; the app verifies the token's
-    `scope`/`scp` claim carries this scope (required — app refuses to boot without it
-    in production). A shared company IdP issues tokens for every internal API under
-    the same `iss`, so without per-service isolation any app's token would be accepted
-    by GED; fail-closed verification (whether via `aud` or `scope`) prevents that.
-- `active_storage_attachments.record_id` was converted to uuid by a
-  corrective migration — Document/UploadRequest use uuid pks, everything else
-  bigint. Keep this in mind for any new attachable model.
+- **Real-IdP cutover.** Point `GED_OIDC_ISSUER` and `GED_OIDC_JWKS_URL` at
+  the real IdP, set `GED_CLIENT_ID_CLAIM` (default `sub`), and isolate tokens:
+  - Separate audience per service: `GED_OIDC_TOKEN_BINDING=audience` (the
+    default) and `GED_OIDC_AUDIENCE`. Production refuses to boot without it.
+  - Shared audience: `GED_OIDC_TOKEN_BINDING=scope` and
+    `GED_OIDC_REQUIRED_SCOPE`. Every token's `scope` or `scp` must contain it.
+    Production refuses to boot without it.
+- **Names kept from Rails** so compose and ops did not change: `RAILS_ENV`,
+  `SECRET_KEY_BASE`, `SOLID_QUEUE_SHUTDOWN_TIMEOUT`, the storage path
+  `/rails/storage`. They are not a Rails runtime.
+- **Replaying Rails.** Check out tag `rails-final` in another worktree. That
+  tree still has `GED_STACK=rails`. `diff_fuzz` compares a Rails URL and a
+  Rust URL; it does not need the Rails sources in this tree. The final
+  campaigns (seeds 13 and 29, 100000 requests, `undocumented=0`) are in
+  `parity-gaps.md`.
+- **Pagination.** `limit`/`offset`, default 100, max 500. `offset` is clamped
+  to 1_000_000. `GET /api/v1/documents` returns
+  `{ documents, pagination: { limit, offset, total } }`. `total` counts the
+  filtered set before limit and offset. `GET /api/v1/departments` is still a
+  bare array.
+- **API errors.** 401 invalid or missing token, 403 unregistered client or
+  forbidden department, 404 not found, 400 missing parameter or malformed
+  body, 422 validation, 413 empty body when the upload exceeds
+  `GED_MAX_UPLOAD_BYTES`.
 
 ## Conventions
 
-- Tests: Minitest (Rails default), WebMock for HTTP stubs. Run `bin/rails test`
-  (main app) and `cd oauth-provider && bundle exec rake` (provider).
-  System tests (Capybara + headless Chrome) are separate:
-  `bin/rails test:system`. `bin/ci` runs the Rails suite, `cargo test -p ged`,
-  and `cargo test -p parity` against the worktree stack when that stack
-  answers `GET /up` (see Workflow).
-- Test quirks: `JwtTestHelpers` (issue_token/stub_jwks!/bearer_header) backs
-  all API tests; `Auth::JwksCache.reset!` runs in every setup. WebMock's
-  `assert_requested` rejects the `(stub) { block }` form — use
-  `assert_requested(:post, url) { block }`.
-- Lint: RuboCop rails-omakase — `bin/rubocop` must pass before committing.
-- Perf/resilience tooling: `bin/perf-upload` (stdlib-only load driver) runs
-  bulk-upload campaigns and a `--chaos` crash-recovery test against the
-  worktree Docker stack (`--setup` provisions the test client); campaign
-  reports live in `docs/perf/`. Design:
-  `docs/superpowers/specs/2026-07-13-perf-upload-design.md`.
-- Ruby via mise (`.mise.toml`). Dev/test Postgres runs in Docker — **no
-  Homebrew Postgres**. Start it with `bin/worktree-stack db` (one container per
-  worktree on a slug-derived host port; `config/database.yml` auto-derives that
-  port via `bin/worktree-stack db-port`, so `bin/rails test`/`bin/dev` connect
-  natively to the right container). Stop any leftover `brew services
-  postgresql@17` first — it would hold port 5432 for the primary tree.
-- Env vars: `GED_OIDC_ISSUER`, `GED_OIDC_JWKS_URL`, `GED_CLIENT_ID_CLAIM`
-  (default `sub`), `GED_OIDC_TOKEN_BINDING` (`audience` default | `scope`),
-  `GED_OIDC_AUDIENCE` (required when binding=audience — `aud` is verified
-  fail-closed in this mode; the app refuses to boot without it in production,
-  and every token must carry a matching `aud`), `GED_OIDC_REQUIRED_SCOPE`
-  (required when binding=scope — the app refuses to boot without it in
-  production, and every token's `scope` or `scp` claim must contain this scope),
-  `GED_ADMIN_USERNAME`, `GED_ADMIN_PASSWORD`, `GED_MAX_UPLOAD_BYTES` (default
-  52428800 = 50 MiB; caps upload size — enforced at the edge via Thruster
-  `MAX_REQUEST_BODY`, and by `Document::MAX_BYTE_SIZE` model validation + the
-  async staging guard), `OTEL_EXPORTER_OTLP_ENDPOINT` (empty = OTel fully
-  disabled; compose feeds it from `GED_OTEL_ENDPOINT`), `OTEL_SERVICE_NAME`
-  (default `ged`). Worker scaling: `JOB_THREADS` (default 3, uploads pool
-  threads; also raises the DB pool via `config/database.yml`), `JOB_CONCURRENCY`
-  (default 1, uploads worker processes per container),
-  `SOLID_QUEUE_SHUTDOWN_TIMEOUT` (default 30s, must stay under the worker's
-  `stop_grace_period` 40s).
-- API error contract: 401 invalid/missing token, 403 unregistered client or
-  forbidden department, 404 not found, 400 missing param or malformed JSON body,
-  422 validation. A malformed JSON body raises before any controller, so it is
-  rendered by a custom `config.exceptions_app` (`JsonApiExceptions`) that emits
-  the `{ "error": ... }` contract for `/api/v1` paths, not a `rescue_from`.
-- API list endpoints paginate via `limit`/`offset` (default 100, max 500;
-  `offset` is clamped to `MAX_OFFSET` = 1,000,000 so a hostile value cannot
-  overflow the Postgres bigint offset into a 500). `GET /api/v1/documents`
-  returns an envelope `{ documents: [...], pagination: { limit, offset, total } }`
-  where `limit`/`offset` are the effective applied values (after clamping) and
-  `total` is the count of all filtered matches pre-pagination — so `total` can
-  exceed `documents.length`. **Note:** Rails counts a `.limit(n)` relation through
-  a subquery returning the page size, not the total; `total` must count the
-  filtered scope before limit/offset are applied to avoid this silent wrong-answer bug.
-  `GET /api/v1/departments` still returns a bare array (unchanged).
+- Tests: `cd rust && cargo test -p ged` (needs `bin/worktree-stack db`).
+  `cargo test -p parity` needs the compose stack (`GET /up`). Playwright:
+  `cd rust/e2e && npx playwright test` with `GED_BASE_URL` and
+  `GED_ADMIN_PASSWORD`. Close headless browsers in `finally`; do not leave
+  `chromium --headless` behind.
+- Lint: `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`
+  from `rust/`. No `unsafe` in `ged`.
+- `oauth-provider`: `cd oauth-provider && bundle exec rake`.
+- `bin/perf-upload` and `bin/monkey`: `ruby -c`. The load driver is
+  `bin/perf-upload` against the worktree stack (`--setup` once). Reports in
+  `docs/perf/`.
+- Ruby and Rust via mise (`.mise.toml`). Dev Postgres is Docker, not Homebrew.
+  Stop a leftover `brew services postgresql@17` so it does not hold 5432.
+- Env vars: `RAILS_ENV`, `DATABASE_URL`, `SECRET_KEY_BASE`, `GED_OIDC_ISSUER`,
+  `GED_OIDC_JWKS_URL`, `GED_CLIENT_ID_CLAIM` (default `sub`),
+  `GED_OIDC_TOKEN_BINDING` (`audience` default, or `scope`),
+  `GED_OIDC_AUDIENCE` (required in production when binding is audience),
+  `GED_OIDC_REQUIRED_SCOPE` (required in production when binding is scope),
+  `GED_ADMIN_USERNAME` (default `admin`), `GED_ADMIN_PASSWORD`,
+  `GED_MAX_UPLOAD_BYTES` (default 52428800), `OTEL_EXPORTER_OTLP_ENDPOINT`
+  (empty disables OTel), `OTEL_SERVICE_NAME` (default `ged`), `JOB_THREADS`
+  (default 3), `JOB_CONCURRENCY` (default 1), `SOLID_QUEUE_SHUTDOWN_TIMEOUT`
+  (default 30s, must stay under the worker `stop_grace_period` of 40s),
+  `PORT` (80 in the container). `GED_BACKEND` is unset or `rust` for parity;
+  any other value panics and names the tag `rails-final`.

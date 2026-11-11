@@ -3,6 +3,17 @@
 Chaque test Ruby (`test "..." do`) est classé dans une catégorie, avec le fichier cible
 qui le remplace. Généré le 2026-11-01 d'après `test/` (T1).
 
+**T16.** L'arbre `test/` n'est plus dans ce dépôt. Il est sur le tag local
+`rails-final` (commit `aba3d4b`). La couverture est celle de la colonne cible :
+`rust/parity` (HTTP et tables métier), `rust/ged` (unitaire), `rust/e2e`
+(navigateur). On lance `cargo test -p ged`, `cargo test -p parity` contre la
+stack (`GET /up`), et `npx playwright test` dans `rust/e2e`. `GED_BACKEND`
+vaut `rust` ou n'est pas défini ; toute autre valeur, dont `rails`, est refusée.
+`parity_schema` compare un `ged migrate` frais au golden
+`fixtures/rails_business_schema.sql`. Le second test, qui redumpait une base
+Rails vivante, a été retiré avec l'adaptateur. Le tableau de correspondance
+ci-dessous ne change pas.
+
 **Total : 404 tests** (comptage réel : `grep -rhE '^\s*test ["'"'"']' test | wc -l` = 404).
 Les tests de `oauth-provider/test/` ne sont pas comptés : ce service reste en Ruby.
 
@@ -71,10 +82,10 @@ Règles de classement :
   une fenêtre libre.
 - Ajouté (T4), hors inventaire Ruby : `rust/parity/tests/api_errors.rs` (7 tests, erreurs
   observables sans jeton ni route métier : `/up` et chemins inexistants) et
-  `rust/parity/tests/parity_schema.rs` (2 tests : `pg_dump --schema-only` des tables
-  métier Rust contre `rust/parity/fixtures/rails_business_schema.sql`, puis ce fichier contre
-  la base Rails vivante). Les deux tournent contre `GED_BACKEND=rails` et `GED_BACKEND=rust`
-  (le second test de `parity_schema` s'ignore hors Rails).
+  `rust/parity/tests/parity_schema.rs` (1 test depuis T16 : `pg_dump --schema-only`
+  des tables métier Rust contre `rust/parity/fixtures/rails_business_schema.sql`).
+  Le redump de la base Rails vivante n'existe plus dans cet arbre ; le golden se
+  régénère depuis le tag `rails-final` (voir `parity-gaps.md`).
 - Tout le reste : unitaire Rust (T4+), sauf mention contraire ci-dessus.
 
 ## Répartition par fichier Ruby

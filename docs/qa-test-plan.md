@@ -32,7 +32,7 @@ docker compose up --build -d
 Créer le compte admin (premier lancement uniquement) :
 
 ```bash
-docker compose exec web bin/rails db:seed
+docker compose exec web ged seed
 ```
 
 **Vérifications attendues :**
@@ -225,7 +225,7 @@ documents, base, clients OAuth) :
 ```bash
 docker compose down -v
 docker compose up --build -d
-docker compose exec web bin/rails db:seed
+docker compose exec web ged seed
 ```
 
 ## Rappels / limites connues (hors périmètre v1)

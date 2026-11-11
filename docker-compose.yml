@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_PASSWORD: postgres
     ports:
-      # Published so host-native `bin/rails test` / `bin/dev` connect to this
+      # Published so host-native `cargo test -p ged` connects to this
       # Dockerised Postgres (dev/test databases live here, not in Homebrew PG).
       # GED_DB_PORT lets bin/worktree-stack publish an isolated host port per
       # worktree; defaults to 5432 for the primary-tree stack.
