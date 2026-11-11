@@ -311,7 +311,10 @@ dates, `ged migrate`, `ged seed`.
 - [x] Vérifier : zéro perte, zéro doublon, aucun 5xx. Toute régression est rapportée.
       Rapport `docs/perf/2026-11-01-rust.md` (2026-11-11). Le harness du chaos web
       imprime `zero-loss: FAILED` parce qu'un 202 n'a pas été lu par le client ;
-      le SQL compte 552 documents et 552 noms distincts, zéro perte et zéro doublon.
+      le SQL compte 552 documents et 552 noms distincts, sans doublon. Un 202 non lu
+      par le client est l'explication probable de l'écart, non prouvée par upload
+      (le harness ne journalise pas les index acquittés) : zéro perte n'est établi
+      que sur les totaux.
 
 ### T16 — Suppression de Rails et documentation (S)
 
@@ -397,3 +400,46 @@ relectures, les intégrations et les correctifs des tâches qu'il a écrites (T7
   propriétaire du stockage.
 - La parité était lancée contre la stack Rust démarrée à la main (`bin/worktree-stack up`),
   pas dans `bin/ci`. T14 la fait suivre la pile active : voir le correctif de `bin/ci` dans T14.
+
+## Reports de la vague 8
+
+Constats mineurs de la relecture de T13 (`review-t13.md`), non traités ici. Les
+points H1, M1, M2 et M3 de cette relecture sont suivis séparément ; ceux-ci
+restent ouverts.
+
+- **M4 — familles absentes du générateur `diff_fuzz` :** mauvais scope
+  (`GED_OIDC_TOKEN_BINDING=scope`) ; client sans grant et second client ;
+  callbacks et transitions de l'upload asynchrone ; `bulk_destroy` au-delà de
+  500 ids, doc déjà supprimé ou hors périmètre write mélangé ; corps trop gros
+  (413), `PART_LIMIT`, `FORM_PARTS_LIMIT`, multipart sans boundary, tronqué ou en
+  LF seul ; corbeille (départements, docs, ancêtre supprimé, restauration) ;
+  comparaison de l'état DB entre les deux piles ; noms de fichiers hostiles
+  (`\r`, non UTF-8) et HEAD hors `/ping`.
+- **M5 — tri des départements :** `ORDER BY name` sans tie-break `id`
+  (`rust/ged/src/api/departments.rs`), fidèle à Rails mais instable sur les
+  ex æquo (unicité par `parent_id`). Ajouter un test de non-régression et
+  documenter l'écart d'ordre.
+- **M6 — correctif CR/LF multipart :** le fuzzer ne génère que `\n` ; `\r` n'est
+  couvert que par un test unitaire ; généralisation à tout en-tête de toute
+  partie non observée ; pas de test HTTP/parité ni de cas première/dernière
+  partie cassée ou corps tronqué.
+- **L1 :** `BadRequest(m) if m == "bad request"` décide le corps « bare » sur une
+  chaîne (`http/error.rs`) ; préférer une variante dédiée.
+- **L2 — `bin/worktree-stack` avec `GED_COMPOSE_PROJECT` :** `clean`, `scale` et
+  `exec` suivent `active_stack`, donc exiger `GED_STACK` sur chaque commande
+  d'un projet latéral d'une autre image ; les ports ne sont pas forcés.
+- **L3 :** `send_retry` de `diff_fuzz` rejoue les POST (doublon d'un seul côté,
+  faux écart possible, jamais un masquage).
+- **L4 — normalisation :** UUID et dates numérotés par ordre d'apparition,
+  ETag réduit à faible/forte ; le fuzzer ne prouve ni les valeurs de dates ni
+  l'ETag.
+- **L5 — `parity-gaps.md` :** ne mentionne pas HEAD (`Content-Length: 0`), le
+  content-type par défaut `text/html`, le tri des ex æquo ni le rejet des dates
+  sans heure.
+- **Rapport perf T15 (relecture T15, LOW) :** sonde `auth/aud_unverified` de
+  `bin/monkey` à durcir (token à `aud` étranger ou absent, 401 attendu) ;
+  `revoke_temp_grant` a un `rescue StandardError` mort (l'échec aborte) ;
+  `PERF_CLIENT_ID` interpolé dans le SQL sans échappement d'apostrophe ;
+  `ON CONFLICT … DO UPDATE` ne réinitialise pas `deleted_at` ; la phrase sur
+  le p99 plus haut côté Rust omet mix 3w (180 vs 152) et many-small 1w
+  (29 vs 26).

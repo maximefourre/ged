@@ -245,7 +245,9 @@ is the source of truth.
   (`./bin/jobs`, same image as web), hot-scalable on the same host with
   `bin/worktree-stack scale N` (= `docker compose up -d --no-build
   --no-recreate --scale worker=N worker`) — no rebuild, web and existing
-  workers untouched; replicas coordinate via Postgres. (`up --scale
+  workers untouched; replicas coordinate via Postgres. `scale` does not recreate existing containers and keeps the env they
+  were created with; new replicas take the current shell's env, so export the
+  same `GED_*` variables as for `up` (or put them in `.env`) before `scale`. (`up --scale
   worker=N` also works but its `--build` recreates containers whenever the
   build context changed.) `config/
   queue.yml` splits two pools: `uploads` (env knobs `JOB_THREADS` ×
