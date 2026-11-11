@@ -1278,8 +1278,9 @@ async fn a_clean_stop_releases_a_claim_left_without_a_recorded_result() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    // A claim of this worker whose outcome never reached the table.
-    let orphan = enqueue(&pool, "orphan", json!({}), QueueName::Default).await;
+    // A claim of this worker whose outcome never reached the table (on the
+    // queue no runner serves here, so nothing can claim the row first).
+    let orphan = enqueue(&pool, "orphan", json!({}), QueueName::Uploads).await;
     sqlx::query("UPDATE jobs SET claimed_by = $2, claimed_at = now(), attempts = 1 WHERE id = $1")
         .bind(orphan.0)
         .bind(worker)
