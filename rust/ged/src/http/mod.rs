@@ -353,7 +353,14 @@ async fn shield_inner(req: Request, next: Next) -> Response {
         return response;
     }
     // 413 keeps its empty body: that is the contract observed on the stack
-    // (docs/migration/parity-gaps.md).
+    // (docs/migration/parity-gaps.md). A multipart part-limit 500 does too.
+    if response
+        .extensions()
+        .get::<rails_headers::PreserveBody>()
+        .is_some()
+    {
+        return response;
+    }
     let is_json = response
         .headers()
         .get(CONTENT_TYPE)

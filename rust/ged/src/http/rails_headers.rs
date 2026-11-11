@@ -31,6 +31,12 @@ use sha2::{Digest, Sha256};
 #[derive(Clone, Copy, Debug)]
 pub struct Bare;
 
+/// The body is already the client-facing answer. The API shield must not
+/// replace an empty 500 with the JSON error contract. Rack's multipart part
+/// limits escape the app; Thruster answers 500 with an empty body.
+#[derive(Clone, Copy, Debug)]
+pub struct PreserveBody;
+
 /// Marks `response` as one Rails' controller layer would not have touched.
 pub fn bare(mut response: Response) -> Response {
     response.extensions_mut().insert(Bare);

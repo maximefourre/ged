@@ -17,9 +17,11 @@ pub const JSON_CONTENT_TYPE: &str = "application/json; charset=utf-8";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {
-    /// Status 400: handler-chosen text, or `"bad request"` for framework-level
-    /// rejections (malformed JSON, invalid query encoding, …).
+    /// Status 400 with a handler-chosen message (`"limit must be a string"`).
     BadRequest(String),
+    /// Framework 400 `"bad request"`: unparsable JSON, query, or multipart.
+    /// Rendered by the exceptions app, so it carries no security headers.
+    Unparsable,
     /// 401.
     Unauthorized(String),
     /// 403.
@@ -35,12 +37,12 @@ pub enum ApiError {
 impl ApiError {
     /// The generic 400 Rails renders for requests it cannot parse.
     pub fn bad_request() -> Self {
-        Self::BadRequest(status_message(StatusCode::BAD_REQUEST).into())
+        Self::Unparsable
     }
 
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::BadRequest(_) | Self::Unparsable => StatusCode::BAD_REQUEST,
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
@@ -55,6 +57,7 @@ impl ApiError {
             | Self::Unauthorized(m)
             | Self::Forbidden(m)
             | Self::Unprocessable(m) => m,
+            Self::Unparsable => status_message(StatusCode::BAD_REQUEST),
             Self::NotFound => status_message(StatusCode::NOT_FOUND),
             Self::Internal => status_message(StatusCode::INTERNAL_SERVER_ERROR),
         }
@@ -76,11 +79,7 @@ impl IntoResponse for ApiError {
         // no security headers and no Cache-Control. A handler-chosen 400 keeps
         // them. `JsonApiExceptions` is also what an unrescued exception hits,
         // including a download whose stored file is gone.
-        let from_exceptions = match &self {
-            Self::Internal => true,
-            Self::BadRequest(message) if message == "bad request" => true,
-            _ => false,
-        };
+        let from_exceptions = matches!(self, Self::Internal | Self::Unparsable);
         let response = json_error(self.status(), self.message());
         if from_exceptions {
             super::rails_headers::bare(response)

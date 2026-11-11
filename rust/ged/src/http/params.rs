@@ -785,7 +785,7 @@ mod tests {
     #[test]
     fn rejections_map_to_the_generic_400() {
         let error: ApiError = RackParams::parse("a=%zz").unwrap_err().into();
-        assert_eq!(error, ApiError::BadRequest("bad request".into()));
+        assert_eq!(error, ApiError::Unparsable);
     }
 
     /// The oracle: `ActionDispatch::ParamBuilder` itself, run on the Rails

@@ -388,6 +388,18 @@ fn too_large() -> Response {
     crate::http::payload_too_large()
 }
 
+fn part_limit() -> Response {
+    // Rack's `MultipartPartLimitError` / `MultipartTotalPartLimitError`
+    // escape the app. Thruster answers 500 with an empty body and no
+    // content type. Observed 2026-11-11: the 128th file part, and the
+    // 4096th part of any kind.
+    let mut response = crate::http::bare(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    response
+        .extensions_mut()
+        .insert(crate::http::rails_headers::PreserveBody);
+    response
+}
+
 fn content_length(headers: &HeaderMap) -> Option<u64> {
     headers
         .get(CONTENT_LENGTH)?
@@ -418,6 +430,9 @@ async fn create(State(state): State<AppState>, req: Request) -> Response {
                 Ok(intake) => intake,
                 Err(IntakeError::TooLarge) => return too_large(),
                 Err(IntakeError::Malformed) => return ApiError::bad_request().into_response(),
+                // Raised by Rack before the controller, so a missing token
+                // stays a 500 rather than a 401. Observed 2026-11-11.
+                Err(IntakeError::PartLimit) => return part_limit(),
             };
             let client = match AuthenticatedClient::from_request_parts(&mut parts, &state).await {
                 Ok(client) => client,

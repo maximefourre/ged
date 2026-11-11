@@ -285,6 +285,96 @@ async fn an_upload_cut_mid_body_is_a_400_with_no_file_and_no_row() {
     w.finish().await;
 }
 
+/// Rack counts filenames toward 128 and every part toward 4096. 129 text
+/// parts reach the controller. The 128th file part is an empty 500 before
+/// authentication. Observed on the Rails stack, 2026-11-11.
+#[tokio::test]
+async fn text_parts_over_the_file_limit_reach_the_controller() {
+    let w = world().await;
+
+    let mut text = Vec::new();
+    for i in 0..129 {
+        text.extend(
+            format!("--XX\r\nContent-Disposition: form-data; name=\"p{i}\"\r\n\r\n{i}\r\n")
+                .into_bytes(),
+        );
+    }
+    text.extend_from_slice(b"--XX--\r\n");
+    let req = w
+        .authed(Request::post("/api/v1/documents"))
+        .header("Content-Type", "multipart/form-data; boundary=XX")
+        .body(Body::from(text.clone()))
+        .unwrap();
+    let (status, body) = w.send(req).await;
+    assert_eq!(
+        (status.as_u16(), body.as_str()),
+        (
+            400,
+            r#"{"error":"param is missing or the value is empty or invalid: department_id"}"#
+        )
+    );
+
+    let req = Request::post("/api/v1/documents")
+        .header("Content-Type", "multipart/form-data; boundary=XX")
+        .body(Body::from(text))
+        .unwrap();
+    let (status, body) = w.send(req).await;
+    assert_eq!(
+        (status.as_u16(), body.as_str()),
+        (401, r#"{"error":"missing bearer token"}"#)
+    );
+
+    let mut files = Vec::new();
+    for i in 0..128 {
+        files.extend(
+            format!(
+                "--XX\r\nContent-Disposition: form-data; name=\"file\"; filename=\"f{i}.txt\"\r\nContent-Type: text/plain\r\n\r\nx\r\n"
+            )
+            .into_bytes(),
+        );
+    }
+    files.extend_from_slice(b"--XX--\r\n");
+    let req = Request::post("/api/v1/documents")
+        .header("Content-Type", "multipart/form-data; boundary=XX")
+        .body(Body::from(files))
+        .unwrap();
+    let response = w.app.clone().oneshot(req).await.unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!((status.as_u16(), bytes.as_ref()), (500, b"".as_slice()));
+    assert!(headers.get("content-type").is_none(), "{headers:?}");
+    assert!(headers.get("cache-control").is_none(), "{headers:?}");
+    assert!(headers.get("x-frame-options").is_none(), "{headers:?}");
+
+    let dept = w.dept.to_string();
+    let mut mixed = Vec::new();
+    mixed.extend(
+        format!("--XX\r\nContent-Disposition: form-data; name=\"department_id\"\r\n\r\n{dept}\r\n")
+            .into_bytes(),
+    );
+    mixed.extend_from_slice(
+        b"--XX\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nhi\r\n",
+    );
+    for i in 2..200 {
+        mixed.extend(
+            format!("--XX\r\nContent-Disposition: form-data; name=\"p{i}\"\r\n\r\n{i}\r\n")
+                .into_bytes(),
+        );
+    }
+    mixed.extend_from_slice(b"--XX--\r\n");
+    let req = w
+        .authed(Request::post("/api/v1/documents"))
+        .header("Content-Type", "multipart/form-data; boundary=XX")
+        .body(Body::from(mixed))
+        .unwrap();
+    let (status, body) = w.send(req).await;
+    assert_eq!(status.as_u16(), 201, "{body}");
+    assert_eq!(w.count("documents").await, 1);
+    assert_eq!(w.files("files"), 1);
+    w.finish().await;
+}
+
 /// A refused upload (no write access, bad tags…) leaves nothing behind.
 #[tokio::test]
 async fn a_refused_upload_leaves_no_file() {
