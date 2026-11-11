@@ -3,7 +3,7 @@
 
 use std::fmt;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -48,9 +48,43 @@ pub struct Written {
     pub head: Vec<u8>,
 }
 
+/// Removes a partial upload if the write is cancelled or fails before the
+/// caller has accepted the file. Drop runs synchronously, so a detached task
+/// cannot rename the partial into place afterwards.
+struct PartGuard {
+    part: PathBuf,
+    dest: PathBuf,
+    armed: bool,
+}
+
+impl PartGuard {
+    fn arm(dest: &Path, part: PathBuf) -> Self {
+        Self {
+            part,
+            dest: dest.to_path_buf(),
+            armed: true,
+        }
+    }
+
+    fn commit(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PartGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let _ = std::fs::remove_file(&self.part);
+        let _ = std::fs::remove_file(&self.dest);
+    }
+}
+
 /// Streams `reader` into `dest`. The bytes land in `dest` + `.part` and are
-/// renamed on success; on any failure (read error, over the limit) the partial
-/// file is removed. A body of exactly `limit` bytes is accepted.
+/// renamed on success; on any failure (read error, over the limit, or
+/// cancellation of this future) the partial file is removed. A body of
+/// exactly `limit` bytes is accepted.
 pub async fn copy_limited<R: AsyncRead + Unpin>(
     reader: R,
     dest: &Path,
@@ -61,20 +95,18 @@ pub async fn copy_limited<R: AsyncRead + Unpin>(
     }
     let mut part = dest.as_os_str().to_owned();
     part.push(".part");
-    let part = std::path::PathBuf::from(part);
+    let part = PathBuf::from(part);
+    let guard = PartGuard::arm(dest, part.clone());
 
     match write_part(reader, &part, limit).await {
         Ok(written) => match tokio::fs::rename(&part, dest).await {
-            Ok(()) => Ok(written),
-            Err(e) => {
-                let _ = tokio::fs::remove_file(&part).await;
-                Err(e.into())
+            Ok(()) => {
+                guard.commit();
+                Ok(written)
             }
+            Err(e) => Err(e.into()),
         },
-        Err(e) => {
-            let _ = tokio::fs::remove_file(&part).await;
-            Err(e)
-        }
+        Err(e) => Err(e),
     }
 }
 

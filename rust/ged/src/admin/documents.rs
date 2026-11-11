@@ -2,6 +2,7 @@
 //! download, and the bulk actions. The trash lives in [`super::trash`].
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use askama::Template;
 use axum::body::Body;
@@ -11,10 +12,10 @@ use axum::http::header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, Head
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use chrono::{NaiveDateTime, Utc};
+use futures_util::StreamExt;
 use serde_json::{Map, Value};
 use sqlx::{Postgres, QueryBuilder};
-use tokio::io::AsyncWriteExt;
-use tokio_util::io::ReaderStream;
+use tokio_util::io::{ReaderStream, StreamReader};
 use uuid::Uuid;
 
 use super::departments::{self, TreeOption};
@@ -257,7 +258,52 @@ pub async fn new(State(state): State<AppState>, Extension(ctx): Extension<Ctx>) 
 struct Incoming {
     filename: String,
     content_type: Option<String>,
+    file: HeldFile,
+}
+
+/// A stored upload that is deleted unless [`HeldFile::keep`] is called after
+/// the document row commits. Drop is synchronous, so cancelling the request
+/// (the client hung up) cannot leave the bytes behind.
+struct HeldFile {
+    storage: crate::storage::Storage,
     stored: Stored,
+    keep: bool,
+}
+
+impl HeldFile {
+    fn new(storage: crate::storage::Storage, stored: Stored) -> Self {
+        Self {
+            storage,
+            stored,
+            keep: false,
+        }
+    }
+
+    fn snapshot(&self) -> Stored {
+        Stored {
+            key: self.stored.key.clone(),
+            written: self.stored.written.clone(),
+        }
+    }
+
+    fn keep(&mut self) {
+        self.keep = true;
+    }
+}
+
+impl Drop for HeldFile {
+    fn drop(&mut self) {
+        if self.keep {
+            return;
+        }
+        let Ok(path) = self.storage.path_for(&self.stored.key) else {
+            return;
+        };
+        let _ = std::fs::remove_file(&path);
+        let mut part = path.into_os_string();
+        part.push(".part");
+        let _ = std::fs::remove_file(std::path::Path::new(&part));
+    }
 }
 
 enum StoreFail {
@@ -311,11 +357,11 @@ async fn create_multipart(state: AppState, ctx: Ctx, req: Request) -> AdminResul
             Ok(Some(field)) => field,
             Ok(None) => break,
             Err(e) if e.status() == StatusCode::PAYLOAD_TOO_LARGE => {
-                discard(&state, &file).await;
+                file.take();
                 return Ok(StatusCode::PAYLOAD_TOO_LARGE.into_response());
             }
             Err(_) => {
-                discard(&state, &file).await;
+                file.take();
                 return Err(AdminError::BadRequest);
             }
         };
@@ -324,13 +370,13 @@ async fn create_multipart(state: AppState, ctx: Ctx, req: Request) -> AdminResul
             let text = match field.text().await {
                 Ok(text) => text,
                 Err(_) => {
-                    discard(&state, &file).await;
+                    file.take();
                     return Err(AdminError::BadRequest);
                 }
             };
             // A bad token ahead of the file: refuse before reading the file.
             if !ctx.verify_csrf(Some(&text)) {
-                discard(&state, &file).await;
+                file.take();
                 return Ok(super::view::error_page(StatusCode::UNPROCESSABLE_ENTITY));
             }
             token = Some(text);
@@ -339,27 +385,26 @@ async fn create_multipart(state: AppState, ctx: Ctx, req: Request) -> AdminResul
         if name == "document[file]" {
             match take_file(&state, field).await {
                 Ok(Take::File(incoming)) => {
-                    if let Some(previous) = file.take() {
-                        let _ = state.storage.delete(&previous.stored.key).await;
-                    }
+                    // Dropping the previous part deletes its bytes.
+                    file.take();
                     file = Some(incoming);
                     file_problem = None;
                 }
                 Ok(Take::Problem(message)) => {
-                    discard(&state, &file).await;
+                    file.take();
                     file = None;
                     file_problem = Some(message);
                 }
                 Err(StoreFail::TooLarge) => {
-                    discard(&state, &file).await;
+                    file.take();
                     return Ok(StatusCode::PAYLOAD_TOO_LARGE.into_response());
                 }
                 Err(StoreFail::BadRequest) => {
-                    discard(&state, &file).await;
+                    file.take();
                     return Err(AdminError::BadRequest);
                 }
                 Err(StoreFail::Internal(cause)) => {
-                    discard(&state, &file).await;
+                    file.take();
                     return Err(AdminError::Internal(cause));
                 }
             }
@@ -368,7 +413,7 @@ async fn create_multipart(state: AppState, ctx: Ctx, req: Request) -> AdminResul
         let text = match field.text().await {
             Ok(text) => text,
             Err(_) => {
-                discard(&state, &file).await;
+                file.take();
                 return Err(AdminError::BadRequest);
             }
         };
@@ -380,7 +425,7 @@ async fn create_multipart(state: AppState, ctx: Ctx, req: Request) -> AdminResul
     }
 
     if !ctx.verify_csrf(token.as_deref()) {
-        discard(&state, &file).await;
+        file.take();
         return Ok(super::view::error_page(StatusCode::UNPROCESSABLE_ENTITY));
     }
     if let Some(message) = file_problem {
@@ -414,77 +459,54 @@ async fn take_file(state: &AppState, field: Field<'_>) -> Result<Take, StoreFail
         };
         return Ok(Take::Problem(message));
     };
-    let stored = store_field(state, field).await?;
+    let file = store_field(state, field).await?;
     Ok(Take::File(Incoming {
         filename,
         content_type,
-        stored,
+        file,
     }))
 }
 
-/// Streams the part into the store. The duplex holds one chunk; the file is
-/// never accumulated in a `Vec`.
-async fn store_field(state: &AppState, mut field: Field<'_>) -> Result<Stored, StoreFail> {
-    let (mut writer, reader) = tokio::io::duplex(64 * 1024);
-    let storage = state.storage.clone();
+/// Streams the part into the store, one chunk at a time, in this task. The
+/// bytes are never accumulated in a `Vec`. A failure or a cancelled request
+/// removes the file before it is committed (`PartGuard` inside `put`, then
+/// [`HeldFile`] until the row commits).
+async fn store_field(state: &AppState, field: Field<'_>) -> Result<HeldFile, StoreFail> {
     let limit = state.config.max_upload_bytes;
-    let put = tokio::spawn(async move { storage.put(reader, limit).await });
-
-    let mut read_failed: Option<StoreFail> = None;
-    loop {
-        match field.chunk().await {
-            Ok(Some(chunk)) => {
-                if writer.write_all(&chunk).await.is_err() {
-                    break;
-                }
-            }
-            Ok(None) => break,
-            Err(e) if e.status() == StatusCode::PAYLOAD_TOO_LARGE => {
-                read_failed = Some(StoreFail::TooLarge);
-                break;
-            }
-            Err(_) => {
-                read_failed = Some(StoreFail::BadRequest);
-                break;
-            }
+    let too_large = AtomicBool::new(false);
+    let bad_request = AtomicBool::new(false);
+    let stream = field.map(|result| match result {
+        Ok(chunk) => Ok(chunk),
+        Err(e) if e.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            too_large.store(true, Ordering::Relaxed);
+            Err(std::io::Error::other("payload too large"))
         }
-    }
-    drop(writer);
-
-    let stored = match put.await {
-        Ok(Ok(stored)) => stored,
-        Ok(Err(StorageError::TooLarge { .. })) => return Err(StoreFail::TooLarge),
-        Ok(Err(e)) => return Err(StoreFail::Internal(e.to_string())),
-        Err(e) => return Err(StoreFail::Internal(e.to_string())),
-    };
-    if let Some(fail) = read_failed {
-        let _ = state.storage.delete(&stored.key).await;
-        return Err(fail);
-    }
-    Ok(stored)
-}
-
-async fn discard(state: &AppState, file: &Option<Incoming>) {
-    if let Some(file) = file {
-        let _ = state.storage.delete(&file.stored.key).await;
+        Err(_) => {
+            bad_request.store(true, Ordering::Relaxed);
+            Err(std::io::Error::other("multipart"))
+        }
+    });
+    let reader = StreamReader::new(stream);
+    match state.storage.put(reader, limit).await {
+        Ok(stored) => Ok(HeldFile::new(state.storage.clone(), stored)),
+        Err(StorageError::TooLarge { .. }) => Err(StoreFail::TooLarge),
+        Err(_) if too_large.load(Ordering::Relaxed) => Err(StoreFail::TooLarge),
+        Err(_) if bad_request.load(Ordering::Relaxed) => Err(StoreFail::BadRequest),
+        Err(e) => Err(StoreFail::Internal(e.to_string())),
     }
 }
 
 async fn finish_upload(
     state: &AppState,
     ctx: &Ctx,
-    upload: Incoming,
+    mut upload: Incoming,
     department: Option<&str>,
     tags_text: &str,
 ) -> AdminResult {
-    let key = upload.stored.key.clone();
     let username = ctx.admin().map(|a| a.username).unwrap_or_default();
     let mut tx = match state.db.begin().await {
         Ok(tx) => tx,
-        Err(e) => {
-            let _ = state.storage.delete(&key).await;
-            return Err(e.into());
-        }
+        Err(e) => return Err(e.into()),
     };
     let created = DocumentCreator::create(
         &mut tx,
@@ -494,7 +516,7 @@ async fn finish_upload(
                 .and_then(rails_id),
             filename: upload.filename,
             content_type: upload.content_type,
-            file: upload.stored,
+            file: upload.file.snapshot(),
             uploaded_by: format!("admin:{username}"),
             tags: parse_tags_text(tags_text),
             uploaded_at: None,
@@ -506,23 +528,19 @@ async fn finish_upload(
     match created {
         Ok(_) => match tx.commit().await {
             Ok(()) => {
+                upload.file.keep();
                 ctx.flash("notice", "Document uploaded.");
                 Ok(ctx.redirect(DOCUMENTS))
             }
-            Err(e) => {
-                let _ = state.storage.delete(&key).await;
-                Err(e.into())
-            }
+            Err(e) => Err(e.into()),
         },
         Err(CreateError::Invalid(errors)) => {
             let _ = tx.rollback().await;
-            let _ = state.storage.delete(&key).await;
             ctx.flash("alert", errors.join(", "));
             Ok(ctx.redirect(NEW_DOCUMENT))
         }
         Err(CreateError::Db(e)) => {
             let _ = tx.rollback().await;
-            let _ = state.storage.delete(&key).await;
             Err(e.into())
         }
     }
@@ -731,13 +749,13 @@ pub async fn bulk_destroy(
     Extension(ctx): Extension<Ctx>,
     RequestParams(params): RequestParams,
 ) -> AdminResult {
-    let ids = document_ids(&params);
-    if ids.is_empty() {
+    let selection = document_ids(&params);
+    if !selection.submitted {
         ctx.flash("alert", "No documents selected.");
         return Ok(ctx.redirect(DOCUMENTS));
     }
     let mut conn = state.db.acquire().await?;
-    let n = Document::bulk_soft_delete(&mut conn, &ids, Utc::now().naive_utc()).await?;
+    let n = Document::bulk_soft_delete(&mut conn, &selection.ids, Utc::now().naive_utc()).await?;
     ctx.flash("notice", format!("{n} documents moved to trash."));
     Ok(ctx.redirect(DOCUMENTS))
 }
@@ -747,11 +765,12 @@ pub async fn bulk_download(
     Extension(ctx): Extension<Ctx>,
     params: RackParams,
 ) -> AdminResult {
-    let ids = document_ids(&params);
-    if ids.is_empty() {
+    let selection = document_ids(&params);
+    if !selection.submitted {
         ctx.flash("alert", "No documents selected.");
         return Ok(ctx.redirect(DOCUMENTS));
     }
+    let ids = selection.ids;
     let rows: Vec<(Uuid, String, Option<String>)> = sqlx::query_as(
         "SELECT d.id, d.filename, s.key FROM documents d \
          LEFT JOIN stored_files s ON s.document_id = d.id \
@@ -795,35 +814,79 @@ pub async fn bulk_download(
     Ok(response)
 }
 
-/// `Array(params[:document_ids]).map(&:to_s).reject(&:blank?)`, then UUID
-/// casts. A value that is not a UUID matches nothing (Rails 500s on the cast;
-/// see parity-gaps.md). Order is kept, duplicates dropped.
-fn document_ids(params: &RackParams) -> Vec<Uuid> {
+/// Non-blank `document_ids` values, and the UUIDs among them.
+///
+/// Rails keeps every non-blank string (`reject(&:blank?)`) and casts it.
+/// An invalid UUID becomes nil and matches nothing; it is still a selection,
+/// so the action runs (`0 documents moved to trash.`, or an empty ZIP) instead
+/// of the empty-selection alert. Order is kept, duplicates dropped.
+struct IdSelection {
+    submitted: bool,
+    ids: Vec<Uuid>,
+}
+
+fn document_ids(params: &RackParams) -> IdSelection {
     let values: Vec<ParamValue> = match params.get("document_ids") {
         Some(ParamValue::Array(items)) => items.clone(),
         Some(other) => vec![other.clone()],
-        None => return Vec::new(),
+        None => {
+            return IdSelection {
+                submitted: false,
+                ids: Vec::new(),
+            };
+        }
     };
     let mut seen = HashSet::new();
     let mut ids = Vec::new();
+    let mut submitted = false;
     for value in values {
         let text = id_param_text(&value);
         if departments::blank(&text) {
             continue;
         }
+        submitted = true;
         if let Some(id) = uuid_id(&text)
             && seen.insert(id)
         {
             ids.push(id);
         }
     }
-    ids
+    IdSelection { submitted, ids }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{page_href, page_of, parse_tags_text, preview_csp};
+    use super::{document_ids, page_href, page_of, parse_tags_text, preview_csp};
+    use crate::http::params::RackParams;
     use serde_json::json;
+
+    #[test]
+    fn a_non_uuid_is_still_a_selection() {
+        let params = RackParams::parse("document_ids[]=not-a-uuid").unwrap();
+        let selection = document_ids(&params);
+        assert!(selection.submitted);
+        assert!(selection.ids.is_empty());
+    }
+
+    #[test]
+    fn blanks_are_not_a_selection() {
+        let params = RackParams::parse("document_ids[]=&document_ids[]=").unwrap();
+        let selection = document_ids(&params);
+        assert!(!selection.submitted);
+        assert!(selection.ids.is_empty());
+        assert!(!document_ids(&RackParams::parse("").unwrap()).submitted);
+    }
+
+    #[test]
+    fn a_real_uuid_is_kept_beside_a_non_uuid() {
+        let params = RackParams::parse(
+            "document_ids[]=not-a-uuid&document_ids[]=11111111-1111-4111-8111-111111111111&document_ids[]=11111111-1111-4111-8111-111111111111",
+        )
+        .unwrap();
+        let selection = document_ids(&params);
+        assert!(selection.submitted);
+        assert_eq!(selection.ids.len(), 1);
+    }
 
     #[test]
     fn tags_text_is_one_pair_per_line() {

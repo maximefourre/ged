@@ -137,6 +137,21 @@ async fn admin_trash_page_renders_for_a_doc_whose_department_is_trashed() {
     assert_see(&page, "(trashed)");
 }
 
+#[tokio::test]
+async fn admin_restore_of_a_non_uuid_is_the_static_404() {
+    let w = AdminWorld::new().await;
+    let resp = w
+        .admin
+        .submit(
+            Method::PATCH,
+            "/admin/deleted_documents/not-a-uuid/restore",
+            &[],
+        )
+        .await;
+    assert_eq!(resp.status, 404, "{}", resp.text());
+    assert_see(&resp, "The page you were looking for doesn't exist");
+}
+
 async fn soft_delete_document(db: &sqlx::PgPool, id: Uuid) {
     sqlx::query(
         "UPDATE documents SET deleted_at = now(), purge_at = now() + interval '30 days', \

@@ -453,7 +453,12 @@ Relevé sur le stack Rails le 2026-11-03, reproduit par `rust/ged/src/admin/`.
   portent `Cache-Control: public, max-age=31556952`. Le contrôle disque de
   `/admin/status` lit toujours `GED_STORAGE_ROOT` (défaut `storage`) ; les octets
   uploadés, eux, restent sous `storage/`.
-- **Identifiants qui ne sont pas des UUID** (téléchargement, aperçu, édition,
-  suppression, restauration, sélection en lot) : le Rust ignore la valeur ou
-  répond 404. Rails lève sur le cast uuid et répond 500. Les tests n'envoient
-  que des UUID.
+- **Identifiants qui ne sont pas des UUID** (édition, téléchargement, aperçu,
+  suppression, restauration, et `GET /admin/documents/:id`, qui n'a pas de
+  route `show`) : Rails caste l'uuid invalide en nil et répond **404** avec
+  `public/404.html` (« The page you were looking for doesn't exist »). Ce
+  n'est pas un 500. Une sélection en lot vide ou faite de blancs redirige
+  avec l'alerte « No documents selected. ». Une sélection non vide dont aucun
+  id n'est un UUID lance quand même l'action : « 0 documents moved to trash. »
+  ou un ZIP vide (`application/zip`). Les ids valides d'un mélange sont
+  appliqués. Couvert par `admin_documents.rs` et `admin_trash.rs`.

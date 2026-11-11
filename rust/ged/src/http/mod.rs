@@ -77,7 +77,10 @@ async fn not_found(uri: Uri) -> Response {
     if is_api(&uri) {
         bare(ApiError::NotFound.into_response())
     } else {
-        plain_error(StatusCode::NOT_FOUND)
+        // Routing miss: the exceptions app serves `public/404.html`, not a
+        // one-line page. A GET such as `/admin/documents/not-a-uuid` lands
+        // here (no show route) and must carry that title.
+        crate::admin::view::error_page(StatusCode::NOT_FOUND)
     }
 }
 
@@ -343,7 +346,7 @@ async fn shield_inner(req: Request, next: Next) -> Response {
         return if api {
             bare(ApiError::NotFound.into_response())
         } else {
-            plain_error(StatusCode::NOT_FOUND)
+            crate::admin::view::error_page(StatusCode::NOT_FOUND)
         };
     }
     if !api {

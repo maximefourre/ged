@@ -217,4 +217,47 @@ mod tests {
         }
         assert!(secret.exists());
     }
+
+    /// A client that disappears mid-body cancels `put`. The `.part` file must
+    /// not survive that cancellation.
+    #[tokio::test]
+    async fn cancelling_a_put_leaves_no_file() {
+        let (_dir, storage) = store();
+        let (mut writer, reader) = tokio::io::duplex(64 * 1024);
+        let feeder = tokio::spawn(async move {
+            let chunk = vec![b'a'; 64 * 1024];
+            loop {
+                if tokio::io::AsyncWriteExt::write_all(&mut writer, &chunk)
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let storage2 = storage.clone();
+        let task = tokio::spawn(async move { storage2.put(reader, 1 << 20).await });
+        let root = storage.root().to_path_buf();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if !files_under(&root).is_empty() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "put never created a file"
+            );
+            tokio::task::yield_now().await;
+        }
+        assert!(!task.is_finished(), "put ended before it was cancelled");
+        task.abort();
+        let _ = task.await;
+        feeder.abort();
+        let _ = feeder.await;
+        assert!(
+            files_under(&root).is_empty(),
+            "cancelled put left {:?}",
+            files_under(&root)
+        );
+    }
 }

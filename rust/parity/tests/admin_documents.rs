@@ -413,3 +413,109 @@ async fn admin_download_still_streams_as_an_attachment() {
     assert!(disposition.starts_with("attachment"), "{disposition}");
     assert_eq!(resp.body, bytes);
 }
+
+const STATIC_404: &str = "The page you were looking for doesn't exist";
+
+fn assert_static_404(resp: &parity::Resp) {
+    assert_eq!(resp.status, 404, "{}", resp.text());
+    assert_see(resp, STATIC_404);
+}
+
+/// Rails casts a non-UUID to nil (`RecordNotFound` → the static 404). There
+/// is no documents `show` route, so `GET /admin/documents/:id` is the same page.
+#[tokio::test]
+async fn admin_non_uuid_document_paths_are_the_static_404() {
+    let w = AdminWorld::new().await;
+    for path in [
+        "/admin/documents/not-a-uuid",
+        "/admin/documents/not-a-uuid/edit",
+        "/admin/documents/not-a-uuid/download",
+        "/admin/documents/not-a-uuid/preview",
+    ] {
+        assert_static_404(&w.admin.get(path).await);
+    }
+    let destroyed = w
+        .admin
+        .submit(Method::DELETE, "/admin/documents/not-a-uuid", &[])
+        .await;
+    assert_static_404(&destroyed);
+}
+
+/// A non-blank id that is not a UUID is still a selection. Rails casts it to
+/// nil, matches nothing, and reports zero moves — it does not use the
+/// empty-selection alert.
+#[tokio::test]
+async fn admin_bulk_destroy_of_a_non_uuid_moves_zero_documents() {
+    let mut w = AdminWorld::new().await;
+    let dept = w.department(&name("finance"), None).await;
+    let id = w.document(dept, &name("kept.pdf"), json!({}), None).await;
+    let resp = w
+        .admin
+        .submit(
+            Method::POST,
+            "/admin/documents/bulk_destroy",
+            &[("document_ids[]", "not-a-uuid")],
+        )
+        .await;
+    assert!(matches!(resp.status, 302 | 303), "{}", resp.text());
+    let page = w.admin.page_after(&resp).await;
+    assert_see(&page, "0 documents moved to trash.");
+    assert_absent(&page, "No documents selected.");
+    assert!(!deleted_at_document(w.db(), id).await);
+}
+
+#[tokio::test]
+async fn admin_bulk_destroy_applies_the_real_ids_beside_a_non_uuid() {
+    let mut w = AdminWorld::new().await;
+    let dept = w.department(&name("finance"), None).await;
+    let gone = w.document(dept, &name("gone.pdf"), json!({}), None).await;
+    let kept = w.document(dept, &name("kept.pdf"), json!({}), None).await;
+    let gone_s = gone.to_string();
+    let resp = w
+        .admin
+        .submit(
+            Method::POST,
+            "/admin/documents/bulk_destroy",
+            &[
+                ("document_ids[]", "not-a-uuid"),
+                ("document_ids[]", &gone_s),
+            ],
+        )
+        .await;
+    let page = w.admin.page_after(&resp).await;
+    assert_see(&page, "1 documents moved to trash.");
+    assert!(deleted_at_document(w.db(), gone).await);
+    assert!(!deleted_at_document(w.db(), kept).await);
+}
+
+#[tokio::test]
+async fn admin_bulk_download_of_a_non_uuid_is_an_empty_zip() {
+    let w = AdminWorld::new().await;
+    let resp = w
+        .admin
+        .get("/admin/documents/bulk_download?document_ids%5B%5D=not-a-uuid")
+        .await;
+    assert_eq!(resp.status, 200, "{}", resp.text());
+    let ct = resp.header("content-type").unwrap_or("");
+    assert!(ct.starts_with("application/zip"), "{ct}");
+    let disposition = resp.header("content-disposition").unwrap_or("");
+    assert!(
+        disposition.starts_with("attachment") && disposition.contains("documents-"),
+        "{disposition}"
+    );
+    assert!(zip_entries(&resp.body).is_empty());
+}
+
+#[tokio::test]
+async fn admin_bulk_download_with_no_selection_selects_nothing() {
+    let w = AdminWorld::new().await;
+    for path in [
+        "/admin/documents/bulk_download",
+        "/admin/documents/bulk_download?document_ids%5B%5D=",
+    ] {
+        let resp = w.admin.get(path).await;
+        assert!(matches!(resp.status, 302 | 303), "{path}: {}", resp.text());
+        let page = w.admin.page_after(&resp).await;
+        assert_see(&page, "No documents selected.");
+    }
+}
