@@ -52,6 +52,34 @@ const SECURITY_HEADERS: [(&str, &str); 5] = [
 
 const REVALIDATE: &str = "max-age=0, private, must-revalidate";
 
+/// Mime type of a Content-Type value, the part before `;`.
+fn media_type(value: &str) -> Option<&str> {
+    let media = value.split(';').next().unwrap_or("").trim();
+    if media.is_empty() { None } else { Some(media) }
+}
+
+fn default_content_type(response: &mut Response) {
+    // Rails deletes the header again for these (`handle_no_content!`).
+    if matches!(
+        response.status().as_u16(),
+        100 | 101 | 102 | 103 | 204 | 205 | 304
+    ) {
+        return;
+    }
+    let raw = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    if media_type(raw).is_some() {
+        return;
+    }
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+}
+
 pub async fn layer(req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let if_none_match = req.headers().get(IF_NONE_MATCH).cloned();
@@ -67,6 +95,10 @@ async fn decorate(
     method: &Method,
     if_none_match: Option<&HeaderValue>,
 ) -> Response {
+    // `assign_default_content_type_and_charset!`, observed 2026-11-11: a
+    // response with no media type (missing header, or `send_file` of an empty
+    // type) is committed as `text/html; charset=utf-8`. 204/304 drop it later.
+    default_content_type(&mut response);
     for (name, value) in SECURITY_HEADERS {
         response
             .headers_mut()
@@ -115,6 +147,16 @@ async fn decorate(
         *response.status_mut() = StatusCode::NOT_MODIFIED;
         response.headers_mut().remove(CONTENT_TYPE);
         response.headers_mut().remove(CONTENT_LENGTH);
+        *response.body_mut() = Body::empty();
+    }
+    // Rack::Head, observed 2026-11-11 on controller responses (`HEAD /api/v1/ping`,
+    // both 200 and 401): the headers of the GET stay, including the ETag, the
+    // body is not sent, and Content-Length is 0. Bare responses (the exceptions
+    // app) never reach here, and keep the length of the body they would have sent.
+    if *method == Method::HEAD && response.status() != StatusCode::NOT_MODIFIED {
+        response
+            .headers_mut()
+            .insert(CONTENT_LENGTH, HeaderValue::from_static("0"));
         *response.body_mut() = Body::empty();
     }
     response

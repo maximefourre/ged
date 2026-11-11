@@ -34,8 +34,11 @@ async fn index(
         .map_err(internal)?;
     let (limit, offset) = pagination_window(&params);
     let rows: Vec<(i64, String, Option<i64>)> = sqlx::query_as(
+        // `order(:name)` only. A secondary `id` sorts ties Rails leaves alone,
+        // and the two lists then disagree (observed 2026-11-11, two departments
+        // both named "Fuzz Payroll").
         "SELECT id, name, parent_id FROM departments \
-         WHERE id = ANY($1) AND deleted_at IS NULL ORDER BY name, id LIMIT $2 OFFSET $3",
+         WHERE id = ANY($1) AND deleted_at IS NULL ORDER BY name LIMIT $2 OFFSET $3",
     )
     .bind(&ids)
     .bind(limit)

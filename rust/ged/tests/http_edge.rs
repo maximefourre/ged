@@ -375,6 +375,79 @@ mod rails_layer {
     }
 
     #[tokio::test]
+    async fn head_keeps_the_representation_headers_and_sends_no_body() {
+        // Rails' Rack::Head: the GET headers (including the ETag) stay, the
+        // body is dropped, and Content-Length becomes 0. Observed on
+        // `HEAD /api/v1/ping` (200 and 401) on 2026-11-11.
+        let response = call(Request::head("/up").body(Body::empty()).unwrap()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-length"], "0");
+        assert!(response.headers().get("etag").is_some());
+        assert_eq!(response.headers()["x-frame-options"], "SAMEORIGIN");
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_malformed_json_body_is_a_bare_400() {
+        // The exceptions app renders this 400, so it carries none of the
+        // controller headers. Observed on
+        // `PUT /api/v1/documents/:id/tags` with `{ "department_id": `.
+        let response = call(
+            Request::post("/api/v1/probe")
+                .header("content-type", "application/json")
+                .body(Body::from("{bad"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(response.headers().get("x-frame-options").is_none());
+        assert!(response.headers().get("cache-control").is_none());
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body.as_ref(), br#"{"error":"bad request"}"#);
+    }
+
+    #[tokio::test]
+    async fn a_blank_content_type_becomes_text_html() {
+        // `assign_default_content_type_and_charset!`: a committed response
+        // with no media type becomes `text/html; charset=utf-8`. Observed
+        // 2026-11-11 on a download whose stored type is empty (`send_file`
+        // clears it, then commit fills the default).
+        let response = call(
+            Request::get("/api/v1/blank-type")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/html; charset=utf-8"
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body.as_ref(), b"hello");
+    }
+
+    #[tokio::test]
+    async fn a_handler_500_is_bare_like_the_exceptions_app() {
+        // An unrescued exception never gets controller headers. Observed on
+        // `GET /api/v1/documents/:id/download` when the stored file is gone:
+        // both sides 500 `{"error":"internal server error"}`, Rails with no
+        // Cache-Control and no security headers (2026-11-11).
+        let response = call(
+            Request::get("/api/v1/internal")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(response.headers().get("x-frame-options").is_none());
+        assert!(response.headers().get("cache-control").is_none());
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body.as_ref(), br#"{"error":"internal server error"}"#);
+    }
+
+    #[tokio::test]
     async fn a_chunked_body_past_the_limit_is_an_empty_bare_413_on_any_endpoint() {
         let config = Config::from_lookup(&|k| match k {
             "RAILS_ENV" => Some("test".to_owned()),

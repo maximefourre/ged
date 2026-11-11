@@ -1,9 +1,11 @@
-//! JSON responses serialized like Rails' `render json:`.
+//! JSON responses serialized like Rails 8.1 `render json:`.
 //!
-//! ActiveSupport escapes `<`, `>`, `&`, U+2028 and U+2029 inside strings as
-//! `<`, `>`, `&`, ` `, ` ` (HTML-safe JSON). They can
-//! only occur inside string literals, so a replace on the serialized text is
-//! exact.
+//! `config.load_defaults 8.1` sets `action_controller.escape_json_responses`
+//! to false, so a controller calls `to_json(escape: false)`. Observed
+//! 2026-11-11 in the Rails process: `<`, `>`, `&`, U+2028 and U+2029 stay as
+//! themselves (`{"name":"a<b>&c"}.to_json(escape: false)`). `{}.to_json`
+//! without that option still rewrites `<`, `>`, `&`; the exceptions app uses
+//! it, and its messages are fixed status phrases, so the bytes match.
 
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -13,19 +15,7 @@ use super::error::JSON_CONTENT_TYPE;
 
 /// Serializes `value` the way Rails does.
 pub fn to_rails_json<T: Serialize + ?Sized>(value: &T) -> Result<String, serde_json::Error> {
-    let raw = serde_json::to_string(value)?;
-    let mut out = String::with_capacity(raw.len());
-    for c in raw.chars() {
-        match c {
-            '<' => out.push_str("\\u003c"),
-            '>' => out.push_str("\\u003e"),
-            '&' => out.push_str("\\u0026"),
-            '\u{2028}' => out.push_str("\\u2028"),
-            '\u{2029}' => out.push_str("\\u2029"),
-            other => out.push(other),
-        }
-    }
-    Ok(out)
+    serde_json::to_string(value)
 }
 
 /// A JSON response with the given status.
@@ -54,13 +44,12 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn escapes_like_active_support() {
+    fn render_json_leaves_html_and_line_separators() {
+        // Rails 8.1 `render json:` is `to_json(escape: false)`. Observed
+        // 2026-11-11: `<`, `>`, `&`, U+2028 and U+2029 are not rewritten.
         let input = format!("a<b>&c{}d{}", '\u{2028}', '\u{2029}');
         let body = to_rails_json(&json!({"error": input})).unwrap();
-        let want = format!(
-            "{{\"error\":\"a{bs}u003cb{bs}u003e{bs}u0026c{bs}u2028d{bs}u2029\"}}",
-            bs = '\\'
-        );
+        let want = format!("{{\"error\":\"{input}\"}}");
         assert_eq!(body, want);
     }
 

@@ -188,33 +188,33 @@ pub fn parse_iso8601(value: &str) -> Option<NaiveDateTime> {
     let text = value.trim_matches(|c: char| c.is_ascii_whitespace());
     let (date, rest) = split_date(text)?;
     let (year, month, day) = date;
-    let (mut hour, mut minute, mut second, mut micros) = (0u32, 0u32, 0u32, 0u32);
-    let mut zone = rest;
-    if let Some(time) = rest.strip_prefix(['T', 't']) {
-        let b = time.as_bytes();
-        if b.len() < 8 || b[2] != b':' || b[5] != b':' {
+    // `Time.iso8601` requires a time. A bare date (`2026-01-02`, `2026-11-01Z`)
+    // raises ArgumentError, observed on the Rails stack 2026-11-11.
+    let time = rest.strip_prefix(['T', 't'])?;
+    let b = time.as_bytes();
+    if b.len() < 8 || b[2] != b':' || b[5] != b':' {
+        return None;
+    }
+    let two = |s: &[u8]| -> Option<u32> {
+        (s.len() == 2 && s.iter().all(u8::is_ascii_digit))
+            .then(|| u32::from(s[0] - b'0') * 10 + u32::from(s[1] - b'0'))
+    };
+    let hour = two(&b[0..2])?;
+    let minute = two(&b[3..5])?;
+    let second = two(&b[6..8])?;
+    let mut zone = &time[8..];
+    let mut micros = 0u32;
+    if let Some(fraction) = zone.strip_prefix('.') {
+        let digits = fraction.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 {
             return None;
         }
-        let two = |s: &[u8]| -> Option<u32> {
-            (s.len() == 2 && s.iter().all(u8::is_ascii_digit))
-                .then(|| u32::from(s[0] - b'0') * 10 + u32::from(s[1] - b'0'))
-        };
-        hour = two(&b[0..2])?;
-        minute = two(&b[3..5])?;
-        second = two(&b[6..8])?;
-        zone = &time[8..];
-        if let Some(fraction) = zone.strip_prefix('.') {
-            let digits = fraction.bytes().take_while(u8::is_ascii_digit).count();
-            if digits == 0 {
-                return None;
-            }
-            let mut padded = fraction[..digits.min(6)].to_owned();
-            while padded.len() < 6 {
-                padded.push('0');
-            }
-            micros = padded.parse().ok()?;
-            zone = &fraction[digits..];
+        let mut padded = fraction[..digits.min(6)].to_owned();
+        while padded.len() < 6 {
+            padded.push('0');
         }
+        micros = padded.parse().ok()?;
+        zone = &fraction[digits..];
     }
     let offset_seconds = parse_zone(zone)?;
     // Time.utc range checks: 24 only as 24:00:00, seconds up to 60.
@@ -412,14 +412,10 @@ mod tests {
             parse_iso8601(" 2026-11-01t10:00:00z\n"),
             Some(at("2026-11-01 10:00:00.000000"))
         );
-        assert_eq!(
-            parse_iso8601("2026-11-01"),
-            Some(at("2026-11-01 00:00:00.000000"))
-        );
-        assert_eq!(
-            parse_iso8601("2026-11-01Z"),
-            Some(at("2026-11-01 00:00:00.000000"))
-        );
+        // `Time.iso8601` rejects a date that has no time, including a trailing zone.
+        assert_eq!(parse_iso8601("2026-11-01"), None);
+        assert_eq!(parse_iso8601("2026-11-01Z"), None);
+        assert_eq!(parse_iso8601("2026-01-02"), None);
         assert_eq!(
             parse_iso8601("2026-11-01T24:00:00Z"),
             Some(at("2026-11-02 00:00:00.000000"))
@@ -474,7 +470,7 @@ mod tests {
         };
         assert_eq!(
             crate::http::json::to_rails_json(&document_json(&doc)).unwrap(),
-            r#"{"id":"00000000-0000-0000-0000-000000000000","filename":"a\u003cb\u003e.pdf","content_type":null,"byte_size":3,"department_id":1,"uploaded_by":"c","tags":{"type":"x"},"created_at":"2026-11-01T21:12:39.123Z","metadata":{"uploaded_at":"2026-11-01T21:12:39.123Z","updated_at":"2026-11-01T21:12:39.123Z","upload_mode":"async"}}"#
+            r#"{"id":"00000000-0000-0000-0000-000000000000","filename":"a<b>.pdf","content_type":null,"byte_size":3,"department_id":1,"uploaded_by":"c","tags":{"type":"x"},"created_at":"2026-11-01T21:12:39.123Z","metadata":{"uploaded_at":"2026-11-01T21:12:39.123Z","updated_at":"2026-11-01T21:12:39.123Z","upload_mode":"async"}}"#
         );
     }
 }

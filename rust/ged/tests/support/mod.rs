@@ -4,9 +4,10 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::Path;
 use axum::http::{Request, StatusCode, header};
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use ged::config::Config;
-use ged::http::{RackParams, RequestParams};
+use ged::http::{ApiError, RackParams, RequestParams};
 use ged::{AppState, router_with};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
@@ -25,6 +26,8 @@ pub fn app_with_probes() -> Router {
     let routes = Router::new()
         .route("/api/v1/probe", get(echo_query).post(echo_body))
         .route("/api/v1/boom", get(boom))
+        .route("/api/v1/internal", get(internal_error))
+        .route("/api/v1/blank-type", get(blank_type))
         .route("/api/v1/items/{id}", get(item))
         .route("/admin/probe", post(echo_body).get(boom));
     router_with(state(), routes)
@@ -44,6 +47,19 @@ async fn echo_body(RequestParams(params): RequestParams) -> String {
 
 async fn boom() -> &'static str {
     panic!("secret internal detail: SELECT * FROM documents")
+}
+
+async fn internal_error() -> ApiError {
+    ApiError::Internal
+}
+
+async fn blank_type() -> axum::response::Response {
+    let mut response = (StatusCode::OK, "hello").into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_str("").expect("empty header value"),
+    );
+    response
 }
 
 async fn item(Path(id): Path<i64>) -> String {

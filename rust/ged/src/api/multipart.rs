@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use axum::body::Body;
 use axum::http::HeaderMap;
 use axum::http::header::CONTENT_TYPE;
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use tokio_util::io::StreamReader;
 
 use crate::http::params::{FORM_BYTES_LIMIT, RackParams};
@@ -90,7 +90,25 @@ pub async fn read(
                 })
             })
     };
-    let mut multipart = multer::Multipart::new(counted, boundary);
+    // Rack ignores a part whose headers contain a bare CR or LF (a filename
+    // `line\n74.txt`) and keeps parsing the other parts. multer aborts the
+    // whole body on that header, so drop those parts first. The body is
+    // already capped at `max_body`.
+    let mut buffered = Vec::new();
+    let mut stream = std::pin::pin!(counted);
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(chunk) => buffered.extend_from_slice(&chunk),
+            Err(_) if exceeded.load(Ordering::SeqCst) => return Err(IntakeError::TooLarge),
+            Err(_) => return Err(IntakeError::Malformed),
+        }
+    }
+    let buffered = drop_broken_header_parts(&buffered, &boundary);
+    let replay =
+        futures_util::stream::once(
+            async move { Ok::<_, std::io::Error>(bytes::Bytes::from(buffered)) },
+        );
+    let mut multipart = multer::Multipart::new(replay, boundary);
 
     let mut fields = String::new();
     let mut file: Option<UploadedFile> = None;
@@ -179,6 +197,71 @@ pub async fn read(
             Err(e)
         }
     }
+}
+
+/// Drops parts whose headers contain a bare CR or LF. Rack skips those parts
+/// and continues; a filename of `line\n74.txt` or `line\r74.txt` is the case
+/// observed on the Rails stack (2026-11-11).
+fn drop_broken_header_parts(body: &[u8], boundary: &str) -> Vec<u8> {
+    let marker = format!("--{boundary}");
+    let marker = marker.as_bytes();
+    let Some(first) = find_subslice(body, marker) else {
+        return body.to_vec();
+    };
+    let mut pos = first;
+    let mut out = Vec::with_capacity(body.len());
+    loop {
+        if pos + marker.len() > body.len() || &body[pos..pos + marker.len()] != marker {
+            break;
+        }
+        let after = pos + marker.len();
+        if body.get(after..after + 2) == Some(b"--") {
+            out.extend_from_slice(&body[pos..]);
+            break;
+        }
+        let Some(content_start) = body
+            .get(after..after + 2)
+            .and_then(|tail| (tail == b"\r\n").then_some(after + 2))
+        else {
+            out.extend_from_slice(&body[pos..]);
+            break;
+        };
+        let mut delimiter = Vec::with_capacity(2 + marker.len());
+        delimiter.extend_from_slice(b"\r\n");
+        delimiter.extend_from_slice(marker);
+        let Some(rel) = find_subslice(&body[content_start..], &delimiter) else {
+            out.extend_from_slice(&body[pos..]);
+            break;
+        };
+        let content_end = content_start + rel;
+        let content = &body[content_start..content_end];
+        let headers = match find_subslice(content, b"\r\n\r\n") {
+            Some(i) => &content[..i],
+            None => content,
+        };
+        if !header_is_broken(headers) {
+            // Include the CRLF that introduces the next delimiter.
+            out.extend_from_slice(&body[pos..content_end + 2]);
+        }
+        pos = content_end + 2;
+    }
+    out
+}
+
+fn header_is_broken(headers: &[u8]) -> bool {
+    headers.iter().enumerate().any(|(i, byte)| match byte {
+        b'\n' => i == 0 || headers[i - 1] != b'\r',
+        b'\r' => headers.get(i + 1) != Some(&b'\n'),
+        _ => false,
+    })
+}
+
+fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    hay.windows(needle.len())
+        .position(|window| window == needle)
 }
 
 /// Percent-encodes everything but unreserved characters, so that
@@ -291,6 +374,42 @@ mod tests {
         assert_eq!(file.content_type.as_deref(), Some("application/pdf"));
         assert_eq!(file.stored.written.byte_size, 4);
         assert_eq!(files_under(storage.root()), 1);
+    }
+
+    #[tokio::test]
+    async fn a_file_whose_header_has_a_bare_line_break_is_dropped_like_rack() {
+        // Rack keeps parsing and ignores the part. Observed 2026-11-11:
+        // `filename="line\n74.txt"` yields the text fields and no file, and a
+        // text part after the broken file is kept.
+        let (_dir, storage) = storage();
+        let data = body(
+            "XX",
+            &[
+                ("department_id", None, "3"),
+                ("file", Some("line\n74.txt"), "%PDF"),
+                ("after", None, "later"),
+            ],
+        );
+        let intake = read("XX".into(), Body::from(data), &storage, 1 << 20)
+            .await
+            .unwrap();
+        assert_eq!(intake.params.str("department_id"), Some("3"));
+        assert_eq!(intake.params.str("after"), Some("later"));
+        assert!(intake.file.is_none());
+        assert_eq!(files_under(storage.root()), 0);
+
+        let cr = body(
+            "XX",
+            &[
+                ("department_id", None, "9"),
+                ("file", Some("line\r74.txt"), "HELLO"),
+            ],
+        );
+        let intake = read("XX".into(), Body::from(cr), &storage, 1 << 20)
+            .await
+            .unwrap();
+        assert_eq!(intake.params.str("department_id"), Some("9"));
+        assert!(intake.file.is_none());
     }
 
     #[tokio::test]

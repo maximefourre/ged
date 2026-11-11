@@ -71,7 +71,22 @@ impl std::error::Error for ApiError {}
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        json_error(self.status(), self.message())
+        // The exceptions app, not a controller: generic "bad request"
+        // (unparsable JSON or multipart) and every 500. Observed 2026-11-11:
+        // no security headers and no Cache-Control. A handler-chosen 400 keeps
+        // them. `JsonApiExceptions` is also what an unrescued exception hits,
+        // including a download whose stored file is gone.
+        let from_exceptions = match &self {
+            Self::Internal => true,
+            Self::BadRequest(message) if message == "bad request" => true,
+            _ => false,
+        };
+        let response = json_error(self.status(), self.message());
+        if from_exceptions {
+            super::rails_headers::bare(response)
+        } else {
+            response
+        }
     }
 }
 
