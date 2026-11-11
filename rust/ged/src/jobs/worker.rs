@@ -162,7 +162,7 @@ pub async fn run(
     let registry = Arc::new(registry(&env, production_policy()));
     let (stop, rx) = watch::channel(false);
 
-    let mut runners = tokio::task::JoinSet::new();
+    let mut runners: tokio::task::JoinSet<Result<(), sqlx::Error>> = tokio::task::JoinSet::new();
     for cfg in settings.runners() {
         let runner = Runner::new(db.clone(), registry.clone(), cfg);
         let rx = rx.clone();
@@ -174,21 +174,54 @@ pub async fn run(
         .collect();
     let scheduler = tokio::spawn(scheduler::run(db.clone(), tasks, SCHEDULER_TICK, rx));
 
-    wait_for_signal().await?;
-    eprintln!("ged worker: shutting down");
-    let _ = stop.send(true);
-
-    let mut failure = None;
-    while let Some(joined) = runners.join_next().await {
-        match joined {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => failure = Some(e.to_string()),
-            Err(e) => failure = Some(e.to_string()),
-        }
-    }
+    let failure = supervise(&mut runners, &stop, wait_for_signal()).await?;
     let _ = scheduler.await;
     db.close().await;
     failure.map_or(Ok(()), |e| Err(e.into()))
+}
+
+/// Waits for `signal` or for any runner to end, then asks the rest to stop
+/// and drains them. A runner only ends on its own when something is wrong
+/// (e.g. `heartbeat::register` failed on a database blip): the process then
+/// reports it and exits non-zero, so the orchestrator restarts it, instead of
+/// idling with a pool that never claims (final review m6). Returns the first
+/// failure message.
+async fn supervise<S>(
+    runners: &mut tokio::task::JoinSet<Result<(), sqlx::Error>>,
+    stop: &watch::Sender<bool>,
+    signal: S,
+) -> std::io::Result<Option<String>>
+where
+    S: std::future::Future<Output = std::io::Result<()>>,
+{
+    let mut failure = None;
+    tokio::select! {
+        signalled = signal => {
+            signalled?;
+            eprintln!("ged worker: shutting down");
+        }
+        Some(joined) = runners.join_next() => {
+            failure = Some(match joined {
+                Ok(Ok(())) => "a job runner stopped on its own".to_owned(),
+                Ok(Err(e)) => format!("a job runner failed: {e}"),
+                Err(e) => format!("a job runner died: {e}"),
+            });
+            eprintln!("ged worker: {}, shutting down", failure.as_deref().unwrap_or_default());
+        }
+    }
+    let _ = stop.send(true);
+    while let Some(joined) = runners.join_next().await {
+        match joined {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                failure.get_or_insert_with(|| e.to_string());
+            }
+            Err(e) => {
+                failure.get_or_insert_with(|| e.to_string());
+            }
+        }
+    }
+    Ok(failure)
 }
 
 async fn wait_for_signal() -> std::io::Result<()> {
@@ -234,6 +267,45 @@ mod tests {
             scheduler::default_schedule().iter().all(|t| r.has(&t.kind)),
             "a scheduled kind has no handler"
         );
+    }
+
+    #[tokio::test]
+    async fn a_runner_that_ends_by_itself_stops_the_worker_with_an_error() {
+        let (stop, rx) = watch::channel(false);
+        let mut runners = tokio::task::JoinSet::new();
+        // One healthy runner (waits for the stop) and one that fails at once.
+        let mut healthy_rx = rx.clone();
+        runners.spawn(async move {
+            let _ = healthy_rx.wait_for(|s| *s).await;
+            Ok(())
+        });
+        runners.spawn(async { Err(sqlx::Error::PoolClosed) });
+        // The signal never comes.
+        let failure = tokio::time::timeout(
+            Duration::from_secs(5),
+            supervise(&mut runners, &stop, std::future::pending()),
+        )
+        .await
+        .expect("the worker must not keep running on a dead runner")
+        .unwrap();
+        assert!(failure.is_some(), "an early runner exit is an error");
+        assert!(*stop.borrow(), "the other runners were told to stop");
+        assert!(runners.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_signal_stops_every_runner_cleanly() {
+        let (stop, rx) = watch::channel(false);
+        let mut runners = tokio::task::JoinSet::new();
+        let mut one = rx.clone();
+        runners.spawn(async move {
+            let _ = one.wait_for(|s| *s).await;
+            Ok(())
+        });
+        let failure = supervise(&mut runners, &stop, async { Ok(()) })
+            .await
+            .unwrap();
+        assert_eq!(failure, None);
     }
 
     #[test]

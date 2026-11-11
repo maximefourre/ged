@@ -86,6 +86,9 @@ services:
   worker:
     build: .
     command: ["ged", "worker"]
+    # `ged worker` exits non-zero when a job runner stops on its own (e.g. the
+    # database was down at registration); a clean stop exits 0 and stays down.
+    restart: on-failure
     depends_on:
       postgres:
         condition: service_healthy

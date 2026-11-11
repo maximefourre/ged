@@ -505,3 +505,20 @@ fn case_arm(script: &str, name: &str) -> String {
     let end = rest.find("\n    ;;").unwrap_or(rest.len());
     rest[..end].to_owned()
 }
+
+/// Final review m6: `ged worker` exits non-zero when a runner dies, which
+/// only helps if Compose starts it again.
+#[test]
+fn the_worker_is_restarted_after_a_failure_but_not_after_a_clean_stop() {
+    let compose = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docker-compose.yml"
+    ))
+    .expect("docker-compose.yml");
+    let restart = compose_value(&compose)
+        .get("services")
+        .and_then(|s| s.get("worker"))
+        .and_then(|w| w.get("restart"))
+        .and_then(|r| r.as_str().map(str::to_owned));
+    assert_eq!(restart.as_deref(), Some("on-failure"));
+}
