@@ -49,28 +49,49 @@ pub fn register(client_id: &str) -> Credentials {
 }
 
 /// Fetch a genuine RS256 access token (client_credentials grant).
+///
+/// Under parallel suite load the provider's SQLite store sometimes answers
+/// the token endpoint with an HTML error page instead of JSON. That is a
+/// harness failure, not an auth result: retry a few times, then still require
+/// a successful JSON body that carries `access_token`.
 pub async fn fetch_token(creds: &Credentials) -> String {
     let http = reqwest::Client::new();
-    let resp = http
-        .post(format!("{}/token", stack().oauth_url))
-        .form(&[
-            ("grant_type", "client_credentials"),
-            ("client_id", creds.client_id.as_str()),
-            ("client_secret", creds.secret.as_str()),
-        ])
-        .send()
-        .await
-        .expect("POST /token");
-    let status = resp.status();
-    let body: serde_json::Value = resp.json().await.expect("token response is JSON");
-    assert!(
-        status.is_success(),
-        "token endpoint answered {status}: {body}"
-    );
-    body["access_token"]
-        .as_str()
-        .expect("access_token")
-        .to_owned()
+    let mut last = String::new();
+    for attempt in 0..5 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                50 * u64::try_from(attempt).unwrap_or(1),
+            ))
+            .await;
+        }
+        let resp = http
+            .post(format!("{}/token", stack().oauth_url))
+            .form(&[
+                ("grant_type", "client_credentials"),
+                ("client_id", creds.client_id.as_str()),
+                ("client_secret", creds.secret.as_str()),
+            ])
+            .send()
+            .await
+            .expect("POST /token");
+        let status = resp.status();
+        let bytes = resp.bytes().await.expect("token body");
+        match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(body) if status.is_success() => {
+                return body["access_token"]
+                    .as_str()
+                    .expect("access_token")
+                    .to_owned();
+            }
+            Ok(body) => last = format!("token endpoint answered {status}: {body}"),
+            Err(_) => {
+                let text = String::from_utf8_lossy(&bytes);
+                let excerpt: String = text.chars().take(180).collect();
+                last = format!("token endpoint answered {status} with a non-JSON body: {excerpt}");
+            }
+        }
+    }
+    panic!("no access token after 5 attempts: {last}");
 }
 
 /// Both registration steps: a fresh `prefix-xxxxxxxx` client in the provider
