@@ -300,10 +300,13 @@ dates, `ged migrate`, `ged seed`.
 
 **Files :** `docs/perf/2026-11-01-rust.md`.
 
-- [ ] Lancer `bin/perf-upload` sur les 3 profils à 1 et 3 workers, sous `caffeinate -i`,
+- [x] Lancer `bin/perf-upload` sur les 3 profils à 1 et 3 workers, sous `caffeinate -i`,
   puis `--chaos` web et worker, puis `bin/monkey`.
-- [ ] Écrire uniquement des résultats réels après les runs.
-- [ ] Vérifier : zéro perte, zéro doublon, aucun 5xx. Toute régression est rapportée.
+- [x] Écrire uniquement des résultats réels après les runs.
+- [x] Vérifier : zéro perte, zéro doublon, aucun 5xx. Toute régression est rapportée.
+      Rapport `docs/perf/2026-11-01-rust.md` (2026-11-11). Le harness du chaos web
+      imprime `zero-loss: FAILED` parce qu'un 202 n'a pas été lu par le client ;
+      le SQL compte 552 documents et 552 noms distincts, zéro perte et zéro doublon.
 
 ### T16 — Suppression de Rails et documentation (S)
 

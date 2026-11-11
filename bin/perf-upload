@@ -108,10 +108,27 @@ module PerfUpload
       end
     end
 
+    def kind
+      @kind ||= begin
+        out, status = Open3.capture2(script, "active")
+        abort "bin/worktree-stack active failed" unless status.success?
+        name = out.strip
+        abort "unexpected stack #{name}" unless %w[rust rails].include?(name)
+        name
+      end
+    end
+
     def exec(service, *cmd)
       out, err, status = Open3.capture3(script, "exec", "-T", service, *cmd)
       abort "stack exec #{service} #{cmd.join(' ')} failed:\n#{out}#{err}" unless status.success?
       out + err # Rails logs its job lines to stderr — keep them for diagnostics
+    end
+
+    # Same business tables on both stacks. Used only to provision the perf
+    # client when the web image has no `bin/rails` (Rust).
+    def psql(sql)
+      exec("postgres", "psql", "-U", "postgres", "-d", "ged_production",
+           "-v", "ON_ERROR_STOP=1", "-tA", "-c", sql)
     end
 
     def run(*cmd)
@@ -135,8 +152,12 @@ module PerfUpload
     def run!
       register = Stack.exec("oauth-provider", "bin/register-client", CLIENT_ID)
       secret = register[/client_secret:\s+(\h+)/, 1] or abort "cannot parse client secret:\n#{register}"
-      runner = Stack.exec("web", "bin/rails", "runner", RUNNER)
-      department_id = runner[/department_id=(\S+)/, 1] or abort "cannot parse department id:\n#{runner}"
+      department_id = if Stack.kind == "rust"
+        provision_rust
+      else
+        runner = Stack.exec("web", "bin/rails", "runner", RUNNER)
+        runner[/department_id=(\S+)/, 1] or abort "cannot parse department id:\n#{runner}"
+      end
       File.write(ENV_FILE, <<~ENV_CONTENT)
         PERF_CLIENT_ID=#{CLIENT_ID}
         PERF_CLIENT_SECRET=#{secret}
@@ -144,6 +165,38 @@ module PerfUpload
       ENV_CONTENT
       puts "provisioned client=#{CLIENT_ID} department=#{department_id}"
       puts "credentials saved to #{ENV_FILE} (gitignored) — runs pick them up automatically"
+    end
+
+    # Idempotent twin of RUNNER: department perf-test, client ged-perf, read+write.
+    def provision_rust
+      sql = <<~SQL
+        WITH dept AS (
+          INSERT INTO departments (name, created_at, updated_at)
+          VALUES ('#{DEPARTMENT_NAME}', timezone('utc', now()), timezone('utc', now()))
+          ON CONFLICT (name) WHERE parent_id IS NULL
+          DO UPDATE SET updated_at = departments.updated_at
+          RETURNING id
+        ),
+        client AS (
+          INSERT INTO app_clients (client_identifier, created_at, updated_at)
+          VALUES ('#{CLIENT_ID}', timezone('utc', now()), timezone('utc', now()))
+          ON CONFLICT (client_identifier)
+          DO UPDATE SET updated_at = app_clients.updated_at
+          RETURNING id
+        ),
+        grant_row AS (
+          INSERT INTO client_department_accesses
+            (app_client_id, department_id, can_read, can_write, created_at, updated_at)
+          SELECT client.id, dept.id, true, true, timezone('utc', now()), timezone('utc', now())
+          FROM client, dept
+          ON CONFLICT (app_client_id, department_id)
+          DO UPDATE SET can_read = true, can_write = true
+          RETURNING department_id
+        )
+        SELECT department_id FROM grant_row
+      SQL
+      out = Stack.psql(sql)
+      out[/\d+/] or abort "cannot parse department id:\n#{out}"
     end
 
     def load_env!
@@ -551,7 +604,11 @@ module PerfUpload
         pending = ids - outcomes.keys
         next if pending.empty?
         warn "  [#{Time.now.utc.iso8601}] #{pending.size} still pending -> ReconcileUploadRequestsJob.perform_now"
-        out = Stack.exec("web", "bin/rails", "runner", "ReconcileUploadRequestsJob.perform_now")
+        out = if Stack.kind == "rust"
+          Stack.exec("web", "ged", "run-job", "ReconcileUploadRequestsJob")
+        else
+          Stack.exec("web", "bin/rails", "runner", "ReconcileUploadRequestsJob.perform_now")
+        end
         out.each_line do |line|
           warn "    reconcile: #{line.strip}" if /Enqueued|Error|error/.match?(line)
         end

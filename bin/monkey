@@ -88,10 +88,25 @@ module Monkey
       end
     end
 
+    def kind
+      @kind ||= begin
+        out, status = Open3.capture2(script, "active")
+        abort "bin/worktree-stack active failed" unless status.success?
+        name = out.strip
+        abort "unexpected stack #{name}" unless %w[rust rails].include?(name)
+        name
+      end
+    end
+
     def exec(service, *cmd)
       out, err, status = Open3.capture3(script, "exec", "-T", service, *cmd)
       abort "stack exec #{service} #{cmd.join(' ')} failed:\n#{out}#{err}" unless status.success?
       out + err
+    end
+
+    def psql(sql)
+      exec("postgres", "psql", "-U", "postgres", "-d", "ged_production",
+           "-v", "ON_ERROR_STOP=1", "-tA", "-c", sql)
     end
   end
 
@@ -169,13 +184,30 @@ module Monkey
         client_secrets[client_id] = secret
       end
 
-      # Provision departments and access via rails runner
-      runner = Stack.exec("web", "bin/rails", "runner", RUNNER)
-      deptA_id = runner[/deptA_id=(\S+)/, 1] or abort "cannot parse deptA_id:\n#{runner}"
-      deptA_child_id = runner[/deptA_child_id=(\S+)/, 1] or abort "cannot parse deptA_child_id:\n#{runner}"
-      deptB_id = runner[/deptB_id=(\S+)/, 1] or abort "cannot parse deptB_id:\n#{runner}"
-      deptB_doc_id = runner[/deptB_doc_id=(\S+)/, 1] or abort "cannot parse deptB_doc_id:\n#{runner}"
-      deptA_doc_id = runner[/deptA_doc_id=(\S+)/, 1] or abort "cannot parse deptA_doc_id:\n#{runner}"
+      if Stack.kind == "rust"
+        ids = provision_rust
+        deptA_id = ids[:a]
+        deptA_child_id = ids[:child]
+        deptB_id = ids[:b]
+        # monkey-deptA has no grant on dept B. A temporary one lets the same
+        # HTTP upload path store both seed files; it is removed before return.
+        begin
+          urls = Stack.urls
+          token = fetch_token(urls[:token], "monkey-deptA", client_secrets["monkey-deptA"])
+          deptB_doc_id = upload_seed(urls[:base], token, deptB_id, "seed-dept-b.txt", "dept-B seed")
+          deptA_doc_id = upload_seed(urls[:base], token, deptA_id, "seed-dept-a.txt", "dept-A seed")
+        ensure
+          revoke_temp_grant
+        end
+      else
+        # Provision departments and access via rails runner
+        runner = Stack.exec("web", "bin/rails", "runner", RUNNER)
+        deptA_id = runner[/deptA_id=(\S+)/, 1] or abort "cannot parse deptA_id:\n#{runner}"
+        deptA_child_id = runner[/deptA_child_id=(\S+)/, 1] or abort "cannot parse deptA_child_id:\n#{runner}"
+        deptB_id = runner[/deptB_id=(\S+)/, 1] or abort "cannot parse deptB_id:\n#{runner}"
+        deptB_doc_id = runner[/deptB_doc_id=(\S+)/, 1] or abort "cannot parse deptB_doc_id:\n#{runner}"
+        deptA_doc_id = runner[/deptA_doc_id=(\S+)/, 1] or abort "cannot parse deptA_doc_id:\n#{runner}"
+      end
 
       # Write env file
       env_content = "MONKEY_READONLY_SECRET=#{client_secrets['monkey-readonly']}\n"
@@ -191,6 +223,137 @@ module Monkey
       File.write(ENV_FILE, env_content)
       puts "provisioned 4 clients and 2 departments"
       puts "credentials saved to #{ENV_FILE} (gitignored)"
+    end
+
+    # Departments, clients and grants. Also a temporary read+write grant of
+    # monkey-deptA on monkey-dept-b, removed by revoke_temp_grant after the
+    # seed uploads. Documents themselves go through POST /api/v1/documents.
+    def provision_rust
+      sql = <<~SQL
+        WITH dept_a AS (
+          INSERT INTO departments (name, created_at, updated_at)
+          VALUES ('monkey-dept-a', timezone('utc', now()), timezone('utc', now()))
+          ON CONFLICT (name) WHERE parent_id IS NULL
+          DO UPDATE SET updated_at = departments.updated_at
+          RETURNING id
+        ),
+        dept_b AS (
+          INSERT INTO departments (name, created_at, updated_at)
+          VALUES ('monkey-dept-b', timezone('utc', now()), timezone('utc', now()))
+          ON CONFLICT (name) WHERE parent_id IS NULL
+          DO UPDATE SET updated_at = departments.updated_at
+          RETURNING id
+        ),
+        dept_child AS (
+          INSERT INTO departments (name, parent_id, created_at, updated_at)
+          SELECT 'monkey-dept-a-child', dept_a.id, timezone('utc', now()), timezone('utc', now())
+          FROM dept_a
+          ON CONFLICT (parent_id, name)
+          DO UPDATE SET updated_at = departments.updated_at
+          RETURNING id
+        ),
+        client_ro AS (
+          INSERT INTO app_clients (client_identifier, created_at, updated_at)
+          VALUES ('monkey-readonly', timezone('utc', now()), timezone('utc', now()))
+          ON CONFLICT (client_identifier) DO UPDATE SET updated_at = app_clients.updated_at
+          RETURNING id
+        ),
+        client_wo AS (
+          INSERT INTO app_clients (client_identifier, created_at, updated_at)
+          VALUES ('monkey-writeonly', timezone('utc', now()), timezone('utc', now()))
+          ON CONFLICT (client_identifier) DO UPDATE SET updated_at = app_clients.updated_at
+          RETURNING id
+        ),
+        client_none AS (
+          INSERT INTO app_clients (client_identifier, created_at, updated_at)
+          VALUES ('monkey-noaccess', timezone('utc', now()), timezone('utc', now()))
+          ON CONFLICT (client_identifier) DO UPDATE SET updated_at = app_clients.updated_at
+          RETURNING id
+        ),
+        client_full AS (
+          INSERT INTO app_clients (client_identifier, created_at, updated_at)
+          VALUES ('monkey-deptA', timezone('utc', now()), timezone('utc', now()))
+          ON CONFLICT (client_identifier) DO UPDATE SET updated_at = app_clients.updated_at
+          RETURNING id
+        ),
+        grant_ro AS (
+          INSERT INTO client_department_accesses
+            (app_client_id, department_id, can_read, can_write, created_at, updated_at)
+          SELECT client_ro.id, dept_a.id, true, false, timezone('utc', now()), timezone('utc', now())
+          FROM client_ro, dept_a
+          ON CONFLICT (app_client_id, department_id)
+          DO UPDATE SET can_read = true, can_write = false
+          RETURNING app_client_id
+        ),
+        grant_wo AS (
+          INSERT INTO client_department_accesses
+            (app_client_id, department_id, can_read, can_write, created_at, updated_at)
+          SELECT client_wo.id, dept_a.id, false, true, timezone('utc', now()), timezone('utc', now())
+          FROM client_wo, dept_a
+          ON CONFLICT (app_client_id, department_id)
+          DO UPDATE SET can_read = false, can_write = true
+          RETURNING app_client_id
+        ),
+        grant_full AS (
+          INSERT INTO client_department_accesses
+            (app_client_id, department_id, can_read, can_write, created_at, updated_at)
+          SELECT client_full.id, dept_a.id, true, true, timezone('utc', now()), timezone('utc', now())
+          FROM client_full, dept_a
+          ON CONFLICT (app_client_id, department_id)
+          DO UPDATE SET can_read = true, can_write = true
+          RETURNING app_client_id
+        ),
+        grant_tmp AS (
+          INSERT INTO client_department_accesses
+            (app_client_id, department_id, can_read, can_write, created_at, updated_at)
+          SELECT client_full.id, dept_b.id, true, true, timezone('utc', now()), timezone('utc', now())
+          FROM client_full, dept_b
+          ON CONFLICT (app_client_id, department_id)
+          DO UPDATE SET can_read = true, can_write = true
+          RETURNING app_client_id
+        )
+        SELECT dept_a.id, dept_child.id, dept_b.id
+        FROM dept_a, dept_child, dept_b, client_none, grant_ro, grant_wo, grant_full, grant_tmp
+      SQL
+      line = Stack.psql(sql).lines.map(&:strip).reject(&:empty?).last or
+        abort "cannot parse department ids"
+      a, child, b = line.split("|")
+      abort "cannot parse department ids:\n#{line}" unless a && child && b
+      { a: a, child: child, b: b }
+    end
+
+    def revoke_temp_grant
+      Stack.psql(<<~SQL)
+        DELETE FROM client_department_accesses
+        WHERE app_client_id = (SELECT id FROM app_clients WHERE client_identifier = 'monkey-deptA')
+          AND department_id = (
+            SELECT id FROM departments WHERE name = 'monkey-dept-b' AND parent_id IS NULL
+          )
+      SQL
+    rescue StandardError => e
+      warn "revoke temporary dept-B grant failed: #{e.message}"
+    end
+
+    def fetch_token(token_url, client_id, secret)
+      response = Net::HTTP.post_form(URI(token_url),
+                                     "grant_type" => "client_credentials",
+                                     "client_id" => client_id,
+                                     "client_secret" => secret)
+      abort "token fetch failed (#{response.code}): #{response.body}" unless response.code == "200"
+      JSON.parse(response.body).fetch("access_token")
+    end
+
+    def upload_seed(base_url, token, department_id, filename, content)
+      file = Tempfile.new("monkey-seed", binmode: true)
+      file.write(content)
+      file.rewind
+      code, body = Api.post_multipart(base_url, token, "/api/v1/documents",
+                                     { "department_id" => department_id },
+                                     [ [ "file", file, filename, "text/plain" ] ])
+      abort "seed upload #{filename} failed (#{code}): #{body}" unless code == 201
+      JSON.parse(body).fetch("id")
+    ensure
+      file&.close!
     end
 
     def load_env!
