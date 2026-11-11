@@ -370,3 +370,12 @@ relectures, les intégrations et les correctifs des tâches qu'il a écrites (T7
   entre deux tests (logs « database ged_rust_parity does not exist ») ; synchroniser son
   cycle de vie avec `reset()`.
 - C2 de T7 : balayage des fichiers orphelins de staging après crash.
+
+## Reports de la vague 7
+
+- `rust/ged/src/storage/files.rs`, `copy_limited` : si le futur est annulé pendant
+  `tokio::fs::rename` (exécuté via `spawn_blocking`), le `Drop` du `PartGuard` peut passer
+  avant le renommage effectif et laisser `dest` orphelin. À corriger plus tard par le
+  propriétaire du stockage.
+- La parité est lancée contre la stack Rust démarrée à la main (`bin/worktree-stack up`),
+  pas en CI.
