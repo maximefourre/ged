@@ -145,17 +145,16 @@ fn ci_checks_rust_and_skips_parity_without_a_stack() {
 
 #[test]
 fn images_run_as_non_root_and_bake_no_secrets() {
-    for file in ["Dockerfile"] {
-        let text = read(file);
-        let user = last_user(&text).unwrap_or_else(|| panic!("{file} sets no USER"));
-        assert!(is_non_root(&user), "{file} USER {user} must not be root");
-        let secrets = secret_env_or_arg(&text);
-        assert!(
-            secrets.is_empty(),
-            "{file} ARG/ENV bakes secrets: {}",
-            secrets.join(", ")
-        );
-    }
+    let file = "Dockerfile";
+    let text = read(file);
+    let user = last_user(&text).unwrap_or_else(|| panic!("{file} sets no USER"));
+    assert!(is_non_root(&user), "{file} USER {user} must not be root");
+    let secrets = secret_env_or_arg(&text);
+    assert!(
+        secrets.is_empty(),
+        "{file} ARG/ENV bakes secrets: {}",
+        secrets.join(", ")
+    );
 }
 
 #[test]
