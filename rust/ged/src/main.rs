@@ -90,13 +90,13 @@ async fn serve() -> Result<(), Failure> {
     let pool = db::connect_lazy(database_url(&config)?)?;
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".into());
     let listener = bind_listen(&port).await?;
-    axum::serve(
+    // The peer address feeds the admin login throttle (never a header).
+    ged::http::serve::serve(
         listener,
-        // The peer address feeds the admin login throttle (never a header).
-        ged::telemetry::wrap(ged::router(AppState::new(config, pool)))
-            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        ged::telemetry::wrap(ged::router(AppState::new(config, pool))),
+        ged::http::serve::Timeouts::default(),
+        ged::telemetry::wait_for_shutdown_signal(),
     )
-    .with_graceful_shutdown(ged::telemetry::wait_for_shutdown_signal())
     .await?;
     Ok(())
 }

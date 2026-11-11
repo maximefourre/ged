@@ -29,6 +29,9 @@ opentelemetry-otlp = { version = "0.33", default-features = false, features = ["
 regex = "1"
 tokio-util = { version = "0.7", features = ["io"] }
 multer = "3"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "service"] }
+tower = { version = "0.5", features = ["util"] }
 
 askama = "0.14"
 hmac = "0.12"

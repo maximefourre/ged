@@ -4,6 +4,7 @@ pub mod error;
 pub mod json;
 pub mod params;
 pub mod rails_headers;
+pub mod serve;
 pub mod state;
 
 use std::panic::AssertUnwindSafe;
