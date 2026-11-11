@@ -119,6 +119,7 @@ pub async fn read(
         pending: VecDeque::new(),
         inner_done: false,
         finished: false,
+        burst: 0,
     };
     let mut multipart = multer::Multipart::new(scrubbed, boundary);
 
@@ -128,7 +129,7 @@ pub async fn read(
     let mut file_parts = 0usize;
     let mut text_bytes = 0usize;
     let result = loop {
-        let field = match multipart.next_field().await {
+        let mut field = match multipart.next_field().await {
             Ok(Some(field)) => field,
             Ok(None) => break Ok(()),
             Err(_) if exceeded.load(Ordering::SeqCst) => break Err(IntakeError::TooLarge),
@@ -178,18 +179,36 @@ pub async fn read(
             // A file under another name is not something the API reads.
             Some(_) => {}
             None => {
-                let Ok(bytes) = field.bytes().await else {
-                    break Err(if exceeded.load(Ordering::SeqCst) {
-                        IntakeError::TooLarge
-                    } else {
-                        IntakeError::Malformed
-                    });
-                };
-                text_bytes += bytes.len();
-                if text_bytes > FORM_BYTES_LIMIT {
-                    break Err(IntakeError::Malformed);
+                // Chunk by chunk: stop as soon as the running total passes
+                // the form limit, so an unauthenticated client cannot make
+                // the server hold a whole upload-sized text part (review M1).
+                let mut bytes: Vec<u8> = Vec::new();
+                let mut failed = None;
+                loop {
+                    match field.chunk().await {
+                        Ok(Some(chunk)) => {
+                            text_bytes += chunk.len();
+                            if text_bytes > FORM_BYTES_LIMIT {
+                                failed = Some(IntakeError::Malformed);
+                                break;
+                            }
+                            bytes.extend_from_slice(&chunk);
+                        }
+                        Ok(None) => break,
+                        Err(_) => {
+                            failed = Some(if exceeded.load(Ordering::SeqCst) {
+                                IntakeError::TooLarge
+                            } else {
+                                IntakeError::Malformed
+                            });
+                            break;
+                        }
+                    }
                 }
-                let Ok(value) = String::from_utf8(bytes.to_vec()) else {
+                if let Some(error) = failed {
+                    break Err(error);
+                }
+                let Ok(value) = String::from_utf8(bytes) else {
                     break Err(IntakeError::Malformed);
                 };
                 if !fields.is_empty() {
@@ -264,7 +283,14 @@ struct ScrubStream<S> {
     pending: VecDeque<Bytes>,
     inner_done: bool,
     finished: bool,
+    /// Bytes handed out since the last `Pending`; see [`BURST_LIMIT`].
+    burst: usize,
 }
+
+/// `multer` polls its source in a loop until `Pending`, so an always-ready
+/// source is read to the end into its buffer. Yielding `Pending` after this
+/// many bytes bounds what it holds ahead of the field being read (review M1).
+const BURST_LIMIT: usize = 256 * 1024;
 
 impl<S> Stream for ScrubStream<S>
 where
@@ -275,8 +301,14 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
         loop {
+            if this.burst >= BURST_LIMIT {
+                this.burst = 0;
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
             if let Some(chunk) = this.pending.pop_front() {
                 if !chunk.is_empty() {
+                    this.burst += chunk.len();
                     return Poll::Ready(Some(Ok(chunk)));
                 }
                 continue;
@@ -1445,6 +1477,42 @@ mod tests {
             other => panic!("expected the tail once a file exists, got {other:?}"),
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Review M1: a text part is read chunk by chunk and abandoned once the
+    /// running total passes `FORM_BYTES_LIMIT`; the rest of a 45 MiB part is
+    /// never pulled from the connection (nor held in memory).
+    #[tokio::test]
+    async fn an_oversized_text_part_stops_the_read_at_the_form_limit() {
+        use futures_util::StreamExt;
+        let (_dir, storage) = storage();
+        let pulled = Arc::new(AtomicU64::new(0));
+        let counter = pulled.clone();
+        let head = bytes::Bytes::from_static(
+            b"--XX\r\nContent-Disposition: form-data; name=\"tags[x]\"\r\n\r\n",
+        );
+        let chunk = bytes::Bytes::from(vec![b'a'; 64 * 1024]);
+        let chunks = 45 * 16; // 45 MiB of text, no closing boundary
+        let stream = futures_util::stream::iter(
+            std::iter::once(head).chain((0..chunks).map(move |_| chunk.clone())),
+        )
+        .map(move |b| {
+            counter.fetch_add(b.len() as u64, Ordering::SeqCst);
+            Ok::<_, std::io::Error>(b)
+        });
+        let result = read(
+            "XX".into(),
+            Body::from_stream(stream),
+            &storage,
+            50 * 1024 * 1024,
+        )
+        .await;
+        assert_eq!(result.err(), Some(IntakeError::Malformed));
+        let pulled = pulled.load(Ordering::SeqCst) as usize;
+        assert!(
+            pulled <= FORM_BYTES_LIMIT + 1024 * 1024,
+            "pulled {pulled} bytes for a part capped at {FORM_BYTES_LIMIT}"
+        );
     }
 
     struct TwoChunks {
