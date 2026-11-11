@@ -259,9 +259,9 @@ dates, `ged migrate`, `ged seed`.
 
 **Files :** `rust/parity/src/bin/diff_fuzz.rs`, `docs/migration/parity-gaps.md`.
 
-- [ ] Générer des requêtes API, normaliser identifiants et dates, comparer Rails/Rust.
-- [ ] Corriger le Rust ou documenter chaque écart.
-- [ ] Vérifier : 100 000 requêtes sans écart non documenté.
+- [x] Générer des requêtes API, normaliser identifiants et dates, comparer Rails/Rust.
+- [x] Corriger le Rust ou documenter chaque écart.
+- [x] Vérifier : 100 000 requêtes sans écart non documenté.
 
 ### T14 — Docker, stack et CI (S)
 

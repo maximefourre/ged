@@ -151,8 +151,12 @@ Fixée en T4 et vérifiée sur le stack Rails :
 
 - dates : `YYYY-MM-DDTHH:MM:SS.mmmZ`, trois décimales tronquées (jamais arrondies),
   toujours `Z` (`Time.utc(2026,11,1,21,12,39,123999).as_json` donne `…39.123Z`) ;
-- `<`, `>`, `&`, U+2028 et U+2029 sont échappés en `\u003c`, `\u003e`, `\u0026`,
-  `\u2028`, `\u2029` dans les chaînes (`{error: "a<b>&c"}.to_json`) ;
+- `render json:` (Rails 8.1, `escape_json_responses = false`) n'échappe pas
+  `<`, `>`, `&`, U+2028 ni U+2029 (`to_json(escape: false)`, observé le
+  2026-11-11 : `POST /api/v1/departments` renvoie `{"name":"a<b>&c-…"}`).
+  `{}.to_json` sans option (exceptions app) échappe encore `<`, `>`, `&`, pas
+  U+2028/U+2029 ; ses messages sont des phrases de statut fixes, donc les
+  octets coincident avec l'encodeur de `render json:` ;
 - l'ordre des clés est l'ordre d'insertion.
 
 ## Obfuscation SQL des spans (helper Ruby, pas le stack HTTP)
