@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use ged::http::serve::{Timeouts, serve};
-use ged::storage::{Storage, StagingStore};
+use ged::storage::{StagingStore, Storage};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -84,7 +84,10 @@ fn files_under(dir: &Path) -> usize {
 async fn incomplete_headers_are_cut_after_the_header_deadline() {
     let server = Server::start(support::app()).await;
     let mut stream = TcpStream::connect(server.addr).await.unwrap();
-    stream.write_all(b"GET /up HTTP/1.1\r\nHost: x\r\n").await.unwrap();
+    stream
+        .write_all(b"GET /up HTTP/1.1\r\nHost: x\r\n")
+        .await
+        .unwrap();
     // The headers never finish: the server must hang up on its own.
     let received = read_to_close(&mut stream, Duration::from_secs(5)).await;
     assert!(
@@ -194,7 +197,10 @@ async fn an_abandoned_upload_leaves_no_part_file() {
     stream.write_all(&vec![b'z'; 200_000]).await.unwrap();
     // ... then silence: no closing boundary, no more bytes.
     let received = read_to_close(&mut stream, Duration::from_secs(5)).await;
-    assert!(received.is_ok(), "the stalled upload kept the connection open");
+    assert!(
+        received.is_ok(),
+        "the stalled upload kept the connection open"
+    );
     // The handler is dropped on the deadline; let it clean up.
     for _ in 0..50 {
         if files_under(&dir) == 0 {
@@ -202,7 +208,11 @@ async fn an_abandoned_upload_leaves_no_part_file() {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert_eq!(files_under(&dir), 0, "an abandoned upload left a file behind");
+    assert_eq!(
+        files_under(&dir),
+        0,
+        "an abandoned upload left a file behind"
+    );
     server.finish().await;
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -211,7 +221,10 @@ async fn an_abandoned_upload_leaves_no_part_file() {
 async fn shutdown_lets_an_in_flight_request_finish() {
     let server = Server::start(support::app()).await;
     let mut stream = TcpStream::connect(server.addr).await.unwrap();
-    stream.write_all(b"GET /up HTTP/1.1\r\nHost: x\r\n\r\n").await.unwrap();
+    stream
+        .write_all(b"GET /up HTTP/1.1\r\nHost: x\r\n\r\n")
+        .await
+        .unwrap();
     let mut buf = [0_u8; 1024];
     let n = stream.read(&mut buf).await.unwrap();
     assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"));

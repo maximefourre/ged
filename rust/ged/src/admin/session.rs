@@ -298,9 +298,37 @@ fn password_matches(stored: &str, candidate: &str) -> bool {
 /// [`password_matches`] on the blocking pool: argon2 is CPU-bound and would
 /// otherwise stall an async worker thread for its whole duration.
 async fn password_matches_blocking(stored: String, candidate: String) -> bool {
-    tokio::task::spawn_blocking(move || password_matches(&stored, &candidate))
-        .await
-        .unwrap_or(false)
+    bounded_blocking(&ARGON2_PERMITS, move || {
+        password_matches(&stored, &candidate)
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// Verifications that may run at once. Each argon2id costs its memory cost
+/// (19 MiB with the crate defaults) and a core; the login throttle is per
+/// client, so many client keys could otherwise start hundreds at a time
+/// (final review m1). Rails/bcrypt was bounded by the Puma threads. Waiting
+/// callers cost one parked task each.
+const ARGON2_CONCURRENCY: usize = 4;
+static ARGON2_PERMITS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(ARGON2_CONCURRENCY);
+
+/// Runs `work` on the blocking pool once a permit of `permits` is free.
+/// `None` when the task panicked or the semaphore was closed.
+async fn bounded_blocking<T: Send + 'static>(
+    permits: &'static tokio::sync::Semaphore,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let permit = permits.acquire().await.ok()?;
+    // The permit is held until the blocking task ends, even if the caller is
+    // cancelled meanwhile (the closure keeps running on its thread).
+    let task = tokio::task::spawn_blocking(move || {
+        let out = work();
+        drop(permit);
+        out
+    });
+    task.await.ok()
 }
 
 /// A valid hash that matches nothing: verifying against it keeps an unknown
@@ -418,6 +446,32 @@ mod tests {
             flash: vec![("notice".into(), "Hi <b>".into())],
             return_to: Some("/admin/departments".into()),
         }
+    }
+
+    #[tokio::test]
+    async fn blocking_work_never_exceeds_the_permit_count() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+        static RUNNING: AtomicUsize = AtomicUsize::new(0);
+        static PEAK: AtomicUsize = AtomicUsize::new(0);
+        let mut all = Vec::new();
+        for _ in 0..16 {
+            all.push(tokio::spawn(bounded_blocking(&PERMITS, || {
+                let now = RUNNING.fetch_add(1, Ordering::SeqCst) + 1;
+                PEAK.fetch_max(now, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(20));
+                RUNNING.fetch_sub(1, Ordering::SeqCst);
+            })));
+        }
+        for task in all {
+            assert!(task.await.unwrap().is_some());
+        }
+        assert_eq!(PEAK.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn the_production_bound_is_small_and_nonzero() {
+        assert!((1..=8).contains(&ARGON2_CONCURRENCY));
     }
 
     #[test]
