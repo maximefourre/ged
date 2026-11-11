@@ -1,8 +1,9 @@
-//! Port of `test/integration/c4_diagrams_test.rb`.
+//! Diagrams that go stale are worse than no diagrams.
 //!
-//! Diagrams that go stale are worse than no diagrams. Compose services, Rust
-//! job kinds, Rails service objects (while `app/services` is still here) and
-//! the queue pools must all appear in `docs/architecture/c4.md`.
+//! `docs/architecture/c4.md` must name every Docker Compose service, every
+//! registered job kind, every Rust module that replaced an `app/services`
+//! object, every scheduled task, and every worker pool. The lists come from
+//! `docker-compose.yml` and the `ged` crate, not from a Ruby tree.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,9 +18,9 @@ fn diagram() -> String {
     fs::read_to_string(root().join("docs/architecture/c4.md")).expect("read c4.md")
 }
 
-fn camelize_segment(segment: &str) -> String {
-    segment
-        .split('_')
+/// `jwks_cache` → `JwksCache`.
+fn camelize(stem: &str) -> String {
+    stem.split('_')
         .map(|word| {
             let mut chars = word.chars();
             match chars.next() {
@@ -30,35 +31,63 @@ fn camelize_segment(segment: &str) -> String {
         .collect()
 }
 
-/// `auth/jwks_cache` → `Auth::JwksCache` (Rails `String#camelize` on a path).
-fn camelize_path(rel: &str) -> String {
-    rel.split('/')
-        .map(camelize_segment)
-        .collect::<Vec<_>>()
-        .join("::")
-}
-
-fn ruby_files(dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let Ok(entries) = fs::read_dir(dir) else {
-        return out;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            out.extend(ruby_files(&path));
-        } else if path.extension().is_some_and(|ext| ext == "rb") {
-            out.push(path);
+/// Name `c4.md` must contain for a service module. A few Rust filenames do
+/// not match the component the diagram cites; a new file uses [`camelize`].
+fn service_diagram_name(rel: &str) -> String {
+    match rel {
+        "policy/callback_url.rs" => "CallbackUrlPolicy".to_owned(),
+        "storage/staging.rs" => "StagingStore".to_owned(),
+        "admin/zip_stream.rs" => "DocumentZipper".to_owned(),
+        other => {
+            let stem = Path::new(other)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(other);
+            camelize(stem)
         }
     }
-    out
+}
+
+/// Rust modules that replaced `app/services/**`. `mod.rs` is a barrel.
+/// `auth/authenticated_client.rs` is the request principal, grouped with the
+/// models and deliberately not drawn on its own.
+fn service_modules() -> Vec<String> {
+    let src = root().join("rust/ged/src");
+    let mut rels = Vec::new();
+    for rel in [
+        "domain/document_creator.rs",
+        "storage/staging.rs",
+        "admin/disk_space.rs",
+        "admin/system_health.rs",
+        "admin/zip_stream.rs",
+        "telemetry.rs",
+    ] {
+        rels.push(rel.to_owned());
+    }
+    for dir in ["auth", "policy"] {
+        let dir_path = src.join(dir);
+        for entry in fs::read_dir(&dir_path).unwrap_or_else(|_| panic!("read {dir}")) {
+            let path = entry.expect("dir entry").path();
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if name == "mod.rs" || name == "authenticated_client.rs" || !name.ends_with(".rs") {
+                continue;
+            }
+            rels.push(format!("{dir}/{name}"));
+        }
+    }
+    rels.sort();
+    rels
 }
 
 #[test]
-fn camelize_matches_rails_for_service_paths() {
-    assert_eq!(camelize_path("auth/jwks_cache"), "Auth::JwksCache");
-    assert_eq!(camelize_path("callback_url_policy"), "CallbackUrlPolicy");
-    assert_eq!(camelize_path("store_document_job"), "StoreDocumentJob");
+fn camelize_matches_the_service_module_names() {
+    assert_eq!(camelize("jwks_cache"), "JwksCache");
+    assert_eq!(camelize("disk_space"), "DiskSpace");
+    assert_eq!(camelize("document_creator"), "DocumentCreator");
+    assert_eq!(
+        service_diagram_name("policy/callback_url.rs"),
+        "CallbackUrlPolicy"
+    );
 }
 
 #[test]
@@ -102,88 +131,45 @@ async fn every_job_kind_appears_in_the_worker_diagram() {
     let registry =
         ged::jobs::worker::registry(&env, ged::jobs::deliver_callback::production_policy());
     let doc = diagram();
-    let mut missing: Vec<String> = registry
+    let missing: Vec<String> = registry
         .kinds()
         .into_iter()
-        .filter(|kind| kind.ends_with("Job") && !doc.contains(kind))
+        .filter(|kind| !doc.contains(kind))
         .map(str::to_owned)
         .collect();
-
-    let jobs_dir = root().join("app/jobs");
-    if jobs_dir.is_dir() {
-        for path in ruby_files(&jobs_dir) {
-            let stem = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or_default();
-            if stem == "application_job" {
-                continue;
-            }
-            let name = camelize_segment(stem);
-            if !doc.contains(&name) {
-                missing.push(name);
-            }
-        }
-    }
-
     assert!(missing.is_empty(), "jobs absent from c4.md: {missing:?}");
 }
 
 #[test]
-fn every_service_object_appears_in_a_component_diagram() {
-    let services = root().join("app/services");
-    if !services.is_dir() {
-        return;
-    }
+fn every_service_module_appears_in_a_component_diagram() {
+    let src = root().join("rust/ged/src");
     let doc = diagram();
     let mut missing = Vec::new();
-    for path in ruby_files(&services) {
-        let rel = path
-            .strip_prefix(&services)
-            .expect("under app/services")
-            .with_extension("")
-            .to_string_lossy()
-            .replace('\\', "/");
-        let name = camelize_path(&rel);
+    for rel in service_modules() {
+        let path = src.join(&rel);
+        assert!(path.is_file(), "service module missing: {rel}");
+        let name = service_diagram_name(&rel);
         if !doc.contains(&name) {
-            missing.push(name);
+            missing.push(format!("{rel} ({name})"));
         }
     }
     assert!(
         missing.is_empty(),
-        "service objects absent from c4.md: {missing:?}"
+        "service modules absent from c4.md: {missing:?}"
     );
 }
 
 #[test]
-fn every_recurring_task_class_is_drawn_as_scheduled() {
+fn every_scheduled_task_is_drawn() {
     let doc = diagram();
-    let mut missing = Vec::new();
-
-    let schedule = root().join("config/recurring.yml");
-    if schedule.is_file() {
-        let parsed: Value = serde_yaml::from_str(&fs::read_to_string(&schedule).unwrap())
-            .expect("parse recurring.yml");
-        if let Some(tasks) = parsed.get("production").and_then(Value::as_mapping) {
-            for task in tasks.values() {
-                if let Some(class) = task.get("class").and_then(Value::as_str)
-                    && !doc.contains(class)
-                {
-                    missing.push(class.to_owned());
-                }
-            }
-        }
-    }
-
-    for task in ged::jobs::scheduler::default_schedule() {
-        if task.kind.ends_with("Job") && !doc.contains(&task.kind) {
-            missing.push(task.kind);
-        }
-    }
-
+    let missing: Vec<_> = ged::jobs::scheduler::default_schedule()
+        .into_iter()
+        .filter(|task| !doc.contains(&task.kind))
+        .map(|task| task.kind)
+        .collect();
     assert!(
         missing.is_empty(),
-        "recurring jobs absent from c4.md: {missing:?}"
+        "scheduled tasks absent from c4.md: {missing:?}"
     );
 }
 

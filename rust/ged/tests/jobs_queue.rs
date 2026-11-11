@@ -362,7 +362,7 @@ fn cadences_resolve_to_the_latest_slot_not_after_now() {
 }
 
 #[test]
-fn the_default_schedule_matches_config_recurring_yml() {
+fn the_default_schedule_is_reconcile_housekeeping_and_purge() {
     let s: HashMap<_, _> = scheduler::default_schedule()
         .into_iter()
         .map(|t| (t.key.clone(), t))

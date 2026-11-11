@@ -1,18 +1,11 @@
-//! Port of `test/jobs/queue_coverage_test.rb`.
-//!
 //! Pools are explicit. A `*` pool, or a [`ged::jobs::queue::QueueName`] that
-//! `ged worker` does not drain, would leave jobs sitting forever.
+//! `ged worker` does not drain, would leave jobs sitting forever. The set of
+//! queues is [`QueueName`], not a YAML file.
 
-use std::fs;
-use std::path::PathBuf;
 use std::str::FromStr;
 
 use ged::jobs::queue::QueueName;
 use ged::jobs::worker::WorkerSettings;
-
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
 
 fn covered(settings: &WorkerSettings) -> Vec<QueueName> {
     settings
@@ -37,30 +30,6 @@ fn every_queue_is_drained_and_there_is_no_star_pool() {
         QueueName::from_str("*").is_err(),
         "a '*' pool must not be representable"
     );
-
-    let path = root().join("config/queue.yml");
-    if !path.is_file() {
-        return;
-    }
-    let text = fs::read_to_string(&path).expect("read queue.yml");
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('#') {
-            continue;
-        }
-        let Some(rest) = trimmed.strip_prefix("queues:") else {
-            continue;
-        };
-        let name = rest.trim().trim_matches('"').trim_matches('\'');
-        if name.is_empty() {
-            continue;
-        }
-        assert_ne!(name, "*", "queue.yml reintroduces a '*' pool");
-        assert!(
-            name.parse::<QueueName>().is_ok(),
-            "queue.yml lists unknown queue {name}"
-        );
-    }
 }
 
 #[test]
