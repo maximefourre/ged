@@ -368,11 +368,9 @@ pub fn wrap(app: Router) -> Router {
         .layer(middleware::from_fn(method_override))
 }
 
-/// Where uploaded files live: `GED_STORAGE_ROOT`, else `storage` (the
-/// directory the compose `storage` volume is mounted on).
+/// Directory of stored blobs, relative to the working directory.
+/// [`crate::storage::STORAGE_DIR`] is also what the HTTP process and the
+/// worker write. Compose mounts it at `/rails/storage`.
 pub fn storage_root() -> std::path::PathBuf {
-    std::env::var("GED_STORAGE_ROOT")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .map_or_else(|| "storage".into(), Into::into)
+    crate::storage::STORAGE_DIR.into()
 }

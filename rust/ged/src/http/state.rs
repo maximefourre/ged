@@ -36,8 +36,8 @@ impl AppState {
             config: Arc::new(config),
             db,
             jwks,
-            storage: Storage::new(STORAGE_DIR),
-            staging: StagingStore::new(format!("{STORAGE_DIR}/staging")),
+            storage: Storage::new(crate::storage::STORAGE_DIR),
+            staging: StagingStore::new(format!("{}/staging", crate::storage::STORAGE_DIR)),
         }
     }
 
@@ -49,9 +49,8 @@ impl AppState {
     }
 }
 
-/// Rails' `Rails.root/storage`, relative to the working directory (the
-/// compose `storage` volume is mounted there for `web` and `worker`).
-pub const STORAGE_DIR: &str = "storage";
+/// Same directory as [`crate::storage::STORAGE_DIR`].
+pub use crate::storage::STORAGE_DIR;
 
 impl AppState {
     /// A state whose pool connects on first use, for code (and tests) that

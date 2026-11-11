@@ -19,7 +19,7 @@
 # backend) and points the app's OTLP export at it, e.g.
 #   GED_OTEL=1 bin/worktree-stack up
 # Grafana is published on GED_GRAFANA_PORT (base 3300) and the collector's OTLP
-# http port on GED_OTLP_PORT (base 4318, for host-native `bin/dev` exports).
+# http port on GED_OTLP_PORT (base 4318, for host-native `ged serve` exports).
 #
 # The published Postgres port is how host-native `cargo test` reaches this
 # worktree's database. `db-port` prints it. Each worktree runs against its own
@@ -254,7 +254,7 @@ case "$cmd" in
     echo ' ready'
     ;;
   db-port)
-    # Print only the host Postgres port; consumed by config/database.yml ERB.
+    # Print only the host Postgres port, for host-native tests.
     echo "$db_port"
     ;;
   seed)

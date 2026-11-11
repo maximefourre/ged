@@ -428,9 +428,12 @@ Comportement de Solid Queue 1.5.0 relu dans le gem
 
 ## API documents, départements, uploads (T7)
 
-- **Répertoire de stockage :** `storage/` relatif au répertoire courant (comme
-  `Rails.root/storage`, volume `storage` du compose), staging dans
-  `storage/staging/<id>`. Aucune nouvelle variable d'environnement.
+- **Répertoire de stockage :** `storage/` (`storage::STORAGE_DIR`), relatif au
+  répertoire courant. L'image a pour répertoire de travail `/rails` et le
+  volume compose est monté sur `/rails/storage`. Le processus HTTP, le worker
+  et le contrôle disque de `/admin/status` utilisent cette constante. Aucune
+  variable d'environnement ne la déplace. Le staging est
+  `storage/staging/<id>`.
 - **Limite de taille :** `GED_MAX_UPLOAD_BYTES` s'applique au **corps entier** de la
   requête (comme `MAX_REQUEST_BODY` de Thruster), pas au seul fichier : un fichier
   d'exactement la limite est refusé (413 à corps vide, avant l'authentification quand
@@ -594,8 +597,8 @@ Relevé sur le stack Rails le 2026-11-03, reproduit par `rust/ged/src/admin/`.
   fichier passe par `normalize_filename`. L'`Origin` reste vérifié par le garde.
   Les fichiers statiques n'ont pas les en-têtes de sécurité des contrôleurs et
   portent `Cache-Control: public, max-age=31556952`. Le contrôle disque de
-  `/admin/status` lit toujours `GED_STORAGE_ROOT` (défaut `storage`) ; les octets
-  uploadés, eux, restent sous `storage/`.
+  `/admin/status` lit le même répertoire `storage/` que les octets uploadés
+  (montage compose `/rails/storage`).
 - **Identifiants qui ne sont pas des UUID** (édition, téléchargement, aperçu,
   suppression, restauration, et `GET /admin/documents/:id`, qui n'a pas de
   route `show`) : Rails caste l'uuid invalide en nil et répond **404** avec
@@ -678,6 +681,12 @@ Deux runs le 2026-11-11, workers arrêtés, binaire `rust/target/release/diff_fu
 reconstruit après l'allowlist du `%` de chemin. Aucune ligne `body:` : les
 corps urlencoded générés n'ont pas divergé. Les tables ci-dessous sont la
 sortie réelle, progressions intermédiaires omises.
+
+Le libellé `path:/api/v1/documents/%zz` sans query dans ces tables est la
+requête `…/%zz?a=%ff`. `%ff` est un `%HH` bien formé qui n'est pas de l'UTF-8,
+donc l'ancien `documented_form` ne l'imprimait pas et la ligne ressemblait à
+un chemin seul. Le libellé inclut maintenant cette query (`query:a=%ff`).
+Les sorties ci-dessous sont celles du run, non réécrites.
 
 ```text
 cd rust && caffeinate -i ./target/release/diff_fuzz \

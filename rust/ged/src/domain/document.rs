@@ -4,11 +4,10 @@
 
 use chrono::{Duration, NaiveDateTime};
 use serde_json::{Value, json};
-use sqlx::{PgConnection, PgPool};
+use sqlx::PgConnection;
 use uuid::Uuid;
 
 use super::time::rails_json_naive;
-use crate::storage::Storage;
 
 /// Grace period between soft-deleting a document and the purge job
 /// hard-deleting it (row + file).
@@ -163,58 +162,6 @@ impl Document {
             .bind(now)
             .fetch_all(conn)
             .await
-    }
-
-    /// Hard delete (`destroy!`): the row and its `stored_files` row go in one
-    /// transaction, then the file is removed from disk. A row that is gone
-    /// already is not an error (`false`). If the process dies between commit
-    /// and file removal an orphan file stays; it is not reachable from any row.
-    pub async fn purge(pool: &PgPool, storage: &Storage, id: Uuid) -> Result<bool, PurgeError> {
-        let mut tx = pool.begin().await?;
-        let key: Option<String> =
-            sqlx::query_scalar("SELECT key FROM stored_files WHERE document_id = $1 FOR UPDATE")
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?;
-        let deleted = sqlx::query("DELETE FROM documents WHERE id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        tx.commit().await?;
-        if let Some(key) = key {
-            storage.delete(&key).await?;
-        }
-        Ok(deleted > 0)
-    }
-}
-
-#[derive(Debug)]
-pub enum PurgeError {
-    Db(sqlx::Error),
-    Storage(crate::storage::StorageError),
-}
-
-impl std::fmt::Display for PurgeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Db(e) => write!(f, "database: {e}"),
-            Self::Storage(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-impl std::error::Error for PurgeError {}
-
-impl From<sqlx::Error> for PurgeError {
-    fn from(e: sqlx::Error) -> Self {
-        Self::Db(e)
-    }
-}
-
-impl From<crate::storage::StorageError> for PurgeError {
-    fn from(e: crate::storage::StorageError) -> Self {
-        Self::Storage(e)
     }
 }
 

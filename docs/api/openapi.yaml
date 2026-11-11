@@ -43,7 +43,7 @@ info:
     - `422` — validation failed
 servers:
   - url: http://localhost:3000
-    description: Local / Docker Compose (Puma behind Thruster on :3000)
+    description: Local / Docker Compose (ged serve on container port 80, published as host :3000)
 tags:
   - name: Meta
     description: Connectivity check

@@ -65,8 +65,11 @@ taken.
   `ged run-job` are the operational commands. Pinned in the image at Rust
   1.99.1; local development uses mise (`rust` stable in `.mise.toml`).
 - **PostgreSQL 17** — business tables and job tables in one database.
-- **Local disk** — blobs and staging files under `/rails/storage` in the
-  container (the path name is kept). The compose volume is `storage`.
+- **Local disk** — blobs and staging files in `storage::STORAGE_DIR`
+  (`storage/`), relative to the process working directory. The image
+  `WORKDIR` is `/rails` and compose mounts the `storage` volume at
+  `/rails/storage`. The HTTP process, the worker and `/admin/status` share
+  that directory. It is not read from the environment.
 - **Admin session** — username and password, argon2id, signed cookie. Not
   Devise. `ged seed` writes the admin from `GED_ADMIN_USERNAME` /
   `GED_ADMIN_PASSWORD`. A leftover bcrypt hash is refused until seed rewrites it.
@@ -141,7 +144,9 @@ taken.
 - **Bulk actions:** the admin documents index has a multi-select toolbar
   (no Stimulus, no Turbo) for bulk soft-delete and a ZIP download streamed
   entry by entry (`DocumentZipper` / `admin::zip_stream`). ZIP entries are
-  named `{id}-{filename}`. The API bulk soft-delete is
+  named `{id}-{filename}`. An entry or an archive past 4 GiB, or more than
+  65535 entries, is ZIP64, the same thresholds as Rails `zip_kit`. The API
+  bulk soft-delete is
   `DELETE /api/v1/documents/bulk_destroy` (`document_ids[]`, max 500),
   fail-closed: any id outside the caller's write-accessible departments
   rejects the whole request. There is no bulk-download API.
@@ -280,8 +285,7 @@ Accepted behavioural gaps, with the measurement that justified each one, are
   `GED_OIDC_AUDIENCE` (required in production when binding is audience),
   `GED_OIDC_REQUIRED_SCOPE` (required in production when binding is scope),
   `GED_ADMIN_USERNAME` (default `admin`), `GED_ADMIN_PASSWORD`,
-  `GED_MAX_UPLOAD_BYTES` (default 52428800), `GED_STORAGE_ROOT` (default
-  directory `storage`, the compose volume mount), `OTEL_EXPORTER_OTLP_ENDPOINT`
+  `GED_MAX_UPLOAD_BYTES` (default 52428800), `OTEL_EXPORTER_OTLP_ENDPOINT`
   (empty disables OTel), `OTEL_SDK_DISABLED` (`true` disables OpenTelemetry
   even when the endpoint is set), `OTEL_SERVICE_NAME` (default `ged`),
   `JOB_THREADS` (default 3), `JOB_CONCURRENCY` (default 1),

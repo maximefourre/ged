@@ -632,7 +632,7 @@ pub fn zip_entries(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).expect("zip entry");
-        let name = file.name().to_owned();
+        let name = file.name().expect("zip name").into_owned();
         let mut buf = Vec::new();
         std::io::Read::read_to_end(&mut file, &mut buf).expect("zip bytes");
         out.push((name, buf));

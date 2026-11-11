@@ -394,6 +394,10 @@ relectures, les intégrations et les correctifs des tâches qu'il a écrites (T7
 
 ## Reports de la vague 7
 
+Soldé le 2026-11-11. Le `Drop` de `PartGuard` retire le fichier `.part`, puis
+`dest` (`rust/ged/src/storage/files.rs`, commit `0982763`). Le paragraphe
+ci-dessous est le report d'origine.
+
 - `rust/ged/src/storage/files.rs`, `copy_limited` : si le futur est annulé pendant
   `tokio::fs::rename` (exécuté via `spawn_blocking`), le `Drop` du `PartGuard` peut passer
   avant le renommage effectif et laisser `dest` orphelin. À corriger plus tard par le
@@ -403,9 +407,16 @@ relectures, les intégrations et les correctifs des tâches qu'il a écrites (T7
 
 ## Reports de la vague 8
 
-Constats mineurs de la relecture de T13 (`review-t13.md`), non traités ici. Les
-points H1, M1, M2 et M3 de cette relecture sont suivis séparément ; ceux-ci
-restent ouverts.
+Soldé le 2026-11-11 pour M4, M5, M6, L1 et L3. M4, M5 et M6 sont écrits dans
+`docs/migration/parity-gaps.md`, et le générateur a les familles correspondantes.
+L1 est la variante `ApiError::Unparsable`. L3 ne rejoue que `GET` et `HEAD`
+(`send_retry` dans `rust/parity/src/bin/diff_fuzz.rs`). Les puces d'origine
+restent ci-dessous.
+
+Constats mineurs de la relecture de T13 (`review-t13.md`), non traités dans
+cette vague. Les points H1, M1, M2 et M3 de cette relecture sont suivis
+séparément. M4 à M6, L1 et L3, listés ouverts à l'époque, sont soldés
+ci-dessus.
 
 - **M4 — familles absentes du générateur `diff_fuzz` :** mauvais scope
   (`GED_OIDC_TOKEN_BINDING=scope`) ; client sans grant et second client ;

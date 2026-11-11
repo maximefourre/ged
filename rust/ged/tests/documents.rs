@@ -4,10 +4,13 @@
 mod support;
 
 use chrono::{Duration, NaiveDateTime, Utc};
+use ged::config::DEFAULT_MAX_UPLOAD_BYTES;
 use ged::db::{self, PgTx};
 use ged::domain::document::Document;
 use ged::domain::document_creator::{CreateError, DocumentCreator, NewDocument};
-use ged::storage::{Storage, Stored};
+use ged::jobs::env::PipelineEnv;
+use ged::jobs::purge::PurgeDeletedDocumentsJob;
+use ged::storage::{StagingStore, Storage, Stored};
 use serde_json::json;
 use sqlx::PgPool;
 use support::ScratchDb;
@@ -52,6 +55,17 @@ impl World {
     async fn finish(self) {
         self.pool.close().await;
         self.db.drop_db().await;
+    }
+
+    /// The purge job, which deletes a row only while `purge_at` is still due.
+    fn purge_job(&self) -> PurgeDeletedDocumentsJob {
+        let staging = StagingStore::new(self._dir.path().join("staging"));
+        PurgeDeletedDocumentsJob::new(PipelineEnv::new(
+            self.pool.clone(),
+            self.storage.clone(),
+            staging,
+            DEFAULT_MAX_UPLOAD_BYTES,
+        ))
     }
 
     async fn stored(&self, bytes: &[u8]) -> Stored {
@@ -314,13 +328,23 @@ async fn purge_physically_deletes_the_file() {
     assert_eq!(due, vec![doc.id]);
     drop(conn);
 
-    assert!(Document::purge(&w.pool, &w.storage, doc.id).await.unwrap());
+    assert!(
+        w.purge_job()
+            .purge_document(doc.id, Utc::now())
+            .await
+            .unwrap()
+    );
     assert!(!path.exists(), "file still on disk after purge");
     assert_eq!(files_on_disk(&w.storage), 0);
     assert_eq!(w.count("documents").await, 0);
     assert_eq!(w.count("stored_files").await, 0);
     // purging twice is harmless
-    assert!(!Document::purge(&w.pool, &w.storage, doc.id).await.unwrap());
+    assert!(
+        !w.purge_job()
+            .purge_document(doc.id, Utc::now())
+            .await
+            .unwrap()
+    );
     w.finish().await;
 }
 
@@ -363,7 +387,17 @@ async fn upload_requests_pointing_at_a_purged_document_are_unlinked() {
     .execute(&w.pool)
     .await
     .unwrap();
-    Document::purge(&w.pool, &w.storage, doc.id).await.unwrap();
+    let mut conn = w.pool.acquire().await.unwrap();
+    Document::soft_delete(&mut conn, doc.id, now() - Duration::days(31))
+        .await
+        .unwrap();
+    drop(conn);
+    assert!(
+        w.purge_job()
+            .purge_document(doc.id, Utc::now())
+            .await
+            .unwrap()
+    );
     let linked: Option<Uuid> = sqlx::query_scalar("SELECT document_id FROM upload_requests")
         .fetch_one(&w.pool)
         .await

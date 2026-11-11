@@ -25,14 +25,14 @@ impl PipelineEnv {
         }
     }
 
-    /// Rails' layout: Active Storage's disk service at `storage/`, the
-    /// staging area at `storage/staging` (relative to the working directory,
-    /// like `Rails.root`).
+    /// Blobs at [`crate::storage::STORAGE_DIR`], staging beside them. The HTTP
+    /// process and the status disk check use that same constant.
     pub fn from_config(db: PgPool, max_byte_size: Option<u64>) -> Self {
+        let root = crate::storage::STORAGE_DIR;
         Self::new(
             db,
-            Storage::new("storage"),
-            StagingStore::new("storage/staging"),
+            Storage::new(root),
+            StagingStore::new(format!("{root}/staging")),
             max_byte_size.unwrap_or(DEFAULT_MAX_UPLOAD_BYTES),
         )
     }

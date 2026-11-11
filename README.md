@@ -52,7 +52,9 @@ worker, oauth-provider) is `bin/worktree-stack up`, then
 ## Deployment (Docker)
 
 `web` (`ged serve`) and `worker` (`ged worker`) share one image and the
-`storage` volume. Scale the worker on the same host without rebuilding:
+`storage` volume, mounted at `/rails/storage` (`WORKDIR /rails`; the process
+stores blobs in `storage/` relative to that directory). There is no
+`GED_STORAGE_ROOT`. Scale the worker on the same host without rebuilding:
 
     bin/worktree-stack scale N
 

@@ -139,18 +139,19 @@ fn hex_digit(b: u8) -> Option<u8> {
 }
 
 /// Label printed in the campaign distribution: path, query, and body, each
-/// only when that part carries a malformed `%`.
+/// when that part is unparsable (a malformed `%`, or a well-formed `%HH`
+/// that is not UTF-8).
 pub fn documented_form(target: &Target) -> String {
     let (path, query) = split_path_query(&target.path_and_query);
     let mut parts = Vec::new();
-    if has_malformed_percent(path) {
+    if parameter_is_unparsable(path) {
         parts.push(format!("path:{path}"));
     }
-    if has_malformed_percent(query) {
+    if !query.is_empty() && parameter_is_unparsable(query) {
         parts.push(format!("query:{query}"));
     }
     if let Some(text) = urlencoded_body(target)
-        && has_malformed_percent(text)
+        && parameter_is_unparsable(text)
     {
         parts.push(format!("body:{text}"));
     }
@@ -415,9 +416,18 @@ mod tests {
             "path:/api/v1/documents/%zz query:a=%2"
         );
         // `%ff` is well-formed and not UTF-8. Puma and Rust both answer the
-        // unparsable 400; Thruster still rejects the path first.
+        // unparsable 400; Thruster still rejects the path first. The
+        // distribution label still names that query.
         let ff = path_percent("a=%ff");
         assert!(percent_form(&ff).is_none());
+        assert_eq!(
+            documented_form(&ff),
+            "path:/api/v1/documents/%zz query:a=%ff"
+        );
+        assert_eq!(
+            documented_form(&path_percent("limit=1")),
+            "path:/api/v1/documents/%zz"
+        );
         assert!(gap(&ff, &rails, &rust, None).is_some());
     }
 
