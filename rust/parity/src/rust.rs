@@ -1,9 +1,8 @@
 //! The Rust `ged` binary as the backend under test.
 //!
 //! By default the adapter talks to this worktree's compose stack (`ged serve`
-//! / `ged worker`), the same way the Rails adapter talks to Rails. `run_job`
-//! execs `ged run-job` inside the `web` container so the job sees the shared
-//! storage volume.
+//! / `ged worker`). `run_job` execs `ged run-job` inside the `web` container
+//! so the job sees the shared storage volume.
 //!
 //! `GED_RUST_SPAWN=1` builds `ged`, creates a scratch database on this
 //! worktree's Postgres, runs `ged migrate` and `ged seed`, then starts

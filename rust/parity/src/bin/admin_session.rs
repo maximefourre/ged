@@ -1,8 +1,8 @@
 //! Print the cached admin session cookie (`name=value`) on stdout.
 //!
 //! Uses [`parity::admin::AdminSession::cached`] (one login per process) and
-//! the [`parity::backend`] selected by `GED_BACKEND`, so Playwright does not
-//! spend the Rails limit of 10 sign-in attempts per 3 minutes.
+//! the Rust backend, so Playwright does not spend the limit of 10 sign-in
+//! attempts per 3 minutes.
 
 #[tokio::main]
 async fn main() -> Result<(), String> {

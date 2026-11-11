@@ -76,11 +76,17 @@ pub async fn reset_business_tables(pool: &PgPool) -> Result<(), String> {
     }
 }
 
-/// Backend selected by `GED_BACKEND` (`rails` by default, or `rust`).
+/// The Rust backend. `GED_BACKEND` unset or `rust` selects it. Any other
+/// value, including `rails`, is rejected: that tree is the tag `rails-final`.
 pub async fn backend() -> Box<dyn Backend> {
-    match std::env::var("GED_BACKEND").as_deref().unwrap_or("rails") {
-        "rails" => Box::new(crate::rails::RailsBackend::connect().await),
-        "rust" => Box::new(crate::rust::RustBackend::connect().await),
-        other => panic!("GED_BACKEND={other:?}: unknown backend (available: rails, rust)"),
+    if let Ok(value) = std::env::var("GED_BACKEND")
+        && value != "rust"
+        && !value.is_empty()
+    {
+        panic!(
+            "GED_BACKEND={value:?}: unknown backend (available: rust). \
+             Rails was removed; check out the tag rails-final to run it"
+        );
     }
+    Box::new(crate::rust::RustBackend::connect().await)
 }

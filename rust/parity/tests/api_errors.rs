@@ -1,7 +1,7 @@
 //! The error edge, observable without a token or any business route: only
-//! `/up` and paths that do not exist are used, so the module runs against a
-//! backend that has no API yet. Every expectation was read off the Rails
-//! stack first (`GED_BACKEND=rails cargo test -p parity api_errors`).
+//! `/up` and paths that do not exist are used. Every expectation was read
+//! off the Rails stack before that tree was removed (tag `rails-final`).
+//! Run them with `cargo test -p parity api_errors`.
 //!
 //! What it fixes:
 //! - an unrouted path (any verb, any query) under `/api/v1` is a JSON

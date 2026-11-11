@@ -5,19 +5,14 @@
 //! dropping what pg_dump varies run to run (comments, session settings, the
 //! `\restrict` token).
 //!
-//! The Rails side is `fixtures/rails_business_schema.sql`, taken from the
-//! Rails stack. The first test proves the Rust migrations reproduce it; the
-//! second proves, while Rails exists, that the committed file is still what
-//! Rails produces — so the golden file can never drift unnoticed.
-//!
-//! Regenerate the golden file after a Rails schema change:
-//!
-//! ```text
-//! cd rust && GED_BACKEND=rails UPDATE_RAILS_SCHEMA=1 cargo test -p parity --test parity_schema
-//! ```
+//! The Rails side is the committed golden `fixtures/rails_business_schema.sql`,
+//! captured from the Rails stack before it was removed. This test proves the
+//! Rust migrations still reproduce that file. To regenerate it, check out the
+//! tag `rails-final` and follow `docs/migration/parity-gaps.md` (replaying
+//! Rails).
 
 use parity::rust::MigratedDatabase;
-use parity::stack::{exec, stack};
+use parity::stack::exec;
 
 const TABLES: [&str; 6] = [
     "admins",
@@ -29,11 +24,6 @@ const TABLES: [&str; 6] = [
 ];
 
 const GOLDEN: &str = include_str!("../fixtures/rails_business_schema.sql");
-
-/// Name of the database in a `postgres://…/name` URL.
-fn database_of(url: &str) -> &str {
-    url.rsplit_once('/').map_or(url, |(_, name)| name)
-}
 
 /// `pg_dump` of the business tables, run inside the stack's Postgres.
 fn dump(database: &str) -> String {
@@ -107,29 +97,6 @@ async fn parity_schema_the_rust_migrations_reproduce_the_rails_business_tables()
         "rust",
         &rust,
         "rails golden",
-        &normalize(GOLDEN),
-    );
-}
-
-#[tokio::test]
-async fn parity_schema_the_golden_file_is_what_the_rails_stack_produces() {
-    if std::env::var("GED_BACKEND").as_deref().unwrap_or("rails") != "rails" {
-        eprintln!("skipped: GED_BACKEND is not rails, there is no Rails database to read");
-        return;
-    }
-    let rails = dump(database_of(&stack().database_url));
-    if std::env::var("UPDATE_RAILS_SCHEMA").is_ok() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/fixtures/rails_business_schema.sql"
-        );
-        std::fs::write(path, &rails).expect("write the golden file");
-    }
-    assert_same(
-        "rails schema",
-        "rails stack",
-        &rails,
-        "golden file",
         &normalize(GOLDEN),
     );
 }
