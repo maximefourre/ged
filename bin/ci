@@ -99,7 +99,9 @@ if [ -n "$probed" ] && responds "$probed"; then
       npx playwright install chromium
       npx playwright test
     '
-  step "Parity: rust" env GED_BACKEND=rust run_cargo test -p parity
+  # Prefix assignment, not `env`: run_cargo is a shell function, so env
+  # looks it up on PATH and the suite never starts.
+  GED_BACKEND=rust step "Parity: rust" run_cargo test -p parity
 elif docker_up; then
   probed="${probed:-(no web port from bin/worktree-stack urls)}"
   skip "Playwright: skipped" "GET ${probed} did not succeed, so rust/e2e was not run. Start the stack with bin/worktree-stack up && bin/worktree-stack seed"
