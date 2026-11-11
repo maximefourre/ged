@@ -57,6 +57,11 @@
 #
 # Ports collide only if two worktree slugs hash to the same offset; override
 # with GED_WEB_PORT / GED_OAUTH_PORT / GED_DB_PORT if that ever happens.
+#
+# Differential fuzz runs a second compose project beside this worktree's stack.
+# Set GED_COMPOSE_PROJECT to that project name and override the three host
+# ports. `up` then does not replace the stack name this worktree remembers,
+# and `clean` does not forget it either.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -85,6 +90,11 @@ else
   db_port="${GED_DB_PORT:-5432}"
   grafana_port="${GED_GRAFANA_PORT:-3300}"
   otlp_port="${GED_OTLP_PORT:-4318}"
+fi
+
+# Side project for differential fuzz. Ports stay the caller's override.
+if [ -n "${GED_COMPOSE_PROJECT:-}" ]; then
+  project="$GED_COMPOSE_PROJECT"
 fi
 
 export COMPOSE_PROJECT_NAME="$project"
@@ -199,7 +209,10 @@ case "$cmd" in
     stack="${GED_STACK:-rust}"
     echo "▶ project=$COMPOSE_PROJECT_NAME  stack=$stack  web=$web_port  oauth=$oauth_port  db=$db_port"
     compose_as "$stack" up --build -d "$@"
-    remember_stack "$stack"
+    # A side project must not become the stack `active` reports.
+    if [ -z "${GED_COMPOSE_PROJECT:-}" ]; then
+      remember_stack "$stack"
+    fi
     urls
     echo
     echo "  First boot only — create the admin user:"
@@ -246,7 +259,11 @@ case "$cmd" in
     ;;
   clean)
     compose_as "$(active_stack)" down -v --rmi local "$@"
-    rm -f "$(stack_state_file)"
+    # The side project has its own containers; the remembered name belongs
+    # to this worktree's primary stack.
+    if [ -z "${GED_COMPOSE_PROJECT:-}" ]; then
+      rm -f "$(stack_state_file)"
+    fi
     ;;
   urls|url)
     echo "▶ project=$COMPOSE_PROJECT_NAME  stack=$(active_stack)  web=$web_port  oauth=$oauth_port  db=$db_port"

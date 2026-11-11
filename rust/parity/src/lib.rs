@@ -14,6 +14,7 @@
 
 pub mod admin;
 pub mod backend;
+pub mod diff_fuzz;
 pub mod fixtures;
 pub mod forge;
 pub mod http;
