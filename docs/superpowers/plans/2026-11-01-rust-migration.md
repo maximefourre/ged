@@ -443,3 +443,26 @@ restent ouverts.
   `ON CONFLICT … DO UPDATE` ne réinitialise pas `deleted_at` ; la phrase sur
   le p99 plus haut côté Rust omet mix 3w (180 vs 152) et many-small 1w
   (29 vs 26).
+
+## Reports de la revue finale
+
+Constats de `review-final.md` (verdict CHANGES, aucun bloquant). Les SHA sont
+ceux de la branche `maximefourre/rust-final-fix-edge` ; `1c708f2` est sur
+`maximefourre/rust-final-fix-docs`.
+
+| Constat | État | Preuve |
+|---|---|---|
+| **M1** parties texte multipart bufferisées avant auth | **fait** — `3b7dbaa` | `an_oversized_text_part_stops_the_read_at_the_form_limit` : échoue sur `3356d11` (47 185 976 octets tirés pour une borne de 4 194 304), passe après |
+| **M2** aucun délai HTTP | **fait**, écart restant écrit — `358853b` | `http_timeouts.rs` (6 tests ; 4 échouent avec des délais de 1 h) ; valeurs de Thruster 0.1.23 et Puma 8.0.2 relues dans leurs sources ; pas d'échéance totale du corps, ni de délai d'écriture : `parity-gaps.md`, « Délais HTTP » |
+| **m1** argon2 sans borne | **fait** — `8a24100` | sémaphore global de 4 ; `blocking_work_never_exceeds_the_permit_count` |
+| **m2** ZIP sans ZIP64 | **fait** par un autre worker — `1c708f2` | non rejoué ici |
+| **m3** SSRF, plages héritées | **hérité, non changé** | déjà dans `parity-gaps.md` (« Faiblesses héritées de `CallbackUrlPolicy` ») ; reste à porter dans `docs/security/` |
+| **m4** callback sans délai total | **hérité, non changé**, désormais écrit | `parity-gaps.md`, « Livraison : pas d'échéance totale » |
+| **m5** callback perdu | **fait** — `4aed431` | enregistrement du résultat réessayé, claims toujours relâchés à l'arrêt, claims d'un worker mort remis en file pour `DeliverCallbackJob` (`Job::at_least_once`) ; tests `a_dead_workers_requeueable_job_is_redelivered_while_attempts_remain`, `a_clean_stop_releases_a_claim_left_without_a_recorded_result`, `a_failing_record_is_retried_until_it_goes_through` ; écart voulu avec Solid Queue écrit. Le callback peut arriver deux fois |
+| **m6** runner qui s'arrête | **fait** — `3f43b0a` | `ged worker` sort en erreur, `restart: on-failure` sur `worker` ; `a_runner_that_ends_by_itself_stops_the_worker_with_an_error`, garde Compose |
+| **m7** `GED_STORAGE_ROOT` | **fait** par un autre worker — `1c708f2` | non rejoué ici |
+| **m8** `openapi.yaml` Puma/Thruster | **fait** par un autre worker — `1c708f2` | idem |
+| **m9** `audit.toml` | **fait** par un autre worker — `1c708f2` | idem |
+| **m10** étiquette de la campagne de fuzz | **fait** par un autre worker — `1c708f2` | idem |
+| **m11** résidus doc et config | **fait** par un autre worker — `1c708f2` | idem |
+| **m12** CPU du nettoyeur multipart | **fait** — `c8bb961` | mesuré avant : 8,3 s de CPU (release) pour 64 Kio d'en-tête octet par octet ; regroupement des morceaux < 4 Kio (`GATHER_BYTES`) ; `a_header_sent_byte_by_byte_costs_few_scrubber_pushes` |

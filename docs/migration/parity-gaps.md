@@ -175,6 +175,53 @@ pas réinitialiser la connexion d'un client en train d'envoyer.
 de Puma/Thruster sur la ligne de requête (chemin au-delà de 8192 octets → 400 vide ;
 en-têtes au-delà d'~1 Mio → 431 de Thruster) ne sont pas répliquées.
 
+## Délais HTTP : en-têtes, corps, connexion inactive (revue finale M2)
+
+Rails tournait derrière Thruster 0.1.23 (`Dockerfile.rails`), qui est un `net/http` de
+Go. Valeurs lues dans les sources, version épinglée (`rails-final:Gemfile.lock`) :
+
+| Couche | Réglage | Défaut | Source |
+|---|---|---|---|
+| Thruster 0.1.23 | `HTTP_READ_TIMEOUT` (`ReadTimeout` Go : **toute la requête**, en-têtes et corps) | 30 s | `internal/config.go` (`defaultHttpReadTimeout`), appliqué dans `internal/server.go` |
+| Thruster 0.1.23 | `HTTP_WRITE_TIMEOUT` | 30 s | idem |
+| Thruster 0.1.23 | `HTTP_IDLE_TIMEOUT` (keep-alive) | 60 s | idem |
+| Puma 8.0.2 | `first_data_timeout` | 30 s | `lib/puma/configuration.rb:144` |
+| Puma 8.0.2 | `persistent_timeout` | 65 s | `lib/puma/configuration.rb:163` |
+
+`rails-final:config/puma.rb` ne fixe aucun délai : ce sont les défauts. Le Rust,
+qui retire Thruster, pose les siens dans `rust/ged/src/http/serve.rs`
+(`Timeouts::default()`), testés par `rust/ged/tests/http_timeouts.rs` :
+
+- **En-têtes : 30 s** (timer hyper, `header_read_timeout`), aussi pour attendre la
+  requête suivante sur une connexion maintenue. Avant : aucun délai, une requête aux
+  en-têtes incomplets pendant 75 s était servie (mesuré par la revue).
+- **Corps : 30 s d'inactivité entre deux morceaux** (`IdleBody`). Le `.part` d'un
+  upload abandonné est supprimé quand la requête est interrompue (test
+  `an_abandoned_upload_leaves_no_part_file`).
+
+Écarts restants, volontaires :
+
+- **Pas d'échéance totale sur le corps.** Thruster coupe la requête à 30 s au total,
+  donc un upload de 50 Mio plus lent qu'environ 14 Mbit/s échouait sous Rails. Le Rust
+  accepte un gros upload lent tant qu'il progresse (au moins un morceau par 30 s) : un
+  client lent mais légitime passe, un client à débit nul est coupé. Conséquence :
+  un client qui envoie un octet par 29 s peut tenir une connexion ; son coût est borné
+  par la limite d'upload (`GED_MAX_UPLOAD_BYTES`) pour le disque, et par 4 Mio pour
+  les parties texte (M1). Un proxy frontal avec échéance totale reste possible.
+- **Pas de délai d'écriture** (`HTTP_WRITE_TIMEOUT`) : un client qui lit sa réponse
+  lentement (ZIP, téléchargement) n'est pas coupé. Un téléchargement légitime de
+  plusieurs Gio dépasserait 30 s.
+- **Pas de plafond de connexions simultanées** (non vérifié côté Thruster).
+
+## Concurrence des vérifications argon2 (revue finale m1)
+
+La connexion admin lance un argon2id par tentative sur le pool bloquant. Au plus
+`ARGON2_CONCURRENCY` (4) vérifications tournent à la fois (sémaphore global,
+`admin/session.rs`) ; les autres attendent un permis. Le throttle par client reste
+10 tentatives par 3 minutes. Rails/bcrypt était borné par les threads Puma (3).
+Écart : une rafale de tentatives de clés de throttle différentes est ralentie, pas
+refusée ; le coût en attente est une tâche parquée par tentative.
+
 ## Analyse des paramètres : ce qui est eager, ce qui est lazy
 
 Observé sur le stack Rails (Thruster inclus) :
@@ -339,6 +386,24 @@ Comportement de Solid Queue 1.5.0 relu dans le gem
   et **garde** l'attempt. Un job qui tue son process ne boucle donc pas ; la
   réparation des uploads revient à `ReconcileUploadRequestsJob`, comme en Rails.
   Seul `release_claims` (arrêt propre après `shutdown_timeout`) décrémente `attempts`.
+- **Callbacks : au moins une fois (revue finale m5), écart voulu par rapport à Solid
+  Queue.** Trois trous faisaient perdre un callback : (1) l'enregistrement du résultat
+  (`complete`/`fail`) qui échoue sur une panne de base laissait le claim à un worker
+  vivant, jamais repris ; (2) l'arrêt propre ne relâchait les claims qu'après un
+  dépassement du `shutdown_timeout` ; (3) un worker mort en pleine livraison voyait son
+  job marqué `failed`. Le Rust réessaie l'enregistrement (4 reprises sur 12 s), relâche
+  toujours les claims à l'arrêt, et `recover_abandoned_requeuing` remet en file, due
+  tout de suite, les claims d'un worker mort pour les kinds `Job::at_least_once`
+  (aujourd'hui `DeliverCallbackJob` seul, tant que `attempts < 5`). Le destinataire
+  peut donc recevoir un callback deux fois (même `request_id`). `StoreDocumentJob`
+  reste « exactement une fois » : un process mort n'y est toujours pas rejoué,
+  réparé par la réconciliation. Il reste une panne de base plus longue que 12 s :
+  le claim est alors recouvré comme ci-dessus à l'expiration du heartbeat.
+- **Un runner qui s'arrête arrête `ged worker` (revue finale m6).** Si un pool se
+  termine hors arrêt demandé (par exemple `heartbeat::register` échoue sur une
+  panne de base au démarrage), le processus arrête les autres, sort en erreur, et
+  Compose le relance (`restart: on-failure` sur `worker`). Un arrêt demandé (SIGTERM)
+  sort en 0 et n'est pas relancé.
 - **Seuils configurables comme Solid Queue** : `SOLID_QUEUE_PROCESS_HEARTBEAT_INTERVAL`
   (60 s) et `SOLID_QUEUE_PROCESS_ALIVE_THRESHOLD` (300 s), en secondes. Un intervalle
   qui n'est pas inférieur au seuil est ignoré (valeurs par défaut).
@@ -382,6 +447,18 @@ Comportement de Solid Queue 1.5.0 relu dans le gem
   création (attache Active Storage) ; le Rust le laisse égal à `created_at`.
 - **Parties texte multipart :** plafonnées à 4 Mio au total (400 au-delà) ; Rails n'a
   pas ce plafond. Un fichier envoyé sous un autre nom que `file` est ignoré.
+  **Mémoire (revue finale M1) :** une partie texte est lue morceau par morceau et la
+  lecture s'arrête dès que le cumul dépasse 4 Mio ; le reste de la partie n'est ni
+  tiré de la connexion ni gardé (test `an_oversized_text_part_stops_the_read_at_the_form_limit`).
+  Avant, chaque partie texte était bufferisée en entier (jusqu'à `GED_MAX_UPLOAD_BYTES`)
+  avant le contrôle, avant l'authentification.
+- **Coût CPU du nettoyeur multipart (revue finale m12) :** tant qu'un en-tête de
+  partie n'est pas fini, chaque poussée relit le tampon (jusqu'à 64 Kio). Mesuré avant
+  correctif : 8,3 s de CPU (release) pour 64 Kio d'en-tête envoyés un octet à la fois.
+  Les morceaux de moins de 4 Kio sont maintenant regroupés tant qu'un en-tête est en
+  cours (`GATHER_BYTES`), soit une vingtaine de poussées au lieu de 65 000 (test
+  `a_header_sent_byte_by_byte_costs_few_scrubber_pushes`). Le regroupement ne touche
+  jamais un corps de fichier.
 - **Limite de taille sur tous les endpoints :** le 413 vide s'applique à toute
   requête (`PUT …/tags`, `DELETE …/bulk_destroy`, `POST /departments`, …) : par
   `Content-Length` avant tout routage et authentification, et pour un corps sans
@@ -446,6 +523,11 @@ affaiblie : messages d'erreur, payload du callback et statuts sont ceux de Rails
   `resolve(host, ip:port)` (Host, SNI et certificat gardent le nom d'hôte), ni proxy
   ni redirection suivie (un 3xx est un échec comme en `Net::HTTP`), délais 5 s
   connexion / 10 s lecture. Un hôte littéral IP ne peut pas être épinglé : l'adresse que `reqwest` composerait (parsing WHATWG) est comparée strictement à celle validée par la policy, et toute différence (encodage décimal/hexa/octal/court, IPv6, IPv4-mappé) est refusée sans retry (testé).
+- **Livraison : pas d'échéance totale (revue finale m4, hérité de Rails, non changé).**
+  Le délai de 10 s s'applique à chaque lecture, pas à la livraison entière, comme
+  `Net::HTTP#read_timeout`. Un destinataire qui égrène sa réponse octet par octet
+  occupe un des deux threads du pool `default` aussi longtemps qu'il envoie. Un
+  `.timeout()` total sur le client le règlerait ; il est laissé pour fidélité.
 - **Message d'erreur d'un fichier de staging manquant** : reproduit le texte Ruby
   (`No such file or directory @ rb_sysopen - <chemin>`), avec le chemin du staging Rust.
 
