@@ -79,6 +79,34 @@ step "Tests: oauth-provider" bash -c '
 # RuboCop left with the Rails Gemfile. These two drivers are Ruby stdlib.
 step "Style: Ruby" bash -c 'ruby -c bin/perf-upload && ruby -c bin/monkey'
 
+# bundler-audit, importmap audit and brakeman left with the Rails app.
+# cargo-audit covers the Rust workspace. bundle-audit covers the remaining
+# Ruby service. Install either tool when it is missing; do not change
+# oauth-provider to do it.
+step "Audit: Rust" bash -c '
+  if ! command -v cargo-audit >/dev/null 2>&1; then
+    if command -v mise >/dev/null 2>&1; then
+      mise exec -- cargo install cargo-audit --locked
+    else
+      cargo install cargo-audit --locked
+    fi
+  fi
+  cd rust
+  if command -v mise >/dev/null 2>&1; then
+    mise exec -- cargo audit
+  else
+    cargo audit
+  fi
+'
+
+step "Audit: oauth-provider" bash -c '
+  if ! command -v bundle-audit >/dev/null 2>&1; then
+    gem install bundler-audit --no-document
+  fi
+  bundle-audit update
+  bundle-audit check --gemfile-lock oauth-provider/Gemfile.lock
+'
+
 probed=""
 if docker_up; then
   probed="$(up_url)"

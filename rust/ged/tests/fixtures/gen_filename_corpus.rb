@@ -3,6 +3,10 @@
 # emits (ActionDispatch::Http::ContentDisposition) and the admin ZIP entry
 # name; also emits I18n's transliteration table used by that header.
 #
+# This generator reads app/models/document.rb (and config/environment when
+# WITH_APP=1). Those paths exist only on the local tag rails-final, not in
+# this tree. Check that tag out in another worktree, then run:
+#
 #   bundle exec ruby rust/ged/tests/fixtures/gen_filename_corpus.rb
 require "json"
 require "i18n"

@@ -48,9 +48,13 @@ fn service_diagram_name(rel: &str) -> String {
     }
 }
 
-/// Rust modules that replaced `app/services/**`. `mod.rs` is a barrel.
+/// Rust modules drawn as services. `mod.rs` is a barrel.
 /// `auth/authenticated_client.rs` is the request principal, grouped with the
 /// models and deliberately not drawn on its own.
+///
+/// `auth/` and `policy/` are scanned. The other paths are an explicit list:
+/// a new file under `storage/`, `jobs/`, `domain/` or `admin/` is invisible
+/// until it is added here. `docs/architecture/c4.md` records that limit.
 fn service_modules() -> Vec<String> {
     let src = root().join("rust/ged/src");
     let mut rels = Vec::new();

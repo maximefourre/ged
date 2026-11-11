@@ -126,6 +126,14 @@ fn ci_checks_rust_and_skips_parity_without_a_stack() {
         bin.contains("ruby -c") && bin.contains("bin/perf-upload") && bin.contains("bin/monkey"),
         "the remaining Ruby drivers are syntax-checked"
     );
+    assert!(
+        bin.contains("cargo audit"),
+        "Rust dependencies are audited; bundler-audit left with the Rails Gemfile"
+    );
+    assert!(
+        bin.contains("bundle-audit") && bin.contains("oauth-provider/Gemfile.lock"),
+        "oauth-provider gems stay under bundle-audit"
+    );
     let workflow = read(".github/workflows/ci.yml");
     assert!(
         workflow.contains("cargo test -p ged"),
@@ -141,6 +149,14 @@ fn ci_checks_rust_and_skips_parity_without_a_stack() {
         "GitHub CI tests oauth-provider"
     );
     assert!(!workflow.contains("Dockerfile.rails") && !workflow.contains("bin/rails"));
+    assert!(
+        workflow.contains("cargo audit"),
+        "GitHub CI audits Rust dependencies"
+    );
+    assert!(
+        workflow.contains("bundle-audit") && workflow.contains("oauth-provider/Gemfile.lock"),
+        "GitHub CI audits oauth-provider gems"
+    );
 }
 
 #[test]

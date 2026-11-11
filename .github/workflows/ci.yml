@@ -46,6 +46,12 @@ jobs:
           GED_DB_PORT: "5432"
         run: cargo test -p ged
 
+      - name: Cargo audit
+        working-directory: rust
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -58,6 +64,12 @@ jobs:
 
       - name: Ruby syntax
         run: ruby -c bin/perf-upload && ruby -c bin/monkey
+
+      - name: bundler-audit
+        run: |
+          gem install bundler-audit --no-document
+          bundle-audit update
+          bundle-audit check --gemfile-lock oauth-provider/Gemfile.lock
 
       - name: Build Rust image
         run: docker build -t ged:ci .

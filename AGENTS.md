@@ -36,8 +36,11 @@ taken.
   fast-forward, then `bin/worktree-stack clean` and remove the worktree.
 - **Green checks before proposing a merge.** `bin/ci` must pass. It runs
   `cargo fmt`, `cargo clippy -D warnings`, `cargo test -p ged`, the
-  `oauth-provider` rake suite, `ruby -c` on `bin/perf-upload` and
-  `bin/monkey`, compose config, and `docker build` when Docker answers.
+  `oauth-provider` rake suite, `bundle-audit` on `oauth-provider/Gemfile.lock`,
+  `cargo audit` (ids in `rust/.cargo/audit.toml` are advisories whose fix
+  sits outside the versions this workspace can select), `ruby -c` on
+  `bin/perf-upload` and `bin/monkey`, compose
+  config, and `docker build` when Docker answers.
   Playwright (`rust/e2e`) and `cargo test -p parity` run only when this
   worktree's stack answers `GET /up`. When nothing answers, `bin/ci` prints
   `Parity: skipped` and `Playwright: skipped` and does not record that skip
@@ -45,8 +48,12 @@ taken.
 - **Keep docs in sync when scope changes.** Update `docs/api/openapi.yaml`
   when adding or renaming an `/api/v1` route (`rust/ged/tests/guards_api_docs.rs`
   fails otherwise), `docs/architecture/c4.md` when adding a compose service,
-  a job, a service module or a queue pool (`rust/ged/tests/guards_c4.rs`),
-  and this file when conventions change.
+  a job, a queue pool, or a service module the C4 guard already tracks
+  (`rust/ged/tests/guards_c4.rs`), and this file when conventions change.
+  That guard walks `auth/` and `policy/` and an explicit list in
+  `service_modules()`. A new `.rs` file under `storage/`, `jobs/`, `domain/`
+  or `admin/` is not picked up until the list names it. See
+  `docs/architecture/c4.md`.
 - **Go through specs and plans for architectural changes** — capture the
   design in `docs/superpowers/specs/` and the steps in
   `docs/superpowers/plans/` before touching code.
@@ -273,9 +280,14 @@ Accepted behavioural gaps, with the measurement that justified each one, are
   `GED_OIDC_AUDIENCE` (required in production when binding is audience),
   `GED_OIDC_REQUIRED_SCOPE` (required in production when binding is scope),
   `GED_ADMIN_USERNAME` (default `admin`), `GED_ADMIN_PASSWORD`,
-  `GED_MAX_UPLOAD_BYTES` (default 52428800), `OTEL_EXPORTER_OTLP_ENDPOINT`
-  (empty disables OTel), `OTEL_SERVICE_NAME` (default `ged`), `JOB_THREADS`
-  (default 3), `JOB_CONCURRENCY` (default 1), `SOLID_QUEUE_SHUTDOWN_TIMEOUT`
-  (default 30s, must stay under the worker `stop_grace_period` of 40s),
-  `PORT` (80 in the container). `GED_BACKEND` is unset or `rust` for parity;
-  any other value panics and names the tag `rails-final`.
+  `GED_MAX_UPLOAD_BYTES` (default 52428800), `GED_STORAGE_ROOT` (default
+  directory `storage`, the compose volume mount), `OTEL_EXPORTER_OTLP_ENDPOINT`
+  (empty disables OTel), `OTEL_SDK_DISABLED` (`true` disables OpenTelemetry
+  even when the endpoint is set), `OTEL_SERVICE_NAME` (default `ged`),
+  `JOB_THREADS` (default 3), `JOB_CONCURRENCY` (default 1),
+  `SOLID_QUEUE_SHUTDOWN_TIMEOUT` (default 30s, must stay under the worker
+  `stop_grace_period` of 40s), `SOLID_QUEUE_PROCESS_HEARTBEAT_INTERVAL`
+  (default 60s), `SOLID_QUEUE_PROCESS_ALIVE_THRESHOLD` (default 300s; when
+  the interval is not shorter than the threshold, both fall back to those
+  defaults), `PORT` (80 in the container). `GED_BACKEND` is unset or `rust`
+  for parity; any other value panics and names the tag `rails-final`.

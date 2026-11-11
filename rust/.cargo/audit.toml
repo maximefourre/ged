@@ -1,0 +1,25 @@
+# `cargo audit` fails on any advisory that is not listed here.
+# Each entry is a case where the patched release sits outside the versions
+# this workspace can select. Do not add an id to hide a crate we can upgrade.
+
+[advisories]
+ignore = [
+    # jsonwebtoken 11.1.0 pins rsa 0.9.10. The Marvin advisory is a
+    # decryption timing side channel; GED only verifies RS256 signatures.
+    # rsa >= 0.10 is not available through this jsonwebtoken release.
+    "RUSTSEC-2023-0071",
+    # The same jsonwebtoken release pins p256 0.13, which pins
+    # crypto-bigint 0.5. The fix is crypto-bigint >= 0.7.6.
+    "RUSTSEC-2026-0387",
+    # sqlx-sqlite is in Cargo.lock because sqlx publishes it. ged enables
+    # the postgres feature only, so libsqlite3-sys is not linked. The fix
+    # is libsqlite3-sys >= 0.39, which this sqlx 0.9 release does not select.
+    "RUSTSEC-2026-0459",
+    # parity reads entries with ZipArchive::by_index. These four advisories
+    # are ZipArchive::extract writing symlinks, modes and SUID bits to disk.
+    # zip >= 9 is outside the `zip = "2"` constraint.
+    "RUSTSEC-2026-0429",
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+]

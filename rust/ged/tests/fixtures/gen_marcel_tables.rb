@@ -4,6 +4,9 @@
 # Marcel's EXTENSIONS, TYPE_PARENTS and MAGIC after the app's definitions.rb
 # overrides, in Marcel's own priority order.
 #
+# The marcel gem and config/initializers live only on the local tag
+# rails-final. Check that tag out in another worktree, then run:
+#
 #   bundle exec ruby rust/ged/tests/fixtures/gen_marcel_tables.rb
 require "marcel"
 

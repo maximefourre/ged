@@ -1,5 +1,6 @@
 # Regenerates rack_params_corpus.json from Rails' own parser, the oracle for
-# `ged::http::params`. Run against the Rails stack (the reference until T16):
+# `ged::http::params`. The Rails stack is the local tag rails-final, not this
+# tree. Check that tag out in another worktree and run it there:
 #
 #   docker compose exec -T web bin/rails runner - \
 #     < rust/ged/tests/fixtures/gen_rack_params_corpus.rb \

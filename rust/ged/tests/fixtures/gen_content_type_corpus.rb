@@ -2,6 +2,9 @@
 # ActiveStorage::Blob#extract_content_type calls it) answers for each input.
 # Rust's `detect_content_type` must reproduce every line.
 #
+# The marcel gem ships with the Rails bundle, which this tree no longer has.
+# Check out the local tag rails-final in another worktree, then run:
+#
 #   bundle exec ruby rust/ged/tests/fixtures/gen_content_type_corpus.rb
 require "marcel"
 require "stringio"
