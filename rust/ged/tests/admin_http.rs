@@ -445,13 +445,12 @@ async fn assets_are_served_unchanged_with_a_long_cache() {
     ] {
         assert_eq!(css.header(name), "", "{name} on a static file");
     }
-    let rails = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../app/assets/stylesheets/application.css"
+    assert_static_unchanged(
+        "CSS",
+        &css.body,
+        "app/assets/stylesheets/application.css",
+        "d583eaa9ac8d9ee60f17137d5eef505b47c54810ecbcf4961ced092cb4772422",
     );
-    if let Ok(original) = std::fs::read_to_string(rails) {
-        assert_eq!(css.body, original, "CSS must be Rails' file, unmodified");
-    }
     let js_href = page
         .split('"')
         .find(|u| u.starts_with("/assets/application-") && u.ends_with(".js"))
@@ -460,13 +459,12 @@ async fn assets_are_served_unchanged_with_a_long_cache() {
     let js = b.get(&js_href).await;
     assert_eq!(js.status, 200);
     assert_eq!(js.header("content-type"), "text/javascript");
-    let rails_js = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../app/javascript/application.js"
+    assert_static_unchanged(
+        "JS",
+        &js.body,
+        "app/javascript/application.js",
+        "829d9407e9a2932d88d38975e9fa484203ae5df3ab51109b585e88f99b7eb5fc",
     );
-    if let Ok(original) = std::fs::read_to_string(rails_js) {
-        assert_eq!(js.body, original, "JS must be Rails' file, unmodified");
-    }
     let missing = b.get("/assets/application-00000000.css").await;
     assert_eq!(missing.status, 404);
     assert_eq!(missing.header("x-frame-options"), "");
@@ -478,6 +476,54 @@ async fn assets_are_served_unchanged_with_a_long_cache() {
     assert_eq!(robots.header("cache-control"), "public, max-age=31556952");
     assert_eq!(robots.header("x-frame-options"), "");
     site.finish().await;
+}
+
+/// SHA-256 of the bytes the server actually returned. The Rails tree is gone
+/// from this checkout, so a missing `app/` file must not skip the check.
+/// `rails-final` is a local tag and is absent on a clone that never fetched
+/// it; the frozen digest still fails when the served asset changes.
+fn assert_static_unchanged(label: &str, served: &str, rails_path: &str, sha256_hex: &str) {
+    use sha2::{Digest, Sha256};
+    let digest = format!("{:x}", Sha256::digest(served.as_bytes()));
+    assert_eq!(
+        digest, sha256_hex,
+        "{label} bytes changed; the frozen fingerprint must be revised on purpose"
+    );
+    if rails_final_commit_available() {
+        let original = rails_final_blob(rails_path);
+        assert_eq!(
+            served.as_bytes(),
+            original.as_slice(),
+            "{label} must match rails-final:{rails_path}"
+        );
+    }
+}
+
+fn repo_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn rails_final_commit_available() -> bool {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", "rails-final^{commit}"])
+        .current_dir(repo_root())
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+fn rails_final_blob(path: &str) -> Vec<u8> {
+    let spec = format!("rails-final:{path}");
+    let output = std::process::Command::new("git")
+        .args(["show", &spec])
+        .current_dir(repo_root())
+        .output()
+        .unwrap_or_else(|err| panic!("git show {spec}: {err}"));
+    assert!(
+        output.status.success(),
+        "rails-final is present but {spec} could not be read: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
 }
 
 // --- review T10: B1 (multipart CSRF/Origin) ------------------------------

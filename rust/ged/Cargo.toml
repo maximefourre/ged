@@ -36,6 +36,7 @@ base64 = "0.23.1"
 
 [dev-dependencies]
 base64 = "0.23.1"
+sha2 = "0.10"
 http-body-util = "0.1"
 tempfile = "3.27.0"
 tower = { version = "0.5", features = ["util"] }
