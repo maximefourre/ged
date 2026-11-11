@@ -249,35 +249,10 @@ async fn staging_of_live_requests_is_never_swept_but_terminal_ones_are() {
     f.finish().await;
 }
 
-/// `config/recurring.yml`, production block, is the source of truth.
+/// The schedule lives in `scheduler::default_schedule`: reconcile every 10
+/// minutes, finished-job cleanup hourly at minute 12, purge daily at 03:00 UTC.
 #[test]
-fn the_schedule_matches_config_recurring_yml() {
-    let yml = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../config/recurring.yml"
-    ))
-    .unwrap();
-    let find = |class: &str| {
-        let after = yml
-            .split(&format!("class: {class}"))
-            .nth(1)
-            .unwrap_or_else(|| panic!("{class}"));
-        after
-            .lines()
-            .find(|l| l.trim_start().starts_with("schedule:"))
-            .unwrap()
-            .trim()
-            .to_owned()
-    };
-    assert_eq!(
-        find("ReconcileUploadRequestsJob"),
-        "schedule: every 10 minutes"
-    );
-    assert_eq!(
-        find("PurgeDeletedDocumentsJob"),
-        "schedule: every day at 3am"
-    );
-
+fn the_schedule_matches_the_rust_cadence() {
     let tasks = scheduler::default_schedule();
     let by_key = |key: &str| tasks.iter().find(|t| t.key == key).unwrap();
     let reconcile = by_key("reconcile_upload_requests");
@@ -296,6 +271,15 @@ fn the_schedule_matches_config_recurring_yml() {
             "PurgeDeletedDocumentsJob",
             QueueName::Default,
             Cadence::DailyAt(3)
+        )
+    );
+    let clear = by_key("clear_finished_jobs");
+    assert_eq!(
+        (clear.kind.as_str(), clear.queue, clear.cadence),
+        (
+            "clear_finished_jobs",
+            QueueName::Default,
+            Cadence::HourlyAt(12)
         )
     );
 }

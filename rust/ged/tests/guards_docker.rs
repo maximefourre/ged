@@ -1,4 +1,4 @@
-//! T14: the default image and compose file run Rust. Rails stays selectable.
+//! The image and compose file run Rust. There is no Rails image or overlay.
 
 use std::fs;
 use std::path::PathBuf;
@@ -12,16 +12,15 @@ fn read(rel: &str) -> String {
 }
 
 #[test]
-fn default_dockerfile_serves_ged_and_rails_image_is_kept() {
+fn default_dockerfile_serves_ged() {
     let dockerfile = read("Dockerfile");
     assert!(
         dockerfile.contains(r#"CMD ["ged", "serve"]"#),
         "Dockerfile must default to `ged serve`"
     );
-    let rails = read("Dockerfile.rails");
     assert!(
-        rails.contains("bin/rails") && rails.contains("thrust"),
-        "Dockerfile.rails must still build the Rails image"
+        !root().join("Dockerfile.rails").exists(),
+        "Dockerfile.rails was removed in T16; replay Rails from the tag rails-final"
     );
 }
 
@@ -49,26 +48,22 @@ fn compose_runs_one_rust_image_for_web_and_worker() {
         compose.contains("storage:/rails/storage"),
         "web and worker keep the shared storage volume"
     );
-
-    let overlay = read("docker-compose.rails.yml");
-    assert!(overlay.contains("Dockerfile.rails"));
-    assert!(overlay.contains(r#""./bin/jobs""#));
-    assert!(overlay.contains("bin/rails"));
+    assert!(
+        !root().join("docker-compose.rails.yml").exists(),
+        "docker-compose.rails.yml was removed in T16"
+    );
 }
 
 #[test]
-fn worktree_stack_defaults_to_rust_and_selects_rails() {
+fn worktree_stack_is_rust_only() {
     let script = read("bin/worktree-stack");
     assert!(script.contains("GED_STACK"));
-    assert!(script.contains("docker-compose.rails.yml"));
     assert!(
-        script.contains("ged seed"),
-        "seed must run ged seed on the Rust stack"
+        !script.contains("docker-compose.rails.yml"),
+        "the stack script must not select a Rails overlay"
     );
-    assert!(
-        script.contains("bin/rails db:seed"),
-        "Rails seed stays available"
-    );
+    assert!(script.contains("ged seed"), "seed must run ged seed");
+    assert!(!script.contains("bin/rails"), "bin/rails is gone");
 }
 
 #[test]
@@ -133,7 +128,7 @@ fn ci_still_drives_rails_and_checks_rust() {
 
 #[test]
 fn images_run_as_non_root_and_bake_no_secrets() {
-    for file in ["Dockerfile", "Dockerfile.rails"] {
+    for file in ["Dockerfile"] {
         let text = read(file);
         let user = last_user(&text).unwrap_or_else(|| panic!("{file} sets no USER"));
         assert!(is_non_root(&user), "{file} USER {user} must not be root");
@@ -238,8 +233,12 @@ fn worktree_stack_active_follows_env_then_memory_then_rust() {
     let state = tmp.join(format!("ged-worktree-stack-{}", worktree_slug()));
 
     let rails_env = run_active(&tmp, Some("rails"));
-    assert!(rails_env.status.success(), "{}", stderr(&rails_env));
-    assert_eq!(stdout(&rails_env), "rails\n");
+    assert!(!rails_env.status.success(), "GED_STACK=rails must fail");
+    assert!(
+        stderr(&rails_env).contains("expected rust"),
+        "stderr was: {}",
+        stderr(&rails_env)
+    );
 
     let rust_env = run_active(&tmp, Some("rust"));
     assert!(rust_env.status.success(), "{}", stderr(&rust_env));
@@ -247,18 +246,21 @@ fn worktree_stack_active_follows_env_then_memory_then_rust() {
 
     fs::write(&state, "rails\n").unwrap();
     let remembered = run_active(&tmp, None);
-    assert!(remembered.status.success(), "{}", stderr(&remembered));
-    assert_eq!(
-        stdout(&remembered),
-        "rails\n",
-        "a remembered rails stack is the default when GED_STACK is unset"
+    assert!(
+        !remembered.status.success(),
+        "a remembered rails name must not be selected"
+    );
+    assert!(
+        stderr(&remembered).contains("expected rust"),
+        "stderr was: {}",
+        stderr(&remembered)
     );
 
     let env_wins = run_active(&tmp, Some("rust"));
     assert_eq!(
         stdout(&env_wins),
         "rust\n",
-        "GED_STACK wins over the remembered name"
+        "GED_STACK=rust wins over the remembered name"
     );
 
     fs::remove_file(&state).unwrap();
@@ -269,7 +271,7 @@ fn worktree_stack_active_follows_env_then_memory_then_rust() {
     let bad = run_active(&tmp, Some("nope"));
     assert!(!bad.status.success(), "an unknown stack must fail");
     let err = stderr(&bad);
-    assert!(err.contains("expected rust or rails"), "stderr was: {err}");
+    assert!(err.contains("expected rust"), "stderr was: {err}");
 
     let _ = fs::remove_dir_all(&tmp);
 }

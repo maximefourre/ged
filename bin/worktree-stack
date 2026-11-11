@@ -21,18 +21,16 @@
 # Grafana is published on GED_GRAFANA_PORT (base 3300) and the collector's OTLP
 # http port on GED_OTLP_PORT (base 4318, for host-native `bin/dev` exports).
 #
-# The published Postgres port is how host-native `bin/rails test` / `bin/dev`
-# reach this worktree's database — config/database.yml (dev/test) auto-derives it
-# by calling `bin/worktree-stack db-port`, so each worktree runs against its own
+# The published Postgres port is how host-native `cargo test` reaches this
+# worktree's database. `db-port` prints it. Each worktree runs against its own
 # isolated Postgres (no shared Homebrew PG, no cross-worktree migration clashes).
 #
-# The default stack is Rust: one image, `ged serve` on web and `ged worker`
-# on worker. Rails stays bootable until T16:
-#   GED_STACK=rails bin/worktree-stack up
-# Commands after `up` (exec, seed, scale, logs, down) follow the stack that
-# was last started, unless GED_STACK is set again. `clean` forgets that name.
-# `active` prints that name and nothing else: GED_STACK if set, else the name
-# `up` remembered, else rust.
+# The stack is Rust: one image, `ged serve` on web and `ged worker` on worker.
+# `GED_STACK`, when set, must be `rust`. Commands after `up` (exec, seed,
+# scale, logs, down) follow the stack `up` remembered, unless GED_STACK is
+# set again. `clean` forgets that name. `active` prints `rust` and nothing
+# else: GED_STACK if set, else the name `up` remembered, else rust. A
+# remembered name other than rust is an error.
 #
 # Usage:
 #   bin/worktree-stack up [--scale worker=N]
@@ -44,12 +42,12 @@
 #                                   no recreate: web + existing workers stay
 #                                   untouched; surplus replicas drain + stop)
 #   bin/worktree-stack db           start ONLY Postgres, wait until healthy
-#                                   (the dev/test loop — Rails runs natively)
+#                                   (the host-native cargo test loop)
 #   bin/worktree-stack db-port      print this worktree's host Postgres port
 #   bin/worktree-stack seed         create the admin user (first boot only):
-#                                   `ged seed` on Rust, `bin/rails db:seed` on Rails
-#   bin/worktree-stack active       print rust or rails (GED_STACK, else the
-#                                   name `up` remembered, else rust)
+#                                   `ged seed`
+#   bin/worktree-stack active       print rust (GED_STACK, else the name `up`
+#                                   remembered, else rust)
 #   bin/worktree-stack down [-v]    stop + remove containers (-v also volumes)
 #   bin/worktree-stack clean        full ménage: down -v, remove built images,
 #                                   and forget the remembered stack name
@@ -58,9 +56,10 @@
 # Ports collide only if two worktree slugs hash to the same offset; override
 # with GED_WEB_PORT / GED_OAUTH_PORT / GED_DB_PORT if that ever happens.
 #
-# Differential fuzz runs a second compose project beside this worktree's stack.
-# Set GED_COMPOSE_PROJECT to that project name. Also set GED_STACK=rust|rails
-# and explicit GED_WEB_PORT, GED_OAUTH_PORT and GED_DB_PORT: without them,
+# Differential fuzz can run a second compose project beside this worktree's
+# stack (a Rails checkout of the tag `rails-final` is a separate worktree).
+# Set GED_COMPOSE_PROJECT to that project name. Also set GED_STACK=rust and
+# explicit GED_WEB_PORT, GED_OAUTH_PORT and GED_DB_PORT: without them,
 # `clean`/`scale`/`exec` would follow the stack this worktree remembers, and
 # the default ports would collide with it. `up` does not replace the stack
 # name this worktree remembers, and `clean` does not forget it either.
@@ -79,9 +78,9 @@ slug=$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' \
 # reuse this worktree's ports or the stack name `up` remembered.
 if [ -n "${GED_COMPOSE_PROJECT:-}" ]; then
   case "${GED_STACK:-}" in
-    rust|rails) ;;
+    rust) ;;
     *)
-      echo "GED_COMPOSE_PROJECT is set: export GED_STACK=rust or GED_STACK=rails" >&2
+      echo "GED_COMPOSE_PROJECT is set: export GED_STACK=rust" >&2
       exit 1
       ;;
   esac
@@ -168,17 +167,17 @@ active_stack() {
   printf '%s\n' rust
 }
 
-# Print only rust or rails. Same choice as active_stack, rejected when the
-# name is anything else so callers do not guess.
+# Print only rust. Same choice as active_stack. Anything else, including a
+# remembered rails name from before T16, is rejected.
 print_active_stack() {
   local stack
   stack="$(active_stack)"
   case "$stack" in
-    rust|rails)
+    rust)
       printf '%s\n' "$stack"
       ;;
     *)
-      echo "GED_STACK=$stack: expected rust or rails" >&2
+      echo "GED_STACK=$stack: expected rust" >&2
       return 1
       ;;
   esac
@@ -192,11 +191,8 @@ compose_as() {
     rust)
       docker compose -f "$ROOT/docker-compose.yml" "$@"
       ;;
-    rails)
-      docker compose -f "$ROOT/docker-compose.yml" -f "$ROOT/docker-compose.rails.yml" "$@"
-      ;;
     *)
-      echo "GED_STACK=$stack: expected rust or rails" >&2
+      echo "GED_STACK=$stack: expected rust" >&2
       exit 1
       ;;
   esac
@@ -213,7 +209,7 @@ EOF
   if [[ ",${COMPOSE_PROFILES:-}," == *",otel,"* ]]; then
     cat <<EOF
   Grafana    http://localhost:$grafana_port
-  OTLP http  http://localhost:$otlp_port  (for host-native bin/dev exports)
+  OTLP http  http://localhost:$otlp_port  (for host-native exports)
 EOF
   fi
 }
@@ -223,7 +219,7 @@ shift || true
 
 case "$cmd" in
   up)
-    # Unset GED_STACK means Rust, even if a previous `up` started Rails.
+    # Unset GED_STACK means Rust, even if a previous `up` remembered another name.
     stack="${GED_STACK:-rust}"
     echo "▶ project=$COMPOSE_PROJECT_NAME  stack=$stack  web=$web_port  oauth=$oauth_port  db=$db_port"
     compose_as "$stack" up --build -d "$@"
@@ -262,12 +258,7 @@ case "$cmd" in
     echo "$db_port"
     ;;
   seed)
-    stack="$(active_stack)"
-    case "$stack" in
-      rails) compose_as "$stack" exec web bin/rails db:seed ;;
-      rust) compose_as "$stack" exec -T web ged seed ;;
-      *) echo "GED_STACK=$stack: expected rust or rails" >&2; exit 1 ;;
-    esac
+    compose_as "$(active_stack)" exec -T web ged seed
     ;;
   active)
     print_active_stack

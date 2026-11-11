@@ -1,6 +1,0 @@
-<% if @prev_page || @next_page %>
-  <div class="pager">
-    <%= link_to "← Newer", url_for(request.query_parameters.merge("page" => @prev_page)), class: "btn btn-sm" if @prev_page %>
-    <%= link_to "Older →", url_for(request.query_parameters.merge("page" => @next_page)), class: "btn btn-sm" if @next_page %>
-  </div>
-<% end %>

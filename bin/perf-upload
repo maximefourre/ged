@@ -113,7 +113,7 @@ module PerfUpload
         out, status = Open3.capture2(script, "active")
         abort "bin/worktree-stack active failed" unless status.success?
         name = out.strip
-        abort "unexpected stack #{name}" unless %w[rust rails].include?(name)
+        abort "unexpected stack #{name}" unless name == "rust"
         name
       end
     end
@@ -124,8 +124,7 @@ module PerfUpload
       out + err # Rails logs its job lines to stderr — keep them for diagnostics
     end
 
-    # Same business tables on both stacks. Used only to provision the perf
-    # client when the web image has no `bin/rails` (Rust).
+    # Provisioning writes the business tables directly. The web image is ged.
     def psql(sql)
       exec("postgres", "psql", "-U", "postgres", "-d", "ged_production",
            "-v", "ON_ERROR_STOP=1", "-tA", "-c", sql)
@@ -137,27 +136,13 @@ module PerfUpload
   end
 
   module Setup
-    RUNNER = <<~RUBY
-      dept = Department.find_or_create_by!(name: "#{DEPARTMENT_NAME}")
-      client = AppClient.find_or_create_by!(client_identifier: "#{CLIENT_ID}")
-      access = ClientDepartmentAccess.find_or_initialize_by(app_client: client, department: dept)
-      access.can_read = true
-      access.can_write = true
-      access.save!
-      puts "department_id=" + dept.id.to_s
-    RUBY
-
     module_function
 
     def run!
+      Stack.kind # fail closed unless the active stack is rust
       register = Stack.exec("oauth-provider", "bin/register-client", CLIENT_ID)
       secret = register[/client_secret:\s+(\h+)/, 1] or abort "cannot parse client secret:\n#{register}"
-      department_id = if Stack.kind == "rust"
-        provision_rust
-      else
-        runner = Stack.exec("web", "bin/rails", "runner", RUNNER)
-        runner[/department_id=(\S+)/, 1] or abort "cannot parse department id:\n#{runner}"
-      end
+      department_id = provision_rust
       File.write(ENV_FILE, <<~ENV_CONTENT)
         PERF_CLIENT_ID=#{CLIENT_ID}
         PERF_CLIENT_SECRET=#{secret}
@@ -167,7 +152,7 @@ module PerfUpload
       puts "credentials saved to #{ENV_FILE} (gitignored) — runs pick them up automatically"
     end
 
-    # Idempotent twin of RUNNER: department perf-test, client ged-perf, read+write.
+    # Idempotent: department perf-test, client ged-perf, read+write.
     def provision_rust
       sql = <<~SQL
         WITH dept AS (
@@ -604,11 +589,7 @@ module PerfUpload
         pending = ids - outcomes.keys
         next if pending.empty?
         warn "  [#{Time.now.utc.iso8601}] #{pending.size} still pending -> ReconcileUploadRequestsJob.perform_now"
-        out = if Stack.kind == "rust"
-          Stack.exec("web", "ged", "run-job", "ReconcileUploadRequestsJob")
-        else
-          Stack.exec("web", "bin/rails", "runner", "ReconcileUploadRequestsJob.perform_now")
-        end
+        out = Stack.exec("web", "ged", "run-job", "ReconcileUploadRequestsJob")
         out.each_line do |line|
           warn "    reconcile: #{line.strip}" if /Enqueued|Error|error/.match?(line)
         end

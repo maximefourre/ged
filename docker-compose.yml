@@ -42,7 +42,7 @@ services:
         condition: service_started
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/ged_production
-      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?run with SECRET_KEY_BASE=$(bin/rails secret)}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE in .env}
       RAILS_ENV: production
       GED_OIDC_ISSUER: http://oauth-provider:9292
       GED_OIDC_JWKS_URL: http://oauth-provider:9292/.well-known/jwks.json
@@ -60,8 +60,7 @@ services:
       # (or run bin/worktree-stack with GED_OTEL=1, which sets both).
       OTEL_SERVICE_NAME: ged
       OTEL_EXPORTER_OTLP_ENDPOINT: ${GED_OTEL_ENDPOINT:-}
-      # Thruster body cap — the only layer that stops an oversized upload
-      # before it reaches Rack (no tempfile written). Mirrors Document::MAX_BYTE_SIZE.
+      # Same ceiling as the in-process body limit (GED_MAX_UPLOAD_BYTES).
       MAX_REQUEST_BODY: ${GED_MAX_UPLOAD_BYTES:-52428800}
     ports:
       # Container port 80 is `ged serve` (`PORT=80`). GED_WEB_PORT publishes
@@ -71,8 +70,8 @@ services:
       - storage:/rails/storage
     healthcheck:
       # Workers depend on web being healthy: the entrypoint migrates only for
-      # `ged serve` (and `rails server` on the Rails overlay), so web must be
-      # up before a worker boots. start_period covers that first boot.
+      # `ged serve`, so web must be up before a worker boots. start_period
+      # covers that first boot.
       test: ["CMD", "curl", "-f", "http://127.0.0.1/up"]
       interval: 5s
       timeout: 3s
@@ -94,7 +93,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/ged_production
-      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?run with SECRET_KEY_BASE=$(bin/rails secret)}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE in .env}
       RAILS_ENV: production
       JOB_THREADS: ${JOB_THREADS:-3}
       JOB_CONCURRENCY: ${JOB_CONCURRENCY:-1}
@@ -127,7 +126,7 @@ services:
     ports:
       # Grafana UI. Base 3300, NOT 3000: worktree web ports occupy 3000-3250.
       - "${GED_GRAFANA_PORT:-3300}:3000"
-      # OTLP http, published so host-native `bin/dev` can export too
+      # OTLP http, published so a host-native `ged serve` can export too
       # (OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:<port>).
       - "${GED_OTLP_PORT:-4318}:4318"
     volumes:

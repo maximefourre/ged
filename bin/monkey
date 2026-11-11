@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# monkey — black-box security pentest driver for the GED Rails app
+# monkey — black-box security pentest driver for GED
 # (see docs/security/pentest-2026-07-15.md).
 #
 #   bin/monkey --setup                           provision test clients + departments
@@ -93,7 +93,7 @@ module Monkey
         out, status = Open3.capture2(script, "active")
         abort "bin/worktree-stack active failed" unless status.success?
         name = out.strip
-        abort "unexpected stack #{name}" unless %w[rust rails].include?(name)
+        abort "unexpected stack #{name}" unless name == "rust"
         name
       end
     end
@@ -111,63 +111,6 @@ module Monkey
   end
 
   module Setup
-    RUNNER = <<~RUBY
-      # Create departments
-      dept_a = Department.find_or_create_by!(name: "monkey-dept-a", parent: nil)
-      dept_a_child = Department.find_or_create_by!(name: "monkey-dept-a-child", parent: dept_a)
-      dept_b = Department.find_or_create_by!(name: "monkey-dept-b", parent: nil)
-
-      # Create clients
-      client_ro = AppClient.find_or_create_by!(client_identifier: "monkey-readonly")
-      client_wo = AppClient.find_or_create_by!(client_identifier: "monkey-writeonly")
-      client_none = AppClient.find_or_create_by!(client_identifier: "monkey-noaccess")
-      client_full = AppClient.find_or_create_by!(client_identifier: "monkey-deptA")
-
-      # Grant access
-      ro_access = ClientDepartmentAccess.find_or_initialize_by(app_client: client_ro, department: dept_a)
-      ro_access.can_read = true
-      ro_access.can_write = false
-      ro_access.save!
-
-      wo_access = ClientDepartmentAccess.find_or_initialize_by(app_client: client_wo, department: dept_a)
-      wo_access.can_read = false
-      wo_access.can_write = true
-      wo_access.save!
-
-      full_access = ClientDepartmentAccess.find_or_initialize_by(app_client: client_full, department: dept_a)
-      full_access.can_read = true
-      full_access.can_write = true
-      full_access.save!
-
-      # Create seed document in dept-B (for IDOR tests)
-      doc_b = Document.new(
-        department: dept_b,
-        filename: "seed-dept-b.txt",
-        content_type: "text/plain",
-        byte_size: 11,
-        uploaded_by: "setup"
-      )
-      doc_b.file.attach(io: StringIO.new("dept-B seed"), filename: "seed-dept-b.txt", content_type: "text/plain")
-      doc_b.save!
-
-      # Create seed document in dept-A (for write-only test)
-      doc_a = Document.new(
-        department: dept_a,
-        filename: "seed-dept-a.txt",
-        content_type: "text/plain",
-        byte_size: 11,
-        uploaded_by: "setup"
-      )
-      doc_a.file.attach(io: StringIO.new("dept-A seed"), filename: "seed-dept-a.txt", content_type: "text/plain")
-      doc_a.save!
-
-      puts "deptA_id=" + dept_a.id.to_s
-      puts "deptA_child_id=" + dept_a_child.id.to_s
-      puts "deptB_id=" + dept_b.id.to_s
-      puts "deptB_doc_id=" + doc_b.id.to_s
-      puts "deptA_doc_id=" + doc_a.id.to_s
-    RUBY
-
     ENV_FILE = File.expand_path("../tmp/monkey.env", __dir__)
 
     module_function
@@ -184,29 +127,20 @@ module Monkey
         client_secrets[client_id] = secret
       end
 
-      if Stack.kind == "rust"
-        ids = provision_rust
-        deptA_id = ids[:a]
-        deptA_child_id = ids[:child]
-        deptB_id = ids[:b]
-        # monkey-deptA has no grant on dept B. A temporary one lets the same
-        # HTTP upload path store both seed files; it is removed before return.
-        begin
-          urls = Stack.urls
-          token = fetch_token(urls[:token], "monkey-deptA", client_secrets["monkey-deptA"])
-          deptB_doc_id = upload_seed(urls[:base], token, deptB_id, "seed-dept-b.txt", "dept-B seed")
-          deptA_doc_id = upload_seed(urls[:base], token, deptA_id, "seed-dept-a.txt", "dept-A seed")
-        ensure
-          revoke_temp_grant
-        end
-      else
-        # Provision departments and access via rails runner
-        runner = Stack.exec("web", "bin/rails", "runner", RUNNER)
-        deptA_id = runner[/deptA_id=(\S+)/, 1] or abort "cannot parse deptA_id:\n#{runner}"
-        deptA_child_id = runner[/deptA_child_id=(\S+)/, 1] or abort "cannot parse deptA_child_id:\n#{runner}"
-        deptB_id = runner[/deptB_id=(\S+)/, 1] or abort "cannot parse deptB_id:\n#{runner}"
-        deptB_doc_id = runner[/deptB_doc_id=(\S+)/, 1] or abort "cannot parse deptB_doc_id:\n#{runner}"
-        deptA_doc_id = runner[/deptA_doc_id=(\S+)/, 1] or abort "cannot parse deptA_doc_id:\n#{runner}"
+      Stack.kind # fail closed unless the active stack is rust
+      ids = provision_rust
+      deptA_id = ids[:a]
+      deptA_child_id = ids[:child]
+      deptB_id = ids[:b]
+      # monkey-deptA has no grant on dept B. A temporary one lets the same
+      # HTTP upload path store both seed files; it is removed before return.
+      begin
+        urls = Stack.urls
+        token = fetch_token(urls[:token], "monkey-deptA", client_secrets["monkey-deptA"])
+        deptB_doc_id = upload_seed(urls[:base], token, deptB_id, "seed-dept-b.txt", "dept-B seed")
+        deptA_doc_id = upload_seed(urls[:base], token, deptA_id, "seed-dept-a.txt", "dept-A seed")
+      ensure
+        revoke_temp_grant
       end
 
       # Write env file

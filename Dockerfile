@@ -1,7 +1,5 @@
 # syntax=docker/dockerfile:1
 # One image for `web` (`ged serve`) and `worker` (`ged worker`).
-# The Rails image stays in Dockerfile.rails and is selected with
-# `GED_STACK=rails bin/worktree-stack up` until T16.
 
 FROM rust:1.99.1-bookworm AS build
 

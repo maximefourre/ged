@@ -1,6 +1,6 @@
 #!/bin/sh
 # Web boots migrate the database, then exec the command. Workers do not:
-# they wait on web's healthcheck, the same split as bin/docker-entrypoint.
+# they wait on web's healthcheck.
 set -eu
 
 create_database() {
