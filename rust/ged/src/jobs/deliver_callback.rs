@@ -77,6 +77,12 @@ impl Job for DeliverCallbackJob {
         KIND
     }
 
+    /// The receiver is told `request_id`; a delivery repeated after a crash
+    /// is the same message again.
+    fn at_least_once(&self) -> bool {
+        true
+    }
+
     /// `retry_on DeliveryFailed, attempts: 5`.
     fn max_attempts(&self) -> i32 {
         MAX_ATTEMPTS

@@ -46,6 +46,13 @@ pub trait Job: Send + Sync + 'static {
         polynomial_backoff(attempt)
     }
 
+    /// `true` when running the job twice is acceptable (an HTTP callback the
+    /// receiver deduplicates by `request_id`): a claim left by a dead worker
+    /// is then re-queued, within `max_attempts`, instead of failed.
+    fn at_least_once(&self) -> bool {
+        false
+    }
+
     fn perform(&self, args: Value) -> BoxFuture<'static, Result<(), JobError>>;
 
     /// Called once when a `Retry` used the last attempt (Active Job's
@@ -80,6 +87,19 @@ impl Registry {
 
     pub fn has(&self, kind: &str) -> bool {
         self.jobs.contains_key(kind)
+    }
+
+    /// `(kind, max_attempts)` of the jobs that a dead worker's claim may be
+    /// re-queued for.
+    pub fn requeueable(&self) -> Vec<(&'static str, i32)> {
+        let mut out: Vec<_> = self
+            .jobs
+            .values()
+            .filter(|j| j.at_least_once())
+            .map(|j| (j.kind(), j.max_attempts()))
+            .collect();
+        out.sort_unstable();
+        out
     }
 
     /// Registered kind names, sorted. The C4 guard uses this so a new job

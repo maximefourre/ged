@@ -1200,3 +1200,100 @@ async fn the_ready_index_carries_run_at_so_future_retries_are_skipped_in_the_ind
     assert!(def.contains("run_at"), "{def}");
     finish(db, pool).await;
 }
+
+/// Final review m5: a callback whose worker died mid-delivery is re-queued
+/// (at least once) while it has attempts left; other kinds keep the Solid
+/// Queue behaviour (failed, never replayed).
+#[tokio::test]
+async fn a_dead_workers_requeueable_job_is_redelivered_while_attempts_remain() {
+    let (db, pool) = migrated().await;
+    let deliver = enqueue(&pool, "deliver", json!({}), QueueName::Default).await;
+    let other = enqueue(&pool, "other", json!({}), QueueName::Default).await;
+    let spent = enqueue(&pool, "deliver", json!({}), QueueName::Default).await;
+    let dead = heartbeat::register(&pool, "default").await.unwrap();
+    for _ in 0..3 {
+        queue::claim(&pool, QueueName::Default, dead)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    sqlx::query("UPDATE jobs SET attempts = 5 WHERE id = $1")
+        .bind(spent.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE job_workers SET last_heartbeat_at = now() - interval '1 hour'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let recovered =
+        queue::recover_abandoned_requeuing(&pool, Duration::from_secs(30), &[("deliver", 5)])
+            .await
+            .unwrap();
+    assert_eq!((recovered.requeued, recovered.failed), (1, 2));
+
+    let state = |id: i64| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (bool, bool, bool)>(
+                "SELECT claimed_by IS NULL, failed_at IS NOT NULL, finished_at IS NOT NULL \
+                 FROM jobs WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(state(deliver.0).await, (true, false, false), "re-queued");
+    assert_eq!(state(other.0).await, (true, true, false), "failed");
+    assert_eq!(
+        state(spent.0).await,
+        (true, true, false),
+        "no attempts left"
+    );
+    // And a live worker can claim the re-queued delivery again.
+    let fresh = heartbeat::register(&pool, "default").await.unwrap();
+    let again = queue::claim(&pool, QueueName::Default, fresh)
+        .await
+        .unwrap()
+        .expect("the re-queued callback is claimable");
+    assert_eq!((again.id.0, again.attempts), (deliver.0, 2));
+    finish(db, pool).await;
+}
+
+/// Final review m5: a clean stop hands back a claim whose result could not be
+/// recorded (the job is still `claimed` although the run is over).
+#[tokio::test]
+async fn a_clean_stop_releases_a_claim_left_without_a_recorded_result() {
+    let (db, pool) = migrated().await;
+    let reg = registry(vec![]);
+    let r = start(&pool, &reg, fast(QueueName::Default, 1));
+    eventually("registered", || async {
+        count(&pool, "SELECT count(*) FROM job_workers").await == 1
+    })
+    .await;
+    let worker: uuid::Uuid = sqlx::query_scalar("SELECT id FROM job_workers")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // A claim of this worker whose outcome never reached the table.
+    let orphan = enqueue(&pool, "orphan", json!({}), QueueName::Default).await;
+    sqlx::query("UPDATE jobs SET claimed_by = $2, claimed_at = now(), attempts = 1 WHERE id = $1")
+        .bind(orphan.0)
+        .bind(worker)
+        .execute(&pool)
+        .await
+        .unwrap();
+    r.stop().await;
+    let (claimed, attempts): (bool, i32) =
+        sqlx::query_as("SELECT claimed_by IS NOT NULL, attempts FROM jobs WHERE id = $1")
+            .bind(orphan.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!claimed, "the claim must be released on a clean stop");
+    assert_eq!(attempts, 0, "the interrupted attempt is not counted");
+    finish(db, pool).await;
+}

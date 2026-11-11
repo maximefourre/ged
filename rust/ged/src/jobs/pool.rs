@@ -67,6 +67,7 @@ impl Runner {
             worker,
             cfg.queue,
             cfg.heartbeat.clone(),
+            self.registry.requeueable(),
             beat_rx,
             lost_tx,
         ));
@@ -103,11 +104,10 @@ impl Runner {
         // Best effort: whatever fails below, still stop the heartbeat and
         // deregister (a stale row would otherwise linger until pruned), then
         // report the first error.
-        let released = if drained {
-            Ok(0)
-        } else {
-            queue::release_claims(&self.db, worker).await
-        };
+        // Also after a clean drain: a run whose outcome could not be
+        // recorded leaves its claim behind (final review m5), and a claim
+        // that outlives its worker is failed as "pruned" without a retry.
+        let released = queue::release_claims(&self.db, worker).await;
         if let Err(e) = &released {
             eprintln!("ged worker: could not release running jobs: {e}");
         }
@@ -124,6 +124,7 @@ async fn heartbeat_loop(
     worker: Uuid,
     queue: QueueName,
     cfg: HeartbeatConfig,
+    requeue: Vec<(&'static str, i32)>,
     mut stop: watch::Receiver<bool>,
     lost: watch::Sender<u64>,
 ) {
@@ -140,9 +141,12 @@ async fn heartbeat_loop(
             }
             Err(e) => eprintln!("ged worker: heartbeat failed: {e}"),
         }
-        match queue::recover_abandoned(&db, cfg.expiry).await {
-            Ok(0) => {}
-            Ok(n) => eprintln!("ged worker: failed {n} job(s) abandoned by dead workers"),
+        match queue::recover_abandoned_requeuing(&db, cfg.expiry, &requeue).await {
+            Ok(r) if r == queue::Recovered::default() => {}
+            Ok(r) => eprintln!(
+                "ged worker: {} job(s) abandoned by dead workers failed, {} re-queued",
+                r.failed, r.requeued
+            ),
             Err(e) => eprintln!("ged worker: recovery failed: {e}"),
         }
         tokio::select! {
@@ -214,8 +218,10 @@ async fn run_one(
         }
     };
     let result = match outcome {
-        Ok(()) => queue::complete(db, job.id, worker).await,
-        Err(JobError::Discard(msg)) => queue::fail(db, job.id, worker, &msg, None).await,
+        Ok(()) => retry_recording(|| queue::complete(db, job.id, worker)).await,
+        Err(JobError::Discard(msg)) => {
+            retry_recording(|| queue::fail(db, job.id, worker, &msg, None)).await
+        }
         Err(JobError::Retry(msg)) => {
             let (max, backoff) = match &handler {
                 Some(h) => (h.max_attempts(), h.backoff(job.attempts)),
@@ -225,7 +231,8 @@ async fn run_one(
                 ),
             };
             let retry_in = (job.attempts < max).then_some(backoff);
-            let recorded = queue::fail(db, job.id, worker, &msg, retry_in).await;
+            let recorded =
+                retry_recording(|| queue::fail(db, job.id, worker, &msg, retry_in)).await;
             if let (Some(h), None, Ok(true)) = (&handler, retry_in, &recorded) {
                 h.exhausted(&job.args, &msg);
             }
@@ -239,5 +246,82 @@ async fn run_one(
             job.id.0
         ),
         Err(e) => eprintln!("ged worker: could not record job {}: {e}", job.id.0),
+    }
+}
+
+/// Pauses between attempts to record a job's outcome. The outcome is the
+/// only thing that stops a finished job from being claimed-but-forgotten, so
+/// a database blip of a few seconds must not lose it (final review m5).
+const RECORD_RETRY_PAUSES: [Duration; 4] = [
+    Duration::from_millis(250),
+    Duration::from_secs(1),
+    Duration::from_secs(3),
+    Duration::from_secs(8),
+];
+
+/// Runs `record` until it succeeds, pausing `RECORD_RETRY_PAUSES` between
+/// failures; the last error is returned.
+async fn retry_recording<T, F, Fut>(record: F) -> Result<T, sqlx::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
+{
+    retry_with_pauses(&RECORD_RETRY_PAUSES, record).await
+}
+
+async fn retry_with_pauses<T, F, Fut>(pauses: &[Duration], mut record: F) -> Result<T, sqlx::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
+{
+    let mut pauses = pauses.iter();
+    loop {
+        match record().await {
+            Ok(value) => return Ok(value),
+            Err(e) => match pauses.next() {
+                Some(pause) => {
+                    eprintln!("ged worker: recording a job outcome failed ({e}), retrying");
+                    tokio::time::sleep(*pause).await;
+                }
+                None => return Err(e),
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn a_failing_record_is_retried_until_it_goes_through() {
+        let calls = AtomicUsize::new(0);
+        let out = retry_with_pauses(&[Duration::ZERO; 4], || async {
+            if calls.fetch_add(1, Ordering::SeqCst) < 3 {
+                Err(sqlx::Error::PoolTimedOut)
+            } else {
+                Ok(true)
+            }
+        })
+        .await;
+        assert!(matches!(out, Ok(true)));
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn a_record_that_never_succeeds_gives_up_with_the_last_error() {
+        let calls = AtomicUsize::new(0);
+        let out: Result<bool, _> = retry_with_pauses(&[Duration::ZERO; 2], || async {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Err(sqlx::Error::PoolTimedOut)
+        })
+        .await;
+        assert!(matches!(out, Err(sqlx::Error::PoolTimedOut)));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "first try plus two retries"
+        );
     }
 }

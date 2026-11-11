@@ -220,14 +220,54 @@ pub async fn release_claims(db: &PgPool, worker: Uuid) -> Result<u64, sqlx::Erro
     Ok(done.rows_affected())
 }
 
-/// Fails the claims whose owner has no heartbeat within `expiry` (or no
-/// registration at all) and forgets those dead workers. Like Solid Queue's
-/// `Process#prune` (`ProcessPrunedError` -> `fail_all_claimed_executions_with`)
-/// a crashed claim is a *failure*: the attempt stays counted and the job is
-/// not retried by the queue, so a job that kills its process cannot loop
-/// forever (the application's reconcile jobs re-enqueue what matters).
-/// Returns the number of jobs failed.
+/// What one recovery pass did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Recovered {
+    /// Claims of dead workers given back to the queue.
+    pub requeued: u64,
+    /// Claims of dead workers marked failed.
+    pub failed: u64,
+}
+
+/// [`recover_abandoned_requeuing`] with nothing to re-queue: every orphan
+/// claim is failed. Returns the number of jobs failed.
 pub async fn recover_abandoned(db: &PgPool, expiry: Duration) -> Result<u64, sqlx::Error> {
+    Ok(recover_abandoned_requeuing(db, expiry, &[]).await?.failed)
+}
+
+/// Recovers the claims whose owner has no heartbeat within `expiry` (or no
+/// registration at all) and forgets those dead workers.
+///
+/// Like Solid Queue's `Process#prune` (`ProcessPrunedError` ->
+/// `fail_all_claimed_executions_with`) a crashed claim is a *failure*: the
+/// attempt stays counted and the job is not retried by the queue, so a job
+/// that kills its process cannot loop forever (the application's reconcile
+/// jobs re-enqueue what matters). The exception is `requeue`, a list of
+/// `(kind, max_attempts)`: those jobs are at-least-once (a callback delivery)
+/// and go back to the queue, due now, as long as `attempts < max_attempts`.
+/// The attempt that was running stays counted, so the loop is bounded.
+pub async fn recover_abandoned_requeuing(
+    db: &PgPool,
+    expiry: Duration,
+    requeue: &[(&str, i32)],
+) -> Result<Recovered, sqlx::Error> {
+    let kinds: Vec<String> = requeue.iter().map(|(k, _)| (*k).to_owned()).collect();
+    let maxes: Vec<i32> = requeue.iter().map(|(_, m)| *m).collect();
+    // One statement per outcome, both on the same predicate "owner is gone".
+    let requeued = sqlx::query(
+        "UPDATE jobs SET claimed_by = NULL, claimed_at = NULL, run_at = now(), \
+           last_error = 'Worker heartbeat expired mid-run: re-queued (at least once)' \
+         WHERE claimed_by IS NOT NULL AND finished_at IS NULL AND failed_at IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM job_workers w WHERE w.id = jobs.claimed_by \
+                           AND w.last_heartbeat_at > now() - make_interval(secs => $1)) \
+           AND EXISTS (SELECT 1 FROM unnest($2::text[], $3::int[]) AS r(kind, max_attempts) \
+                       WHERE r.kind = jobs.kind AND jobs.attempts < r.max_attempts)",
+    )
+    .bind(expiry.as_secs_f64())
+    .bind(&kinds)
+    .bind(&maxes)
+    .execute(db)
+    .await?;
     let failed = sqlx::query(
         "UPDATE jobs SET claimed_by = NULL, claimed_at = NULL, failed_at = now(), \
            last_error = 'Process pruned: worker heartbeat expired (the worker process died or stalled)' \
@@ -244,7 +284,10 @@ pub async fn recover_abandoned(db: &PgPool, expiry: Duration) -> Result<u64, sql
     .bind(expiry.as_secs_f64())
     .execute(db)
     .await?;
-    Ok(failed.rows_affected())
+    Ok(Recovered {
+        requeued: requeued.rows_affected(),
+        failed: failed.rows_affected(),
+    })
 }
 
 /// Deletes finished jobs older than `older_than`, at most `batch` per call

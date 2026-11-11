@@ -308,6 +308,17 @@ mod tests {
         assert_eq!(failure, None);
     }
 
+    #[tokio::test]
+    async fn only_callback_delivery_is_requeued_after_a_worker_dies() {
+        let db = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://unused@localhost/unused")
+            .unwrap();
+        let env = PipelineEnv::from_config(db, None);
+        let r = registry(&env, production_policy());
+        // Documents stay exactly-once; a repeated callback is harmless.
+        assert_eq!(r.requeueable(), vec![("DeliverCallbackJob", 5)]);
+    }
+
     #[test]
     fn defaults_follow_queue_yml() {
         let s = settings(&[]);
