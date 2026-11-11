@@ -114,6 +114,7 @@ pub async fn read(
             })
     };
     let scrubbed = ScrubStream {
+        gather: Vec::new(),
         inner: Box::pin(counted),
         scrubber: Scrubber::new(&boundary),
         pending: VecDeque::new(),
@@ -266,6 +267,9 @@ struct Scrubber {
     /// The phase advanced; the same input slice is still the next bytes.
     respin: bool,
     peak: usize,
+    /// Number of `push` calls (the CPU cost driver, see [`GATHER_BYTES`]).
+    #[cfg(test)]
+    pushes: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -285,12 +289,48 @@ struct ScrubStream<S> {
     finished: bool,
     /// Bytes handed out since the last `Pending`; see [`BURST_LIMIT`].
     burst: usize,
+    /// Small chunks received while a part header is still being read, pushed
+    /// to the scrubber together; see [`GATHER_BYTES`].
+    gather: Vec<u8>,
 }
+
+/// While a preamble or part header is incomplete the scrubber rescans what it
+/// holds (up to [`PART_HEADER_LIMIT`]) on every push, so a header sent one
+/// byte at a time cost 8 s of CPU per connection before authentication
+/// (measured, final review m12). Chunks smaller than this are gathered until
+/// they reach it, which divides the pushes (and the cost) by the chunk size
+/// for a hostile client and changes nothing for a normal one, whose headers
+/// arrive in one or two reads. What is gathered is never part of a file body.
+const GATHER_BYTES: usize = 4096;
 
 /// `multer` polls its source in a loop until `Pending`, so an always-ready
 /// source is read to the end into its buffer. Yielding `Pending` after this
 /// many bytes bounds what it holds ahead of the field being read (review M1).
 const BURST_LIMIT: usize = 256 * 1024;
+
+impl<S> ScrubStream<S> {
+    /// Feeds the scrubber and queues what it releases. The `Err` is the item
+    /// to return when the headers exceed the limit.
+    fn push_chunk(
+        &mut self,
+        chunk: &[u8],
+    ) -> Result<(), Poll<Option<Result<Bytes, std::io::Error>>>> {
+        match self.scrubber.push(chunk) {
+            Ok(bytes) => {
+                if !bytes.is_empty() {
+                    self.pending.push_back(Bytes::from(bytes));
+                }
+                Ok(())
+            }
+            Err(_) => {
+                self.finished = true;
+                Err(Poll::Ready(Some(Err(std::io::Error::other(
+                    "multipart part headers exceed the limit",
+                )))))
+            }
+        }
+    }
+}
 
 impl<S> Stream for ScrubStream<S>
 where
@@ -316,6 +356,13 @@ where
             if this.finished {
                 return Poll::Ready(None);
             }
+            if this.inner_done && !this.gather.is_empty() {
+                let gathered = std::mem::take(&mut this.gather);
+                if let Err(poisoned) = this.push_chunk(&gathered) {
+                    return poisoned;
+                }
+                continue;
+            }
             if this.inner_done {
                 return match this.scrubber.finish() {
                     Ok(bytes) => {
@@ -338,19 +385,29 @@ where
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(None) => this.inner_done = true,
                 Poll::Ready(Some(Err(err))) => return Poll::Ready(Some(Err(err))),
-                Poll::Ready(Some(Ok(chunk))) => match this.scrubber.push(&chunk) {
-                    Ok(bytes) => {
-                        if !bytes.is_empty() {
-                            this.pending.push_back(Bytes::from(bytes));
+                Poll::Ready(Some(Ok(chunk))) => {
+                    let small = chunk.len() < GATHER_BYTES;
+                    if small && this.scrubber.reading_headers() {
+                        this.gather.extend_from_slice(&chunk);
+                        if this.gather.len() < GATHER_BYTES {
+                            continue;
+                        }
+                        let gathered = std::mem::take(&mut this.gather);
+                        if let Err(poisoned) = this.push_chunk(&gathered) {
+                            return poisoned;
+                        }
+                    } else if this.gather.is_empty() {
+                        if let Err(poisoned) = this.push_chunk(&chunk) {
+                            return poisoned;
+                        }
+                    } else {
+                        this.gather.extend_from_slice(&chunk);
+                        let gathered = std::mem::take(&mut this.gather);
+                        if let Err(poisoned) = this.push_chunk(&gathered) {
+                            return poisoned;
                         }
                     }
-                    Err(_) => {
-                        this.finished = true;
-                        return Poll::Ready(Some(Err(std::io::Error::other(
-                            "multipart part headers exceed the limit",
-                        ))));
-                    }
-                },
+                }
             }
         }
     }
@@ -371,6 +428,8 @@ impl Scrubber {
             lead_after: Vec::new(),
             respin: false,
             peak: 0,
+            #[cfg(test)]
+            pushes: 0,
         }
     }
 
@@ -383,7 +442,16 @@ impl Scrubber {
         self.peak = self.peak.max(self.buf.len());
     }
 
+    /// A preamble or part header is still being read (and rescanned per push).
+    fn reading_headers(&self) -> bool {
+        matches!(self.phase, Phase::Preamble | Phase::Part)
+    }
+
     fn push(&mut self, data: &[u8]) -> Result<Vec<u8>, ScrubError> {
+        #[cfg(test)]
+        {
+            self.pushes += 1;
+        }
         let mut out = Vec::new();
         self.drive(data, &mut out)?;
         Ok(out)
@@ -1512,6 +1580,46 @@ mod tests {
         assert!(
             pulled <= FORM_BYTES_LIMIT + 1024 * 1024,
             "pulled {pulled} bytes for a part capped at {FORM_BYTES_LIMIT}"
+        );
+    }
+
+    /// Final review m12: a header sent one byte per chunk reaches the
+    /// scrubber in 4 KiB pushes, not 65,000 (each push rescans the header).
+    #[tokio::test]
+    async fn a_header_sent_byte_by_byte_costs_few_scrubber_pushes() {
+        use futures_util::StreamExt;
+        let mut input = b"--XX\r\nContent-Disposition: form-data; name=\"a\"\r\nX-Pad: ".to_vec();
+        input.resize(PART_HEADER_LIMIT - 100, b'a');
+        let total = input.len();
+        let source = futures_util::stream::iter(
+            input
+                .into_iter()
+                .map(|b| Ok::<_, std::io::Error>(Bytes::from(vec![b]))),
+        );
+        let mut stream = ScrubStream {
+            gather: Vec::new(),
+            inner: Box::pin(source),
+            scrubber: Scrubber::new("XX"),
+            pending: VecDeque::new(),
+            inner_done: false,
+            finished: false,
+            burst: 0,
+        };
+        let mut forwarded = 0;
+        let mut ended_with_error = false;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(bytes) => forwarded += bytes.len(),
+                Err(_) => ended_with_error = true,
+            }
+        }
+        // The header never ends: the stream fails, but every byte it saw was
+        // accounted for and the scrubber was driven only a few times.
+        assert!(ended_with_error || forwarded == total);
+        let pushes = stream.scrubber.pushes;
+        assert!(
+            pushes <= total / GATHER_BYTES + 2,
+            "{pushes} pushes for {total} one-byte chunks"
         );
     }
 
