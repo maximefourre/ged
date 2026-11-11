@@ -11,16 +11,23 @@ stack (`GET /up`), et `npx playwright test` dans `rust/e2e`. `GED_BACKEND`
 vaut `rust` ou n'est pas défini ; toute autre valeur, dont `rails`, est refusée.
 `parity_schema` compare un `ged migrate` frais au golden
 `fixtures/rails_business_schema.sql`. Le second test, qui redumpait une base
-Rails vivante, a été retiré avec l'adaptateur. Le tableau de correspondance
-ci-dessous ne change pas.
+Rails vivante, a été retiré avec l'adaptateur. Huit lignes de la colonne
+Cible nommaient un fichier absent (`openapi_paths.rs`, `c4_diagrams.rs`,
+`rust/parity/tests/jobs_reconcile.rs`) : elles pointent maintenant vers
+`rust/ged/tests/guards_api_docs.rs`, `rust/ged/tests/guards_c4.rs` et, pour
+la purge des requêtes terminales, `rust/ged/tests/jobs_pipeline_reconcile.rs`.
+Cette purge n'a pas de test de parité. Sa catégorie est « unitaire Rust »
+(`terminal_requests_older_than_thirty_days_go_with_their_staging_file`).
+`rust/ged/tests/guards_parity_inventory.rs` refuse une Cible qui n'est pas
+un fichier.
 
 **Total : 404 tests** (comptage réel : `grep -rhE '^\s*test ["'"'"']' test | wc -l` = 404).
 Les tests de `oauth-provider/test/` ne sont pas comptés : ce service reste en Ruby.
 
 | Catégorie | Tests | Signification |
 |---|---:|---|
-| parité | 228 | boîte noire HTTP/SQL dans `rust/parity` (`cargo test -p parity`), validée d'abord contre Rails |
-| unitaire Rust | 154 | test unitaire ou d'intégration interne dans `rust/ged` (invisible en HTTP) |
+| parité | 227 | boîte noire HTTP/SQL dans `rust/parity` (`cargo test -p parity`), validée d'abord contre Rails |
+| unitaire Rust | 155 | test unitaire ou d'intégration interne dans `rust/ged` (invisible en HTTP) |
 | navigateur | 22 | Playwright dans `rust/e2e`, fermeture explicite du navigateur en `finally` |
 
 Règles de classement :
@@ -119,7 +126,7 @@ Règles de classement :
 | `test/jobs/deliver_callback_job_test.rb` | 16 | 0 | 16 | 0 |
 | `test/jobs/purge_deleted_documents_job_test.rb` | 9 | 9 | 0 | 0 |
 | `test/jobs/queue_coverage_test.rb` | 1 | 0 | 1 | 0 |
-| `test/jobs/reconcile_upload_requests_job_test.rb` | 10 | 1 | 9 | 0 |
+| `test/jobs/reconcile_upload_requests_job_test.rb` | 10 | 0 | 10 | 0 |
 | `test/jobs/store_document_job_test.rb` | 8 | 0 | 8 | 0 |
 | `test/lib/telemetry_test.rb` | 3 | 0 | 3 | 0 |
 | `test/models/admin_test.rb` | 2 | 0 | 2 | 0 |
@@ -141,7 +148,7 @@ Règles de classement :
 | `test/services/document_creator_test.rb` | 3 | 0 | 3 | 0 |
 | `test/services/system_health_test.rb` | 10 | 0 | 10 | 0 |
 | `test/system/admin_ui_test.rb` | 22 | 0 | 0 | 22 |
-| **Total** | **404** | **228** | **154** | **22** |
+| **Total** | **404** | **227** | **155** | **22** |
 
 ## Inventaire détaillé
 
@@ -324,14 +331,14 @@ Règles de classement :
 | 175 | `test/initializers/oidc_config_test.rb:46` | verify! raises in production for an unknown GED_OIDC_TOKEN_BINDING value | unitaire Rust | `rust/ged/src/config.rs` | refus de boot fail-closed |
 | 176 | `test/integration/api_docs_test.rb:10` | GET /api/v1/openapi.yaml serves the spec without authentication | parité | `rust/parity/tests/api_docs.rs` |  |
 | 177 | `test/integration/api_docs_test.rb:19` | GET /api/docs renders the Redoc page pointing at the spec | parité | `rust/parity/tests/api_docs.rs` |  |
-| 178 | `test/integration/api_docs_test.rb:28` | every routed /api/v1 path is documented in the spec | unitaire Rust | `rust/ged/tests/openapi_paths.rs` |  |
+| 178 | `test/integration/api_docs_test.rb:28` | every routed /api/v1 path is documented in the spec | unitaire Rust | `rust/ged/tests/guards_api_docs.rs` |  |
 | 179 | `test/integration/api_docs_test.rb:44` | documents list response conforms to envelope schema | parité | `rust/parity/tests/api_docs.rs` |  |
-| 180 | `test/integration/c4_diagrams_test.rb:17` | the diagram file exists and every mermaid block is closed | unitaire Rust | `rust/ged/tests/c4_diagrams.rs` |  |
-| 181 | `test/integration/c4_diagrams_test.rb:25` | every docker compose service appears in the container diagram | unitaire Rust | `rust/ged/tests/c4_diagrams.rs` |  |
-| 182 | `test/integration/c4_diagrams_test.rb:34` | every ActiveJob appears in the worker component diagram | unitaire Rust | `rust/ged/tests/c4_diagrams.rs` |  |
-| 183 | `test/integration/c4_diagrams_test.rb:44` | every service object appears in a component diagram | unitaire Rust | `rust/ged/tests/c4_diagrams.rs` |  |
-| 184 | `test/integration/c4_diagrams_test.rb:54` | every recurring task class is drawn as scheduled | unitaire Rust | `rust/ged/tests/c4_diagrams.rs` |  |
-| 185 | `test/integration/c4_diagrams_test.rb:63` | every solid queue pool is documented | unitaire Rust | `rust/ged/tests/c4_diagrams.rs` |  |
+| 180 | `test/integration/c4_diagrams_test.rb:17` | the diagram file exists and every mermaid block is closed | unitaire Rust | `rust/ged/tests/guards_c4.rs` |  |
+| 181 | `test/integration/c4_diagrams_test.rb:25` | every docker compose service appears in the container diagram | unitaire Rust | `rust/ged/tests/guards_c4.rs` |  |
+| 182 | `test/integration/c4_diagrams_test.rb:34` | every ActiveJob appears in the worker component diagram | unitaire Rust | `rust/ged/tests/guards_c4.rs` |  |
+| 183 | `test/integration/c4_diagrams_test.rb:44` | every service object appears in a component diagram | unitaire Rust | `rust/ged/tests/guards_c4.rs` | la liste des modules hors `auth/` et `policy/` est explicite, voir `docs/architecture/c4.md` |
+| 184 | `test/integration/c4_diagrams_test.rb:54` | every recurring task class is drawn as scheduled | unitaire Rust | `rust/ged/tests/guards_c4.rs` |  |
+| 185 | `test/integration/c4_diagrams_test.rb:63` | every solid queue pool is documented | unitaire Rust | `rust/ged/tests/guards_c4.rs` |  |
 | 186 | `test/integration/health_check_test.rb:4` | GET /up returns 200 | parité | `rust/parity/tests/health.rs` |  |
 | 187 | `test/jobs/deliver_callback_job_test.rb:19` | posts the payload to the callback url | unitaire Rust | `rust/ged/src/jobs/deliver_callback.rs` |  |
 | 188 | `test/jobs/deliver_callback_job_test.rb:27` | includes the error message for failed requests | unitaire Rust | `rust/ged/src/jobs/deliver_callback.rs` |  |
@@ -365,7 +372,7 @@ Règles de classement :
 | 216 | `test/jobs/reconcile_upload_requests_job_test.rb:40` | resets stuck processing requests with a staging file and re-enqueues | unitaire Rust | `rust/ged/src/jobs/reconcile.rs` | staging/blobs hors fixtures |
 | 217 | `test/jobs/reconcile_upload_requests_job_test.rb:52` | fails stuck processing requests whose staging file is gone and enqueues the callback | unitaire Rust | `rust/ged/src/jobs/reconcile.rs` | staging/blobs hors fixtures |
 | 218 | `test/jobs/reconcile_upload_requests_job_test.rb:61` | leaves fresh processing requests alone | unitaire Rust | `rust/ged/src/jobs/reconcile.rs` | staging/blobs hors fixtures |
-| 219 | `test/jobs/reconcile_upload_requests_job_test.rb:66` | purges terminal requests older than the retention window | parité | `rust/parity/tests/jobs_reconcile.rs` | ligne upload_requests fixturée en SQL puis run_job |
+| 219 | `test/jobs/reconcile_upload_requests_job_test.rb:66` | purges terminal requests older than the retention window | unitaire Rust | `rust/ged/tests/jobs_pipeline_reconcile.rs` | pas de test de parité ; couverture `terminal_requests_older_than_thirty_days_go_with_their_staging_file` |
 | 220 | `test/jobs/reconcile_upload_requests_job_test.rb:74` | purges unattached blobs older than a day, keeps fresh and attached ones | unitaire Rust | `rust/ged/src/jobs/reconcile.rs` | staging/blobs hors fixtures |
 | 221 | `test/jobs/reconcile_upload_requests_job_test.rb:97` | purges staging files older than the retention window | unitaire Rust | `rust/ged/src/jobs/reconcile.rs` | staging/blobs hors fixtures |
 | 222 | `test/jobs/reconcile_upload_requests_job_test.rb:109` | does not re-enqueue stuck pending requests while the uploads queue is paused | unitaire Rust | `rust/ged/src/jobs/reconcile.rs` | staging/blobs hors fixtures |
