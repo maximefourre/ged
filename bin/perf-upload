@@ -20,6 +20,7 @@ require "json"
 require "securerandom"
 require "tempfile"
 require "tmpdir"
+require "fileutils"
 require "open3"
 
 module PerfUpload
@@ -143,6 +144,7 @@ module PerfUpload
       register = Stack.exec("oauth-provider", "bin/register-client", CLIENT_ID)
       secret = register[/client_secret:\s+(\h+)/, 1] or abort "cannot parse client secret:\n#{register}"
       department_id = provision_rust
+      FileUtils.mkdir_p(File.dirname(ENV_FILE))
       File.write(ENV_FILE, <<~ENV_CONTENT)
         PERF_CLIENT_ID=#{CLIENT_ID}
         PERF_CLIENT_SECRET=#{secret}
