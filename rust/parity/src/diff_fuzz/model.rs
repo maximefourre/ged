@@ -12,6 +12,10 @@ pub const UPLOAD_PENDING: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1";
 pub const UPLOAD_FAILED: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2";
 pub const UNKNOWN_UUID: &str = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1";
 pub const CLIENT_ID: &str = "fuzz-client";
+pub const CLIENT_UNKNOWN: &str = "fuzz-unknown";
+pub const CLIENT_NOGRANT: &str = "fuzz-nogrant";
+pub const CLIENT_OTHER: &str = "fuzz-other";
+pub const DOC_DELETED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Request {
@@ -185,6 +189,9 @@ pub struct Ids<'a> {
     pub token_valid: &'a str,
     pub token_expired: &'a str,
     pub token_bad_aud: &'a str,
+    pub token_unknown: &'a str,
+    pub token_nogrant: &'a str,
+    pub token_other: &'a str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -197,6 +204,12 @@ pub enum Auth {
     EmptyBearer,
     Garbage,
     Basic,
+    /// Signed token whose `sub` is not a registered client.
+    Unknown,
+    /// Registered client with no department grant.
+    NoGrant,
+    /// Second registered client, read and write on department 1.
+    Other,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -391,6 +404,9 @@ fn auth_header(auth: Auth, ids: &Ids<'_>) -> Option<String> {
         Auth::EmptyBearer => Some("Bearer".into()),
         Auth::Garbage => Some("Bearer not-a-jwt".into()),
         Auth::Basic => Some("Basic bm90OmE=".into()),
+        Auth::Unknown => Some(format!("Bearer {}", ids.token_unknown)),
+        Auth::NoGrant => Some(format!("Bearer {}", ids.token_nogrant)),
+        Auth::Other => Some(format!("Bearer {}", ids.token_other)),
     }
 }
 
@@ -425,6 +441,9 @@ mod tests {
             token_valid: "valid-token",
             token_expired: "expired-token",
             token_bad_aud: "badaud-token",
+            token_unknown: "unknown-token",
+            token_nogrant: "nogrant-token",
+            token_other: "other-token",
         }
     }
 

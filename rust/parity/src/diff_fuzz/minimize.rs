@@ -73,7 +73,7 @@ pub fn smaller_candidates(req: &Request) -> Vec<Request> {
 fn weight(req: &Request) -> usize {
     let auth = match req.auth {
         Auth::None => 0,
-        Auth::Valid => 1,
+        Auth::Valid | Auth::Unknown | Auth::NoGrant | Auth::Other => 1,
         Auth::Garbage | Auth::EmptyBearer | Auth::Basic => 2,
         Auth::Expired | Auth::BadAud => 3,
     };

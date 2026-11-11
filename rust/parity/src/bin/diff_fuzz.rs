@@ -13,13 +13,14 @@
 //! Exit 0 when every divergence is a documented gap. Exit 1 when an
 //! undocumented one remains. Exit 2 when the harness itself fails.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode as sign_jwt};
 use parity::diff_fuzz::{
-    CLIENT_ID, Diff, Generator, Ids, Normalized, Request, Target, compare, documented_gap,
-    encode as encode_request, normalize, seed_upload, smaller_candidates,
+    CLIENT_ID, CLIENT_NOGRANT, CLIENT_OTHER, CLIENT_UNKNOWN, Diff, Generator, Ids, Normalized,
+    Request, Target, compare, documented_form, documented_gap, encode as encode_request, normalize,
+    seed_upload, smaller_candidates, thruster_sanitize,
 };
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -46,6 +47,9 @@ struct Tokens {
     valid: String,
     expired: String,
     bad_aud: String,
+    unknown: String,
+    nogrant: String,
+    other: String,
 }
 
 #[derive(Default)]
@@ -141,6 +145,9 @@ async fn run() -> Result<Outcome, String> {
             valid: String::new(),
             expired: String::new(),
             bad_aud: String::new(),
+            unknown: String::new(),
+            nogrant: String::new(),
+            other: String::new(),
         },
     };
     campaign.refresh_tokens()?;
@@ -159,6 +166,7 @@ async fn run() -> Result<Outcome, String> {
     let mut documented = 0u64;
     let mut signatures = BTreeSet::new();
     let mut report = String::new();
+    let mut distribution: BTreeMap<(String, &'static str, u16, u16), u64> = BTreeMap::new();
 
     for index in 0..args.count {
         if index > 0 && args.reset_every > 0 && index % args.reset_every == 0 {
@@ -177,13 +185,19 @@ async fn run() -> Result<Outcome, String> {
         let norm_rust = normalize(raw_rust.status, &raw_rust.headers, &raw_rust.body);
         if let Some(diff) = compare(&norm_rails, &norm_rust) {
             let target = encode_request(&req, &ids_for(&campaign.tokens, &rails));
-            if let Some(reason) = documented_gap(&target, &norm_rails, &norm_rust) {
+            let replay = campaign.sanitized_rust(&target).await?;
+            let sanitized = replay.as_ref().map(|(norm, _)| norm);
+            if let Some(reason) = documented_gap(&target, &norm_rails, &norm_rust, sanitized) {
                 documented += 1;
+                record_documented(&mut distribution, &target, &norm_rails, &norm_rust);
                 if signatures.insert(format!("doc:{reason}:{}", req.category)) {
                     let line = format!("documented index={index} {reason} {}", req.summary());
                     eprintln!("{line}");
                     report.push_str(&line);
                     report.push('\n');
+                }
+                if let Some((_, raw_sanitized)) = replay {
+                    note_created(&raw_rails.body, &raw_sanitized.body, &mut rails, &mut rust);
                 }
             } else {
                 let sig = signature(&req, &diff);
@@ -204,6 +218,9 @@ async fn run() -> Result<Outcome, String> {
                     .await?;
                 let undocumented = signatures.iter().filter(|s| !s.starts_with("doc:")).count();
                 if undocumented > args.keep_going {
+                    let table = format_distribution(&distribution);
+                    print!("{table}");
+                    report.push_str(&table);
                     write_report(args.report.as_deref(), &report)?;
                     let elapsed = started.elapsed().as_secs();
                     println!(
@@ -219,8 +236,9 @@ async fn run() -> Result<Outcome, String> {
                 }
                 continue;
             }
+        } else {
+            note_created(&raw_rails.body, &raw_rust.body, &mut rails, &mut rust);
         }
-        note_created(&raw_rails.body, &raw_rust.body, &mut rails, &mut rust);
         if index > 0 && index % 1000 == 0 {
             eprintln!(
                 "progress {index}/{} documented={documented} undocumented={}",
@@ -230,6 +248,9 @@ async fn run() -> Result<Outcome, String> {
         }
     }
 
+    let table = format_distribution(&distribution);
+    print!("{table}");
+    report.push_str(&table);
     write_report(args.report.as_deref(), &report)?;
     let undocumented = signatures.iter().filter(|s| !s.starts_with("doc:")).count();
     println!(
@@ -259,6 +280,7 @@ impl Campaign {
             &self.key,
             &self.kid,
             &self.issuer,
+            CLIENT_ID,
             &self.audience,
             now,
             now + 7200,
@@ -267,6 +289,7 @@ impl Campaign {
             &self.key,
             &self.kid,
             &self.issuer,
+            CLIENT_ID,
             &self.audience,
             now - 120,
             now - 60,
@@ -275,7 +298,35 @@ impl Campaign {
             &self.key,
             &self.kid,
             &self.issuer,
+            CLIENT_ID,
             "http://wrong.example/aud",
+            now,
+            now + 7200,
+        )?;
+        self.tokens.unknown = sign(
+            &self.key,
+            &self.kid,
+            &self.issuer,
+            CLIENT_UNKNOWN,
+            &self.audience,
+            now,
+            now + 7200,
+        )?;
+        self.tokens.nogrant = sign(
+            &self.key,
+            &self.kid,
+            &self.issuer,
+            CLIENT_NOGRANT,
+            &self.audience,
+            now,
+            now + 7200,
+        )?;
+        self.tokens.other = sign(
+            &self.key,
+            &self.kid,
+            &self.issuer,
+            CLIENT_OTHER,
+            &self.audience,
             now,
             now + 7200,
         )?;
@@ -443,7 +494,23 @@ impl Campaign {
             return Ok(false);
         }
         let target = encode_request(last, &ids_for(&self.tokens, &rails));
-        Ok(documented_gap(&target, &norm_rails, &norm_rust).is_none())
+        let replay = self.sanitized_rust(&target).await?;
+        let sanitized = replay.as_ref().map(|(norm, _)| norm);
+        Ok(documented_gap(&target, &norm_rails, &norm_rust, sanitized).is_none())
+    }
+
+    /// Rust's answer to the Thruster-rewritten request, when this request is
+    /// the documented malformed-`%` gap. The replay is what Rails already did.
+    async fn sanitized_rust(
+        &self,
+        target: &Target,
+    ) -> Result<Option<(Normalized, RawResp)>, String> {
+        let Some(cleaned) = thruster_sanitize(target) else {
+            return Ok(None);
+        };
+        let raw = send_retry(&self.client, &self.rust_url, &cleaned).await?;
+        let norm = normalize(raw.status, &raw.headers, &raw.body);
+        Ok(Some((norm, raw)))
     }
 
     async fn send_both(
@@ -470,6 +537,9 @@ fn ids_for<'a>(tokens: &'a Tokens, side: &'a Side) -> Ids<'a> {
         token_valid: &tokens.valid,
         token_expired: &tokens.expired,
         token_bad_aud: &tokens.bad_aud,
+        token_unknown: &tokens.unknown,
+        token_nogrant: &tokens.nogrant,
+        token_other: &tokens.other,
     }
 }
 
@@ -518,13 +588,21 @@ async fn send_retry(
     base: &str,
     target: &Target,
 ) -> Result<RawResp, String> {
+    // A read error after a write may already have been applied. Retrying a
+    // POST, PUT, PATCH or DELETE on one side only would fork the two
+    // databases. GET and HEAD do not.
+    let attempts = if target.method == "GET" || target.method == "HEAD" {
+        2
+    } else {
+        1
+    };
     let mut last = String::new();
-    for attempt in 0..2 {
+    for attempt in 0..attempts {
         match send_once(client, base, target).await {
             Ok(resp) => return Ok(resp),
             Err(err) => {
                 last = err;
-                if attempt == 0 {
+                if attempt + 1 < attempts {
                     tokio::time::sleep(Duration::from_millis(150)).await;
                 }
             }
@@ -581,6 +659,7 @@ fn sign(
     key: &EncodingKey,
     kid: &str,
     issuer: &str,
+    sub: &str,
     audience: &str,
     iat: i64,
     exp: i64,
@@ -590,7 +669,7 @@ fn sign(
     let claims = json!({
         "iss": issuer,
         "aud": audience,
-        "sub": CLIENT_ID,
+        "sub": sub,
         "iat": iat,
         "exp": exp,
     });
@@ -679,7 +758,11 @@ const FIXTURES: &[&str] = &[
      (4, 'Fuzz Archive', 1, '2026-01-01 00:00:03+00', '2026-01-01 00:00:03+00')",
     "SELECT setval(pg_get_serial_sequence('departments','id'), 4, true)",
     "INSERT INTO app_clients (client_identifier, description, created_at, updated_at) VALUES \
-     ('fuzz-client', 'diff fuzz', '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00')",
+     ('fuzz-client', 'diff fuzz', '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'), \
+     ('fuzz-nogrant', 'diff fuzz, no department grant', '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'), \
+     ('fuzz-other', 'diff fuzz, second client', '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00')",
+    "INSERT INTO client_department_accesses (app_client_id, department_id, can_read, can_write, created_at, updated_at) \
+     SELECT id, 1, true, true, '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00' FROM app_clients WHERE client_identifier = 'fuzz-other'",
     "INSERT INTO client_department_accesses (app_client_id, department_id, can_read, can_write, created_at, updated_at) \
      SELECT id, 1, true, true, '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00' FROM app_clients WHERE client_identifier = 'fuzz-client'",
     "INSERT INTO client_department_accesses (app_client_id, department_id, can_read, can_write, created_at, updated_at) \
@@ -689,11 +772,40 @@ const FIXTURES: &[&str] = &[
     "INSERT INTO documents (id, department_id, filename, content_type, byte_size, uploaded_by, tags, uploaded_at, stored_async, created_at, updated_at) VALUES \
      ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 1, 'invoice.pdf', 'application/pdf', 4, 'fuzz-client', '{\"type\":\"facture\",\"urgent\":null}'::jsonb, '2026-01-02 00:00:00+00', false, '2026-01-02 00:00:00+00', '2026-01-02 00:00:00+00'), \
      ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', 1, 'async.pdf', 'application/pdf', 4, 'fuzz-client', '{}'::jsonb, '2026-01-03 00:00:00+00', true, '2026-01-03 00:00:00+00', '2026-01-03 00:00:00+00'), \
-     ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', 3, 'payroll.pdf', 'application/pdf', 4, 'fuzz-client', '{\"type\":\"paie\"}'::jsonb, '2026-01-04 00:00:00+00', false, '2026-01-04 00:00:00+00', '2026-01-04 00:00:00+00')",
+     ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', 3, 'payroll.pdf', 'application/pdf', 4, 'fuzz-client', '{\"type\":\"paie\"}'::jsonb, '2026-01-04 00:00:00+00', false, '2026-01-04 00:00:00+00', '2026-01-04 00:00:00+00'), \
+     ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', 1, 'gone.pdf', 'application/pdf', 4, 'fuzz-client', '{}'::jsonb, '2026-01-02 00:00:00+00', false, '2026-01-02 00:00:00+00', '2026-01-02 00:00:00+00')",
+    "UPDATE documents SET deleted_at = '2026-01-07 00:00:00+00', purge_at = '2026-02-06 00:00:00+00' \
+     WHERE id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4'",
     "INSERT INTO upload_requests (id, department_id, callback_url, filename, content_type, uploaded_by, status, error_message, tags, created_at, updated_at) VALUES \
      ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', 1, 'https://example.com/fuzz-cb', 'pending.pdf', 'application/pdf', 'fuzz-client', 'pending', NULL, '{}'::jsonb, '2026-01-05 00:00:00+00', '2026-01-05 00:00:00+00'), \
      ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', 1, 'https://example.com/fuzz-cb', 'failed.pdf', 'application/pdf', 'fuzz-client', 'failed', 'boom', '{}'::jsonb, '2026-01-06 00:00:00+00', '2026-01-06 00:00:00+00')",
 ];
+
+fn record_documented(
+    dist: &mut BTreeMap<(String, &'static str, u16, u16), u64>,
+    target: &Target,
+    rails: &Normalized,
+    rust: &Normalized,
+) {
+    let form = documented_form(target);
+    *dist
+        .entry((form, target.method, rails.status, rust.status))
+        .or_default() += 1;
+}
+
+fn format_distribution(dist: &BTreeMap<(String, &'static str, u16, u16), u64>) -> String {
+    let mut out = String::from("distribution:\n");
+    if dist.is_empty() {
+        out.push_str("  (none)\n");
+        return out;
+    }
+    for ((form, method, rails, rust), count) in dist {
+        out.push_str(&format!(
+            "  {form} {method} rails={rails} rust={rust} count={count}\n"
+        ));
+    }
+    out
+}
 
 fn signature(req: &Request, diff: &Diff) -> String {
     let headers = diff

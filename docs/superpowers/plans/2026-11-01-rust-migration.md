@@ -262,6 +262,11 @@ dates, `ged migrate`, `ged seed`.
 - [x] Générer des requêtes API, normaliser identifiants et dates, comparer Rails/Rust.
 - [x] Corriger le Rust ou documenter chaque écart.
 - [x] Vérifier : 100 000 requêtes sans écart non documenté.
+      2026-11-11, workers arrêtés, deux graines, `undocumented=0`.
+      Graine 13 : `elapsed=233s requests=100000 documented=1769`.
+      Graine 29 : `elapsed=236s requests=100000 documented=1604`.
+      Commande, distributions et premières lignes documentées :
+      `docs/migration/parity-gaps.md`, section T13 « Campagne ».
 
 ### T14 — Docker, stack et CI (S)
 

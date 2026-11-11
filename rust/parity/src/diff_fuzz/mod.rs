@@ -12,11 +12,14 @@ mod model;
 mod normalize;
 mod rng;
 
-pub use allow::{documented_gap, has_malformed_percent};
+pub use allow::{
+    documented_form, documented_gap, has_malformed_percent, percent_form, thruster_sanitize,
+};
 pub use generate::{CATEGORIES, Generator, seed_upload};
 pub use minimize::{minimize, shrink_sequence, smaller_candidates};
 pub use model::{
-    Auth, Body, CLIENT_ID, DocAction, FilePart, IdRef, Ids, Request, Route, Target, encode,
+    Auth, Body, CLIENT_ID, CLIENT_NOGRANT, CLIENT_OTHER, CLIENT_UNKNOWN, DocAction, FilePart,
+    IdRef, Ids, Request, Route, Target, encode,
 };
 pub use normalize::{Diff, HeaderDiff, Normalized, compare, normalize};
 pub use rng::Rng;

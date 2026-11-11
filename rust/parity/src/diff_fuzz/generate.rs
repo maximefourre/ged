@@ -1,6 +1,19 @@
 //! Seeded `/api/v1` requests: documents, departments, upload requests, tags,
 //! filters, pagination, invalid ids, malformed JSON, multipart, headers, and
 //! missing, expired or wrong-audience tokens.
+//!
+//! Not generated, because the result would not be a deterministic HTTP
+//! comparison of the two stacks as they boot today:
+//! - scope binding (`GED_OIDC_TOKEN_BINDING=scope`) is chosen at process
+//!   start; both stacks run in audience mode, and `sign` sets no `scope`
+//! - a 413 body is `GED_MAX_UPLOAD_BYTES` + 1 (50 MiB); the campaign does not
+//!   send it (`security_fuzz_oversized_*` covers that edge)
+//! - trash and restore are admin-only; the API has no trash route. A document
+//!   whose department is trashed is already a gap (Rails 500, Rust 403) and
+//!   must not be generated into the allowlist
+//! - an async upload's completion and callback depend on worker timing; the
+//!   campaign stops workers and compares only the 202
+//! - the harness compares HTTP responses, not a database snapshot
 
 use super::model::{Auth, Body, DocAction, FilePart, IdRef, Request, Route};
 use super::rng::Rng;
@@ -26,6 +39,13 @@ pub const CATEGORIES: &[&str] = &[
     "malformed-percent",
     "invalid-id",
     "odd-verb",
+    "upload-async",
+    "bulk-over-max",
+    "multipart-edge",
+    "auth-unknown",
+    "auth-nogrant",
+    "auth-other",
+    "head",
 ];
 
 pub struct Generator {
@@ -102,6 +122,13 @@ fn build(rng: &mut Rng, seq: u64) -> Request {
         "malformed-percent" => malformed_percent(rng),
         "invalid-id" => invalid_id(rng),
         "odd-verb" => odd_verb(rng),
+        "upload-async" => upload_async(seq),
+        "bulk-over-max" => bulk_over_max(rng),
+        "multipart-edge" => multipart_edge(rng),
+        "auth-unknown" => auth_client(rng, Auth::Unknown),
+        "auth-nogrant" => auth_client(rng, Auth::NoGrant),
+        "auth-other" => auth_other(rng, seq),
+        "head" => head(rng),
         _ => ping(rng),
     };
     req.category = category;
@@ -137,7 +164,7 @@ fn list_documents(rng: &mut Rng) -> Request {
         rng,
         &mut req.query,
         "uploaded_by",
-        &["fuzz-client", "other", ""],
+        &["fuzz-client", "fuzz-other", "other", ""],
     );
     maybe(
         rng,
@@ -348,14 +375,7 @@ fn bulk_destroy(rng: &mut Rng) -> Request {
         // Missing document_ids.
     } else {
         for _ in 0..n {
-            let id = match rng.gen_range(5) {
-                0 => super::model::DOC_FIXTURE.to_owned(),
-                1 => super::model::UNKNOWN_UUID.to_owned(),
-                2 => "not-a-uuid".into(),
-                3 => String::new(),
-                _ => super::model::DOC_READONLY.to_owned(),
-            };
-            fields.push(("document_ids[]".into(), id));
+            fields.push(("document_ids[]".into(), bulk_id(rng)));
         }
     }
     if rng.chance(1, 5) {
@@ -366,6 +386,168 @@ fn bulk_destroy(rng: &mut Rng) -> Request {
     } else {
         req.body = Body::Form(fields);
     }
+    req
+}
+
+fn bulk_id(rng: &mut Rng) -> String {
+    match rng.gen_range(6) {
+        0 => super::model::DOC_FIXTURE.to_owned(),
+        1 => super::model::UNKNOWN_UUID.to_owned(),
+        2 => "not-a-uuid".into(),
+        3 => String::new(),
+        4 => super::model::DOC_DELETED.to_owned(),
+        _ => super::model::DOC_READONLY.to_owned(),
+    }
+}
+
+/// 501 ids (over the 500 cap), a write-scope mix, or a live id plus one that
+/// is already in the trash. Each is one request and both stacks answer it
+/// without applying a partial delete.
+fn bulk_over_max(rng: &mut Rng) -> Request {
+    let mut req = Request::get("bulk-over-max", Route::Bulk);
+    req.method = "DELETE";
+    let fields = match rng.gen_range(3) {
+        0 => (0..501)
+            .map(|_| {
+                (
+                    "document_ids[]".into(),
+                    super::model::DOC_FIXTURE.to_owned(),
+                )
+            })
+            .collect(),
+        1 => vec![
+            (
+                "document_ids[]".into(),
+                super::model::DOC_READONLY.to_owned(),
+            ),
+            (
+                "document_ids[]".into(),
+                super::model::DOC_FIXTURE.to_owned(),
+            ),
+        ],
+        _ => vec![
+            (
+                "document_ids[]".into(),
+                super::model::DOC_DELETED.to_owned(),
+            ),
+            (
+                "document_ids[]".into(),
+                super::model::DOC_FIXTURE.to_owned(),
+            ),
+        ],
+    };
+    req.body = Body::Form(fields);
+    req
+}
+
+/// Public callback, workers stopped: both stacks answer 202 and do not run
+/// the job. Completion and the callback POST are not compared.
+fn upload_async(seq: u64) -> Request {
+    let mut req = Request::get("upload-async", Route::Documents);
+    req.method = "POST";
+    req.body = Body::Multipart {
+        boundary: format!("fuzzasync{seq}"),
+        fields: vec![
+            ("department_id".into(), "1".into()),
+            ("callback_url".into(), "https://example.com/cb".into()),
+        ],
+        file: Some(FilePart {
+            filename: format!("async-{seq}.pdf"),
+            content_type: "application/pdf".into(),
+            bytes: b"%PDF-1.4\n".to_vec(),
+        }),
+    };
+    req
+}
+
+fn multipart_edge(rng: &mut Rng) -> Request {
+    let mut req = Request::get("multipart-edge", Route::Documents);
+    req.method = "POST";
+    let (content_type, bytes) = match rng.gen_range(5) {
+        0 => ("multipart/form-data".into(), b"no-boundary".to_vec()),
+        1 => (
+            "multipart/form-data; boundary=XX".into(),
+            b"--XX\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.pdf\"\r\n\r\nHELLO"
+                .to_vec(),
+        ),
+        2 => (
+            "multipart/form-data; boundary=XX".into(),
+            b"--XX\nContent-Disposition: form-data; name=\"department_id\"\n\n1\n--XX\nContent-Disposition: form-data; name=\"file\"; filename=\"a.pdf\"\nContent-Type: application/pdf\n\n%PDF\n--XX--\n"
+                .to_vec(),
+        ),
+        3 => {
+            let mut body = Vec::new();
+            for i in 0..129 {
+                body.extend(
+                    format!(
+                        "--XX\r\nContent-Disposition: form-data; name=\"p{i}\"\r\n\r\n{i}\r\n"
+                    )
+                    .into_bytes(),
+                );
+            }
+            body.extend_from_slice(b"--XX--\r\n");
+            ("multipart/form-data; boundary=XX".into(), body)
+        }
+        _ => {
+            let mut body = String::new();
+            for i in 0..4097 {
+                if i > 0 {
+                    body.push('&');
+                }
+                body.push_str("a=1");
+            }
+            ("application/x-www-form-urlencoded".into(), body.into_bytes())
+        }
+    };
+    req.body = Body::Raw {
+        content_type,
+        bytes,
+    };
+    req
+}
+
+fn auth_client(rng: &mut Rng, auth: Auth) -> Request {
+    let mut req = match rng.gen_range(3) {
+        0 => Request::get(
+            "auth-client",
+            Route::Document {
+                action: DocAction::Show,
+                id: IdRef::Doc,
+            },
+        ),
+        1 => list_documents(rng),
+        _ => Request::get("auth-client", Route::Ping),
+    };
+    req.auth = auth;
+    req
+}
+
+fn auth_other(rng: &mut Rng, seq: u64) -> Request {
+    let mut req = if rng.chance(1, 2) {
+        upload_async(seq)
+    } else {
+        let mut listed = list_documents(rng);
+        listed
+            .query
+            .push(("uploaded_by".into(), "fuzz-other".into()));
+        listed
+    };
+    req.auth = Auth::Other;
+    req
+}
+
+fn head(rng: &mut Rng) -> Request {
+    let route = match rng.gen_range(4) {
+        0 => Route::Ping,
+        1 => Route::Documents,
+        2 => Route::Departments,
+        _ => Route::Document {
+            action: DocAction::Show,
+            id: IdRef::Doc,
+        },
+    };
+    let mut req = Request::get("head", route);
+    req.method = "HEAD";
     req
 }
 
@@ -586,7 +768,13 @@ fn odd_verb(rng: &mut Rng) -> Request {
                 id: IdRef::UploadPending,
             },
         ),
-        5 => verb("HEAD", Route::Ping),
+        5 => verb(
+            "HEAD",
+            Route::Document {
+                action: DocAction::Show,
+                id: IdRef::Doc,
+            },
+        ),
         6 => verb("OPTIONS", Route::Documents),
         _ => verb("POST", Route::Literal("/api/v1/nope".into())),
     }
@@ -629,14 +817,15 @@ fn dept_choice(rng: &mut Rng) -> String {
 }
 
 fn filename(rng: &mut Rng, seq: u64) -> String {
-    match rng.gen_range(8) {
+    match rng.gen_range(9) {
         0 => format!("file-{seq}.pdf"),
         1 => format!("../x-{seq}.txt"),
         2 => format!("quote\"-{seq}.pdf"),
         3 => format!("café-{seq}.pdf"),
         4 => format!("a<b>&c-{seq}.txt"),
         5 => format!("line\n{seq}.txt"),
-        6 => format!("{seq}"),
+        6 => format!("line\r{seq}.txt"),
+        7 => format!("{seq}"),
         _ => format!("spaced name {seq}.pdf"),
     }
 }

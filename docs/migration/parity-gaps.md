@@ -83,6 +83,36 @@ valeurs (`%` littéral non échappé) casserait à ce moment-là.
 Le traitement de `;` dans la requête n'a pas été observé : le port suit Rails
 (`a=1;b=2` est un seul paramètre `a` valant `1;b=2`).
 
+### `%` mal formé dans le chemin
+
+Observé le 2026-11-11, socket brut, sur le stack Rails (`ged-t13-rails`, port
+publié 3140 = Thruster, Puma sur le port 3000 du conteneur) et sur le Rust
+(`ged-rust-t13-fuzz`, port 3040). Le fuzzer (reqwest) a vu la même paire pour
+`GET /api/v1/documents/%zz?a=%2` : Thruster `400` `400 Bad Request`, Rust
+`400` `{"error":"bad request"}`.
+
+| Requête | Thruster (port publié) | Puma :3000 | Rust |
+|---|---|---|---|
+| `GET /api/v1/documents/%zz` | 400 `text/plain`, corps `400 Bad Request`, sans `Content-Length` ni en-tête de sécurité | 401 `missing bearer token` | 401, identique |
+| `GET /api/v1/documents/%zz?a=%2` (aussi `%`, `%zz`, `%2G`) | même 400 texte | 400 `{"error":"bad request"}`, sans en-tête de sécurité | 400, identique |
+| `GET /api/v1/documents/%zz?a=%ff` | même 400 texte | 400 `{"error":"bad request"}` | 400, identique |
+| `GET /api/v1/documents/%zz?limit=1` | même 400 texte | 401 `missing bearer token` | 401, identique |
+| `GET /api/v1/documents/%25zz` | 401 (le `%` est bien formé) | 401 | 401 |
+| `GET /up/%zz`, `GET /api/v1/ping/%zz` | 400 texte | 404 de la route | 404, identique |
+| `POST /api/v1/documents/%zz` corps `a=%zz` | 400 texte | 404 (verbe sans route, corps non lu) | 404, identique |
+
+Thruster rejette le chemin avant Rails. Puma accepte le chemin. Le Rust suit
+Puma, comme pour le `%` de query : la spec retire Thruster. Ce n'est pas le
+gap de réécriture de paramètre. L'allowlist ne le classe que si les trois
+conditions tiennent : le chemin contient un `%` qui n'est pas deux chiffres
+hexadécimaux, la réponse Rails est exactement ce 400 texte (un seul en-tête
+de contrat, `content-type: text/plain; charset=utf-8`), et la réponse Rust est
+exactement `400` `{"error":"bad request"}` avec `content-type` JSON,
+`content-length: 23` et aucun autre en-tête de contrat. En plus, la query ou
+le corps urlencoded doit lui-même être rejeté par Puma ( `%` mal formé, ou
+`%HH` qui n'est pas de l'UTF-8, comme `%ff`). Un chemin seul, un 401 ou un
+404 restent un échec.
+
 ## Taille et nombre des paramètres
 
 Observé le 2026-11-01 sur le stack Rails (Thruster, port publié), puis reproduit à
@@ -466,3 +496,140 @@ Relevé sur le stack Rails le 2026-11-03, reproduit par `rust/ged/src/admin/`.
   id n'est un UUID lance quand même l'action : « 0 documents moved to trash. »
   ou un ZIP vide (`application/zip`). Les ids valides d'un mélange sont
   appliqués. Couvert par `admin_documents.rs` et `admin_trash.rs`.
+
+## T13 — allowlist, familles non générées, notes de comparaison
+
+Le fuzzer ne classe un `%` mal formé de query ou de corps urlencoded comme le
+gap Thruster que si les trois conditions tiennent : le `%` n'est pas dans le
+chemin, Rust répond exactement `400` avec le corps `{"error":"bad request"}`,
+et la requête réécrite comme Thruster (le paramètre fautif supprimé) rejouée
+sur Rust est égale à la réponse Rails (statut, corps normalisé, en-têtes de
+contrat). Un `%` dans le chemin est un gap séparé, décrit plus haut
+(« `%` mal formé dans le chemin ») : Thruster répond `400` texte, et le Rust
+n'est allowlisté que lorsqu'il suit Puma avec le `400` JSON non analysable.
+
+Familles non générées, et pourquoi :
+
+- **Scope** (`GED_OIDC_TOKEN_BINDING=scope`). Les deux stacks démarrent en
+  mode audience. `sign` ne pose pas de claim `scope`. Exercer le mode scope
+  demanderait un second boot, pas une requête de plus.
+- **413**. Chaque corps ferait 50 Mio + 1. La campagne ne l'envoie pas. Le
+  bord est couvert par `security_fuzz_oversized_*`.
+- **Corbeille**. Pas de route API. La restauration est l'UI admin. Un document
+  dont le département est en corbeille est déjà un écart (Rails 500, Rust 403,
+  plus haut) : le générateur ne le produit pas.
+- **Fin d'upload asynchrone**. La campagne arrête les workers. `upload-async`
+  compare le `202` (callback `https://example.com/cb`). La transition
+  `completed` et le POST de callback dépendent du worker.
+- **Instantané SQL**. Le harnais compare les réponses HTTP, pas les tables.
+
+`multipart-edge` envoie 129 parties texte. Rack 3.2 compte les noms de
+fichier vers `multipart_file_limit` (128 : la 128e partie avec un `filename`,
+même vide, lève `MultipartPartLimitError`) et toutes les parties vers
+`multipart_total_part_limit` (4096). Les parties texte en dessous sont des
+paramètres. Observé le 2026-11-11 sur la stack Rails : 129 parties texte
+arrivent au contrôleur (`department_id` manquant, en-têtes de sécurité) ;
+127 fichiers aussi ; la 128e partie fichier et la 4096e partie, quelle
+qu'elle soit, sortent de l'application et Thruster répond 500, corps vide,
+sans content-type. Le Rust fait de même. Un `%` dans le chemin est le gap
+séparé décrit plus haut, pas celui-ci.
+
+Familles ajoutées au générateur, déterministes : `upload-async` (202, workers
+arrêtés), `bulk-over-max` (501 ids, mélange lecture seule + valide, id déjà en
+corbeille + valide), `multipart-edge` (sans boundary, tronqué, LF seul, 129
+parties, 4097 parties de formulaire), `auth-unknown` (`fuzz-unknown`),
+`auth-nogrant` (`fuzz-nogrant`, aucun grant), `auth-other` (`fuzz-other`,
+lecture et écriture sur le département 1, `uploaded_by`), `head` sur `/ping`,
+`/documents`, `/departments` et un document. Le nom de fichier peut contenir
+un CR (`line\rN.txt`) en plus du LF.
+
+### Tri des départements
+
+`GET /api/v1/departments` suit `order(:name)` Rails. Pas de départage par
+`id` : un `ORDER BY id` en plus séparait deux départements homonymes dans un
+ordre que Rails ne garantit pas (observé le 2026-11-11, deux « Fuzz Payroll »).
+L'unicité du nom est par `parent_id`. Avec `LIMIT`/`OFFSET`, deux noms égaux
+peuvent changer de page selon le plan, des deux côtés. Le fuzzer ne traite
+pas cet ordre comme un écart à corriger.
+
+### Ce que la normalisation ne prouve pas
+
+Les UUID et les dates `YYYY-MM-DDTHH:MM:SS.mmmZ` sont numérotés dans l'ordre
+d'apparition. Une valeur fausse à la même position reste invisible. L'ETag est
+réduit à sa forme faible ou forte. Une date sans heure (`2026-01-02`,
+`2026-11-01Z`) n'est pas ce motif : Ruby 3.4.10 lève `ArgumentError`, et le
+Rust la refuse aussi. `HEAD` sur une réponse de contrôleur envoie un corps
+vide et `Content-Length: 0` (observé sur `HEAD /api/v1/ping` et `HEAD /up`).
+Un `Content-Type` vide devient `text/html; charset=utf-8`, sauf 1xx, 204, 205
+et 304.
+
+### Campagne
+
+Deux runs le 2026-11-11, workers arrêtés, binaire `rust/target/release/diff_fuzz`
+reconstruit après l'allowlist du `%` de chemin. Aucune ligne `body:` : les
+corps urlencoded générés n'ont pas divergé. Les tables ci-dessous sont la
+sortie réelle, progressions intermédiaires omises.
+
+```text
+cd rust && caffeinate -i ./target/release/diff_fuzz \
+  --rails-url http://localhost:3140 --rust-url http://localhost:3040 \
+  --rails-db postgres://postgres:postgres@localhost:5572/ged_production \
+  --rust-db postgres://postgres:postgres@localhost:5472/ged_production \
+  --oauth-url http://localhost:9332 --signing-key /tmp/t13-signing_key.pem \
+  --issuer http://oauth-provider:9292 --audience http://web:80 \
+  --seed 13 --count 100000 --report /tmp/t13-campaign-13.txt
+```
+
+```text
+diff_fuzz seed=13 count=100000 rails=http://localhost:3140 rust=http://localhost:3040 issuer=http://oauth-provider:9292
+documented index=77 Thruster supprime un % mal formé ; Rust répond 400 {"error":"bad request"} (parity-gaps.md, requête non analysable) GET /api/v1/documents?a=% auth=Valid body=none
+documented index=165 Thruster rejette un % mal formé dans le chemin (400 text/plain) ; Rust suit Puma et répond 400 {"error":"bad request"} (parity-gaps.md, % dans le chemin) GET /api/v1/documents/%zz?a=%2 auth=Valid body=none
+distribution:
+  path:/api/v1/documents/%zz GET rails=400 rust=400 count=68
+  path:/api/v1/documents/%zz query:a=% GET rails=400 rust=400 count=58
+  path:/api/v1/documents/%zz query:a=%2 GET rails=400 rust=400 count=49
+  path:/api/v1/documents/%zz query:a=%2G GET rails=400 rust=400 count=63
+  path:/api/v1/documents/%zz query:a=%zz GET rails=400 rust=400 count=54
+  path:/api/v1/documents/%zz query:a=%zz&limit=1 GET rails=400 rust=400 count=49
+  path:/api/v1/documents/%zz query:a=1&b=%zz&c=3 GET rails=400 rust=400 count=53
+  path:/api/v1/documents/%zz query:limit=%zz GET rails=400 rust=400 count=62
+  path:/api/v1/documents/%zz query:tag=%zz GET rails=400 rust=400 count=53
+  query:a=% GET rails=200 rust=400 count=139
+  query:a=%2 GET rails=200 rust=400 count=163
+  query:a=%2G GET rails=200 rust=400 count=167
+  query:a=%zz GET rails=200 rust=400 count=165
+  query:a=%zz&limit=1 GET rails=200 rust=400 count=170
+  query:a=1&b=%zz&c=3 GET rails=200 rust=400 count=155
+  query:limit=%zz GET rails=200 rust=400 count=154
+  query:tag=%zz GET rails=200 rust=400 count=147
+seed=13 elapsed=233s requests=100000 documented=1769 undocumented=0
+result=ok requests=100000 documented=1769 undocumented=0
+```
+
+Même commande avec `--seed 29 --report /tmp/t13-campaign-29.txt` :
+
+```text
+diff_fuzz seed=29 count=100000 rails=http://localhost:3140 rust=http://localhost:3040 issuer=http://oauth-provider:9292
+documented index=57 Thruster supprime un % mal formé ; Rust répond 400 {"error":"bad request"} (parity-gaps.md, requête non analysable) GET /api/v1/documents?limit=%zz auth=Valid body=none
+documented index=162 Thruster rejette un % mal formé dans le chemin (400 text/plain) ; Rust suit Puma et répond 400 {"error":"bad request"} (parity-gaps.md, % dans le chemin) GET /api/v1/documents/%zz?a=%2G auth=Valid body=none
+distribution:
+  path:/api/v1/documents/%zz GET rails=400 rust=400 count=53
+  path:/api/v1/documents/%zz query:a=% GET rails=400 rust=400 count=53
+  path:/api/v1/documents/%zz query:a=%2 GET rails=400 rust=400 count=43
+  path:/api/v1/documents/%zz query:a=%2G GET rails=400 rust=400 count=51
+  path:/api/v1/documents/%zz query:a=%zz GET rails=400 rust=400 count=53
+  path:/api/v1/documents/%zz query:a=%zz&limit=1 GET rails=400 rust=400 count=50
+  path:/api/v1/documents/%zz query:a=1&b=%zz&c=3 GET rails=400 rust=400 count=44
+  path:/api/v1/documents/%zz query:limit=%zz GET rails=400 rust=400 count=52
+  path:/api/v1/documents/%zz query:tag=%zz GET rails=400 rust=400 count=48
+  query:a=% GET rails=200 rust=400 count=143
+  query:a=%2 GET rails=200 rust=400 count=134
+  query:a=%2G GET rails=200 rust=400 count=147
+  query:a=%zz GET rails=200 rust=400 count=154
+  query:a=%zz&limit=1 GET rails=200 rust=400 count=145
+  query:a=1&b=%zz&c=3 GET rails=200 rust=400 count=148
+  query:limit=%zz GET rails=200 rust=400 count=144
+  query:tag=%zz GET rails=200 rust=400 count=142
+seed=29 elapsed=236s requests=100000 documented=1604 undocumented=0
+result=ok requests=100000 documented=1604 undocumented=0
+```

@@ -59,9 +59,11 @@
 # with GED_WEB_PORT / GED_OAUTH_PORT / GED_DB_PORT if that ever happens.
 #
 # Differential fuzz runs a second compose project beside this worktree's stack.
-# Set GED_COMPOSE_PROJECT to that project name and override the three host
-# ports. `up` then does not replace the stack name this worktree remembers,
-# and `clean` does not forget it either.
+# Set GED_COMPOSE_PROJECT to that project name. Also set GED_STACK=rust|rails
+# and explicit GED_WEB_PORT, GED_OAUTH_PORT and GED_DB_PORT: without them,
+# `clean`/`scale`/`exec` would follow the stack this worktree remembers, and
+# the default ports would collide with it. `up` does not replace the stack
+# name this worktree remembers, and `clean` does not forget it either.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -72,6 +74,22 @@ git_common=$(cd "$(git rev-parse --git-common-dir)" && pwd -P)
 
 slug=$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' \
        | sed -E 's/-+/-/g; s/^-//; s/-$//')
+
+# Checked before the port defaults below, so a side project cannot silently
+# reuse this worktree's ports or the stack name `up` remembered.
+if [ -n "${GED_COMPOSE_PROJECT:-}" ]; then
+  case "${GED_STACK:-}" in
+    rust|rails) ;;
+    *)
+      echo "GED_COMPOSE_PROJECT is set: export GED_STACK=rust or GED_STACK=rails" >&2
+      exit 1
+      ;;
+  esac
+  if [ -z "${GED_WEB_PORT:-}" ] || [ -z "${GED_OAUTH_PORT:-}" ] || [ -z "${GED_DB_PORT:-}" ]; then
+    echo "GED_COMPOSE_PROJECT is set: export GED_WEB_PORT, GED_OAUTH_PORT and GED_DB_PORT" >&2
+    exit 1
+  fi
+fi
 
 if [ "$git_dir" != "$git_common" ]; then
   # Linked worktree: isolate project + ports from everything else.
