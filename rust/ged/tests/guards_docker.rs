@@ -67,63 +67,80 @@ fn worktree_stack_is_rust_only() {
 }
 
 #[test]
-fn ci_still_drives_rails_and_checks_rust() {
+fn ci_checks_rust_and_skips_parity_without_a_stack() {
     let bin = read("bin/ci");
     assert!(
-        bin.contains("config/ci.rb"),
-        "bin/ci still loads config/ci.rb"
-    );
-    let ci = read("config/ci.rb");
-    assert!(ci.contains("bin/rails test"), "Rails tests stay until T16");
-    assert!(
-        ci.contains("cargo test -p ged"),
-        "Rust: tests runs the ged package, not the whole workspace"
+        !bin.contains("bin/rails") && !bin.contains("config/ci.rb"),
+        "bin/ci must not drive Rails"
     );
     assert!(
-        !ci.contains("mise exec -- cargo test\""),
-        "a workspace-wide cargo test would run parity against the default rails backend"
+        !root().join("config/ci.rb").exists(),
+        "config/ci.rb is gone"
+    );
+    assert!(bin.contains("cargo fmt --check"), "fmt stays");
+    assert!(
+        bin.contains("cargo clippy") && bin.contains("-D warnings"),
+        "clippy denies warnings"
     );
     assert!(
-        ci.contains("cargo test -p parity") && ci.contains("GED_BACKEND="),
-        "parity is its own step and follows the active stack"
+        bin.contains("cargo test -p ged"),
+        "Rust tests run the ged package, not the whole workspace"
     );
     assert!(
-        ci.contains("bin/worktree-stack\", \"active\"") || ci.contains("bin/worktree-stack active"),
-        "GED_BACKEND comes from bin/worktree-stack active"
+        !bin.contains("cargo test\""),
+        "a workspace-wide cargo test would also run parity"
     );
     assert!(
-        ci.contains("Parity: skipped"),
+        bin.contains("bundle exec rake"),
+        "oauth-provider tests stay"
+    );
+    assert!(
+        bin.contains("playwright"),
+        "Playwright runs against a live stack"
+    );
+    assert!(
+        bin.contains("cargo test -p parity") && bin.contains("GED_BACKEND=rust"),
+        "parity is its own step and targets Rust"
+    );
+    assert!(
+        !bin.contains("GED_BACKEND=rails") && !bin.contains("GED_STACK=rails"),
+        "Rails is not a backend bin/ci can select"
+    );
+    assert!(
+        bin.contains("Parity: skipped"),
         "a stack that does not answer must be an explicit skip"
     );
     assert!(
-        ci.contains("GED_STACK=rails"),
-        "bin/ci must validate the Rails compose overlay"
+        bin.contains("bin/worktree-stack config"),
+        "compose config stays"
+    );
+    assert!(
+        bin.contains("docker build -t ged:ci .") && !bin.contains("Dockerfile.rails"),
+        "bin/ci builds the Rust image only"
+    );
+    assert!(
+        bin.contains("docker info"),
+        "the image build runs only when Docker answers"
+    );
+    assert!(
+        bin.contains("ruby -c") && bin.contains("bin/perf-upload") && bin.contains("bin/monkey"),
+        "the remaining Ruby drivers are syntax-checked"
     );
     let workflow = read(".github/workflows/ci.yml");
     assert!(
         workflow.contains("cargo test -p ged"),
-        "GitHub CI must run the Rust test suite"
+        "GitHub CI runs the Rust suite"
     );
-    assert!(
-        workflow.contains("cargo clippy"),
-        "GitHub CI must lint Rust"
-    );
+    assert!(workflow.contains("cargo clippy"), "GitHub CI lints Rust");
     assert!(
         workflow.contains("docker build -t ged:ci ."),
-        "GitHub CI must build the Rust image"
+        "GitHub CI builds the Rust image"
     );
     assert!(
-        workflow.contains("docker build -f Dockerfile.rails"),
-        "GitHub CI must build the Rails image"
+        workflow.contains("bundle exec rake"),
+        "GitHub CI tests oauth-provider"
     );
-    assert!(
-        ci.contains("docker build -t ged:ci .") && ci.contains("docker build -f Dockerfile.rails"),
-        "bin/ci must build both images when Docker answers"
-    );
-    assert!(
-        ci.contains("docker info"),
-        "local image builds run only when Docker answers"
-    );
+    assert!(!workflow.contains("Dockerfile.rails") && !workflow.contains("bin/rails"));
 }
 
 #[test]

@@ -1,6 +1,126 @@
-#!/usr/bin/env ruby
-require_relative "../config/boot"
-require "active_support/continuous_integration"
+#!/usr/bin/env bash
+# Local CI for the Rust stack. Rails is gone (tag rails-final). Steps keep
+# going after a failure so one run reports every problem, then exit non-zero.
+#
+# Parity and Playwright run only when this worktree's compose stack answers
+# GET /up. Otherwise the script prints "Parity: skipped" (and the same for
+# Playwright) and does not count that skip as a pass.
+set -u
+cd "$(dirname "$0")/.."
 
-CI = ActiveSupport::ContinuousIntegration
-require_relative "../config/ci.rb"
+fail=0
+
+step() {
+  local name="$1"
+  shift
+  printf '\n== %s ==\n' "$name"
+  if "$@"; then
+    printf '== %s: ok ==\n' "$name"
+  else
+    printf '== %s: FAILED ==\n' "$name"
+    fail=1
+  fi
+}
+
+skip() {
+  printf '\n== %s ==\n%s\n' "$1" "$2"
+}
+
+docker_up() {
+  docker info >/dev/null 2>&1
+}
+
+# http://127.0.0.1:<web>/up from `bin/worktree-stack urls`, or empty.
+up_url() {
+  local out port
+  out="$(bin/worktree-stack urls 2>/dev/null)" || return 0
+  port="$(printf '%s\n' "$out" | sed -n 's/.*web=\([0-9][0-9]*\).*/\1/p' | head -1)"
+  if [ -n "${port:-}" ]; then
+    printf 'http://127.0.0.1:%s/up' "$port"
+  fi
+}
+
+responds() {
+  curl -fsS --max-time 3 "$1" >/dev/null 2>&1
+}
+
+run_cargo() {
+  (
+    cd rust
+    if command -v mise >/dev/null 2>&1; then
+      mise exec -- cargo "$@"
+    else
+      cargo "$@"
+    fi
+  )
+}
+
+web_origin() {
+  local url="$1"
+  printf '%s' "${url%/up}"
+}
+
+env_value() {
+  local key="$1"
+  [ -f .env ] || return 0
+  sed -n "s/^${key}=//p" .env | head -1 | tr -d '"' | tr -d "'"
+}
+
+step "Rust: fmt" run_cargo fmt --check
+step "Rust: clippy" run_cargo clippy --all-targets -- -D warnings
+step "Rust: tests" run_cargo test -p ged
+
+step "Tests: oauth-provider" bash -c '
+  cd oauth-provider
+  bundle check >/dev/null 2>&1 || bundle install
+  bundle exec rake
+'
+
+# RuboCop left with the Rails Gemfile. These two drivers are Ruby stdlib.
+step "Style: Ruby" bash -c 'ruby -c bin/perf-upload && ruby -c bin/monkey'
+
+probed=""
+if docker_up; then
+  probed="$(up_url)"
+fi
+
+if [ -n "$probed" ] && responds "$probed"; then
+  origin="$(web_origin "$probed")"
+  admin_user="$(env_value GED_ADMIN_USERNAME)"
+  admin_pass="$(env_value GED_ADMIN_PASSWORD)"
+  step "Playwright: rust/e2e" env \
+    GED_BASE_URL="$origin" \
+    GED_ADMIN_USERNAME="${admin_user:-admin}" \
+    GED_ADMIN_PASSWORD="$admin_pass" \
+    GED_BACKEND=rust \
+    bash -c '
+      cd rust/e2e
+      npm ci
+      npx playwright install chromium
+      npx playwright test
+    '
+  step "Parity: rust" env GED_BACKEND=rust run_cargo test -p parity
+elif docker_up; then
+  probed="${probed:-(no web port from bin/worktree-stack urls)}"
+  skip "Playwright: skipped" "GET ${probed} did not succeed, so rust/e2e was not run. Start the stack with bin/worktree-stack up && bin/worktree-stack seed"
+  skip "Parity: skipped" "GET ${probed} did not succeed, so cargo test -p parity was not run. Start the stack with bin/worktree-stack up && bin/worktree-stack seed"
+else
+  skip "Playwright: skipped" "Docker did not answer, so the worktree stack was not probed and rust/e2e was not run"
+  skip "Parity: skipped" "Docker did not answer, so the worktree stack was not probed and cargo test -p parity was not run"
+fi
+
+step "Docker: compose config" bin/worktree-stack config --quiet
+
+if docker_up; then
+  step "Docker: build Rust image" docker build -t ged:ci .
+else
+  skip "Docker: build skipped" "Docker did not answer, so the image was not built"
+fi
+
+printf '\n'
+if [ "$fail" -eq 0 ]; then
+  printf 'bin/ci: ok\n'
+  exit 0
+fi
+printf 'bin/ci: FAILED\n'
+exit 1
