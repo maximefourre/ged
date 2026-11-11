@@ -29,8 +29,10 @@ PostgreSQL 17, Playwright pour le navigateur.
 - Un test de parité ne change qu'avec une preuve que Rails se comporte comme le nouveau
   test. Toute divergence assumée va dans `docs/migration/parity-gaps.md`.
 - Aucun `unsafe`, sauf justification écrite. Aucun `unwrap` sur une entrée externe.
-- `cargo fmt --check`, `cargo clippy -- -D warnings` et `cargo test` verts à chaque
-  tâche. `bin/ci` Rails reste vert tant que Rails existe.
+- `cargo fmt --check`, `cargo clippy -- -D warnings` et `cargo test -p ged` verts
+  à chaque tâche. `bin/ci` lance cette même cible, puis `cargo test -p parity`
+  seulement quand la pile du worktree répond (T14). `bin/ci` Rails reste vert
+  tant que Rails existe.
 - Navigateurs headless toujours fermés en `finally`. Vérifier
   `pgrep -fl -- '--headless'` en fin de tâche.
 - Avant chaque tâche : lire les ADR et le projet `ged-migration-rust` dans codebase
@@ -270,21 +272,29 @@ dates, `ged migrate`, `ged seed`.
 - [x] `db`, `db-port`, `up`, `scale`, `clean` pilotent le Rust.
 - [x] Porter les gardes C4, API docs et couverture des queues.
 - [ ] Vérifier : `bin/worktree-stack up`, `scale 3`, parité complète contre la stack.
-      Mesure du 2026-11-11 : `GED_STACK=rails bin/worktree-stack up` sert `/up`
+      Mesure du 2026-11-11, avant le correctif de `bin/ci` : `GED_STACK=rails bin/worktree-stack up` sert `/up`
       en 200 avec `X-Runtime`. `bin/worktree-stack up` puis `scale 3` sont verts
-      (`/up` 200, trois conteneurs `ged worker`). La parité contre la stack Rust
-      ne fait pas partie de `bin/ci` ni de GitHub CI (les deux parlent au backend
-      Rails) : elle se lance à la main avec `GED_BACKEND=rust cargo test -p parity`
-      contre `bin/worktree-stack up`. Ce jour-là, `--no-fail-fast` sort 101 avec
-      26 échecs, tous le trou T11 (`admin/mod.rs` : `documents_stub` à la place
-      de la liste, de l'aperçu et de la corbeille) : `admin_documents` 14,
-      `admin_params` 6 (l'index documents ; les 2 tests upload_requests passent),
-      `admin_trash` 5 (404), et
+      (`/up` 200, trois conteneurs `ged worker`). Ce jour-là `bin/ci` lançait
+      `cargo test` sur tout le workspace, donc la parité avec `GED_BACKEND=rails`
+      par défaut. Contre la pile Rust, 10 tests `security_purge` échouaient :
+      `run_job` exécute `bin/rails runner` dans `web`, absent de l'image Rust.
+      La passe manuelle `GED_BACKEND=rust cargo test -p parity --no-fail-fast`
+      sortait 101 avec 26 échecs, tous le trou T11 (`admin/mod.rs` :
+      `documents_stub` à la place de la liste, de l'aperçu et de la corbeille) :
+      `admin_documents` 14, `admin_params` 6 (l'index documents ; les 2 tests
+      upload_requests passent), `admin_trash` 5 (404), et
       `api_documents::api_delete_soft_deletes_the_document_and_keeps_it_for_the_retention_window`
       (`PATCH /admin/deleted_documents/:id/restore` 404 ; Rails, le même test,
-      répond 302). Aucun autre test rouge. `bin/ci` est vert, y compris les deux
-      `docker build`. Les deux images sont construites par le job `rust` et par
-      `bin/ci` quand Docker répond.
+      répond 302). Aucun autre test rouge. Les deux images sont construites par
+      le job `rust` et par `bin/ci` quand Docker répond.
+      Correctif : `Rust: tests` est `cargo test -p ged`. L'étape
+      `Parity: rust` ou `Parity: rails` lance
+      `GED_BACKEND=<pile> cargo test -p parity` seulement si `GET /up` de la
+      pile du worktree répond. La pile est `bin/worktree-stack active`
+      (`GED_STACK` s'il est posé, sinon le nom mémorisé par `up`, sinon
+      `rust`). Sans réponse, `bin/ci` affiche `Parity: skipped` et ne compte
+      pas ce saut comme une parité verte. GitHub CI reste sur `cargo test -p ged`
+      (pas de pile compose sur le runner).
 
 ### T15 — Validation perf et chaos (S)
 
@@ -377,5 +387,5 @@ relectures, les intégrations et les correctifs des tâches qu'il a écrites (T7
   `tokio::fs::rename` (exécuté via `spawn_blocking`), le `Drop` du `PartGuard` peut passer
   avant le renommage effectif et laisser `dest` orphelin. À corriger plus tard par le
   propriétaire du stockage.
-- La parité est lancée contre la stack Rust démarrée à la main (`bin/worktree-stack up`),
-  pas en CI.
+- La parité était lancée contre la stack Rust démarrée à la main (`bin/worktree-stack up`),
+  pas dans `bin/ci`. T14 la fait suivre la pile active : voir le correctif de `bin/ci` dans T14.

@@ -191,10 +191,10 @@ jobs:
         working-directory: rust
         env:
           # Primary-tree checkout: bin/worktree-stack db-port prints 5432,
-          # which is this service container. Parity stays out of this job.
-          # bin/ci runs it locally against the Rails stack. Rust-stack parity
-          # is manual: `bin/worktree-stack up`, then
-          # `GED_BACKEND=rust cargo test -p parity`.
+          # which is this service container. Parity stays out of this job:
+          # it needs the worktree compose stack. bin/ci runs
+          # `cargo test -p parity` when that stack answers GET /up, with
+          # GED_BACKEND from `bin/worktree-stack active`.
           GED_DB_PORT: "5432"
         run: cargo test -p ged
 

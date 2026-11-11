@@ -44,7 +44,13 @@ is the source of truth.
   locally-built images), then remove the worktree.
 - **Green checks before proposing a merge** — `bin/ci` must pass (at minimum
   `bin/rails test` + `bin/rubocop`); report the actual output, don't claim
-  success without running it.
+  success without running it. Rust checks in `bin/ci` are `cargo fmt`,
+  `cargo clippy`, and `cargo test -p ged`. Parity is a separate step,
+  `cargo test -p parity`, and it runs only when this worktree's compose
+  stack answers `GET /up`. `GED_BACKEND` is the active stack from
+  `bin/worktree-stack active`: `GED_STACK` when it is set, otherwise the
+  name remembered by `up`, otherwise `rust`. When nothing answers, `bin/ci`
+  prints `Parity: skipped` and does not record that skip as a parity pass.
 - **Keep docs in sync when scope changes** — update `docs/api/openapi.yaml`
   when adding/renaming an `/api/v1` endpoint (a test fails otherwise),
   `docs/architecture/c4.md` when adding a compose service, a job, a service
@@ -354,7 +360,9 @@ pitfalls:
 - Tests: Minitest (Rails default), WebMock for HTTP stubs. Run `bin/rails test`
   (main app) and `cd oauth-provider && bundle exec rake` (provider).
   System tests (Capybara + headless Chrome) are separate:
-  `bin/rails test:system`; `bin/ci` runs everything.
+  `bin/rails test:system`. `bin/ci` runs the Rails suite, `cargo test -p ged`,
+  and `cargo test -p parity` against the worktree stack when that stack
+  answers `GET /up` (see Workflow).
 - Test quirks: `JwtTestHelpers` (issue_token/stub_jwks!/bearer_header) backs
   all API tests; `Auth::JwksCache.reset!` runs in every setup. WebMock's
   `assert_requested` rejects the `(stub) { block }` form — use

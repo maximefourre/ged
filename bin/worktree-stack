@@ -31,6 +31,8 @@
 #   GED_STACK=rails bin/worktree-stack up
 # Commands after `up` (exec, seed, scale, logs, down) follow the stack that
 # was last started, unless GED_STACK is set again. `clean` forgets that name.
+# `active` prints that name and nothing else: GED_STACK if set, else the name
+# `up` remembered, else rust.
 #
 # Usage:
 #   bin/worktree-stack up [--scale worker=N]
@@ -46,6 +48,8 @@
 #   bin/worktree-stack db-port      print this worktree's host Postgres port
 #   bin/worktree-stack seed         create the admin user (first boot only):
 #                                   `ged seed` on Rust, `bin/rails db:seed` on Rails
+#   bin/worktree-stack active       print rust or rails (GED_STACK, else the
+#                                   name `up` remembered, else rust)
 #   bin/worktree-stack down [-v]    stop + remove containers (-v also volumes)
 #   bin/worktree-stack clean        full ménage: down -v, remove built images,
 #                                   and forget the remembered stack name
@@ -136,6 +140,22 @@ active_stack() {
   printf '%s\n' rust
 }
 
+# Print only rust or rails. Same choice as active_stack, rejected when the
+# name is anything else so callers do not guess.
+print_active_stack() {
+  local stack
+  stack="$(active_stack)"
+  case "$stack" in
+    rust|rails)
+      printf '%s\n' "$stack"
+      ;;
+    *)
+      echo "GED_STACK=$stack: expected rust or rails" >&2
+      return 1
+      ;;
+  esac
+}
+
 compose_as() {
   local stack="$1"
   shift
@@ -217,6 +237,9 @@ case "$cmd" in
       rust) compose_as "$stack" exec -T web ged seed ;;
       *) echo "GED_STACK=$stack: expected rust or rails" >&2; exit 1 ;;
     esac
+    ;;
+  active)
+    print_active_stack
     ;;
   down)
     compose_as "$(active_stack)" down "$@"

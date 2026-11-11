@@ -80,7 +80,26 @@ fn ci_still_drives_rails_and_checks_rust() {
     );
     let ci = read("config/ci.rb");
     assert!(ci.contains("bin/rails test"), "Rails tests stay until T16");
-    assert!(ci.contains("cargo test"), "Rust tests stay in bin/ci");
+    assert!(
+        ci.contains("cargo test -p ged"),
+        "Rust: tests runs the ged package, not the whole workspace"
+    );
+    assert!(
+        !ci.contains("mise exec -- cargo test\""),
+        "a workspace-wide cargo test would run parity against the default rails backend"
+    );
+    assert!(
+        ci.contains("cargo test -p parity") && ci.contains("GED_BACKEND="),
+        "parity is its own step and follows the active stack"
+    );
+    assert!(
+        ci.contains("bin/worktree-stack\", \"active\"") || ci.contains("bin/worktree-stack active"),
+        "GED_BACKEND comes from bin/worktree-stack active"
+    );
+    assert!(
+        ci.contains("Parity: skipped"),
+        "a stack that does not answer must be an explicit skip"
+    );
     assert!(
         ci.contains("GED_STACK=rails"),
         "bin/ci must validate the Rails compose overlay"
@@ -203,6 +222,106 @@ fn clean_forgets_the_remembered_stack() {
         arm.contains("rm -f \"$(stack_state_file)\""),
         "clean must remove the remembered stack file, arm was:\n{arm}"
     );
+}
+
+#[test]
+fn worktree_stack_active_follows_env_then_memory_then_rust() {
+    let tmp = std::env::temp_dir().join(format!(
+        "ged-active-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&tmp).unwrap();
+    let state = tmp.join(format!("ged-worktree-stack-{}", worktree_slug()));
+
+    let rails_env = run_active(&tmp, Some("rails"));
+    assert!(rails_env.status.success(), "{}", stderr(&rails_env));
+    assert_eq!(stdout(&rails_env), "rails\n");
+
+    let rust_env = run_active(&tmp, Some("rust"));
+    assert!(rust_env.status.success(), "{}", stderr(&rust_env));
+    assert_eq!(stdout(&rust_env), "rust\n");
+
+    fs::write(&state, "rails\n").unwrap();
+    let remembered = run_active(&tmp, None);
+    assert!(remembered.status.success(), "{}", stderr(&remembered));
+    assert_eq!(
+        stdout(&remembered),
+        "rails\n",
+        "a remembered rails stack is the default when GED_STACK is unset"
+    );
+
+    let env_wins = run_active(&tmp, Some("rust"));
+    assert_eq!(
+        stdout(&env_wins),
+        "rust\n",
+        "GED_STACK wins over the remembered name"
+    );
+
+    fs::remove_file(&state).unwrap();
+    let fresh = run_active(&tmp, None);
+    assert!(fresh.status.success(), "{}", stderr(&fresh));
+    assert_eq!(stdout(&fresh), "rust\n");
+
+    let bad = run_active(&tmp, Some("nope"));
+    assert!(!bad.status.success(), "an unknown stack must fail");
+    let err = stderr(&bad);
+    assert!(err.contains("expected rust or rails"), "stderr was: {err}");
+
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+fn worktree_slug() -> String {
+    let canonical = root().canonicalize().unwrap_or_else(|_| root());
+    let name = canonical
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mut dashed = String::new();
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' {
+            dashed.push(c);
+        } else {
+            dashed.push('-');
+        }
+    }
+    let mut squeezed = String::new();
+    let mut prev_dash = false;
+    for c in dashed.chars() {
+        if c == '-' {
+            if !prev_dash {
+                squeezed.push('-');
+            }
+            prev_dash = true;
+        } else {
+            prev_dash = false;
+            squeezed.push(c);
+        }
+    }
+    squeezed.trim_matches('-').to_owned()
+}
+
+fn run_active(tmpdir: &std::path::Path, ged_stack: Option<&str>) -> std::process::Output {
+    let mut cmd = std::process::Command::new(root().join("bin/worktree-stack"));
+    cmd.arg("active")
+        .env("TMPDIR", tmpdir)
+        .env_remove("GED_STACK");
+    if let Some(stack) = ged_stack {
+        cmd.env("GED_STACK", stack);
+    }
+    cmd.output().expect("run bin/worktree-stack active")
+}
+
+fn stdout(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn stderr(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
 fn logical_lines(text: &str) -> Vec<String> {
