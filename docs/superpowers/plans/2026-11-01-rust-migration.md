@@ -268,10 +268,21 @@ dates, `ged migrate`, `ged seed`.
 - [x] `db`, `db-port`, `up`, `scale`, `clean` pilotent le Rust.
 - [x] Porter les gardes C4, API docs et couverture des queues.
 - [ ] Vérifier : `bin/worktree-stack up`, `scale 3`, parité complète contre la stack.
-      `up` et `scale 3` sont verts. La parité Rust reste rouge sur
-      `api_documents::api_delete_soft_deletes_the_document_and_keeps_it_for_the_retention_window` :
-      `PATCH /admin/deleted_documents/:id/restore` répond 404 tant que T11 n'a pas
-      branché la corbeille (`admin/mod.rs` le dit). Rails, le même test, répond 302.
+      Mesure du 2026-11-11 : `GED_STACK=rails bin/worktree-stack up` sert `/up`
+      en 200 avec `X-Runtime`. `bin/worktree-stack up` puis `scale 3` sont verts
+      (`/up` 200, trois conteneurs `ged worker`). La parité contre la stack Rust
+      ne fait pas partie de `bin/ci` ni de GitHub CI (les deux parlent au backend
+      Rails) : elle se lance à la main avec `GED_BACKEND=rust cargo test -p parity`
+      contre `bin/worktree-stack up`. Ce jour-là, `--no-fail-fast` sort 101 avec
+      26 échecs, tous le trou T11 (`admin/mod.rs` : `documents_stub` à la place
+      de la liste, de l'aperçu et de la corbeille) : `admin_documents` 14,
+      `admin_params` 6 (l'index documents ; les 2 tests upload_requests passent),
+      `admin_trash` 5 (404), et
+      `api_documents::api_delete_soft_deletes_the_document_and_keeps_it_for_the_retention_window`
+      (`PATCH /admin/deleted_documents/:id/restore` 404 ; Rails, le même test,
+      répond 302). Aucun autre test rouge. `bin/ci` est vert, y compris les deux
+      `docker build`. Les deux images sont construites par le job `rust` et par
+      `bin/ci` quand Docker répond.
 
 ### T15 — Validation perf et chaos (S)
 

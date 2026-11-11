@@ -94,4 +94,261 @@ fn ci_still_drives_rails_and_checks_rust() {
         workflow.contains("cargo clippy"),
         "GitHub CI must lint Rust"
     );
+    assert!(
+        workflow.contains("docker build -t ged:ci ."),
+        "GitHub CI must build the Rust image"
+    );
+    assert!(
+        workflow.contains("docker build -f Dockerfile.rails"),
+        "GitHub CI must build the Rails image"
+    );
+    assert!(
+        ci.contains("docker build -t ged:ci .") && ci.contains("docker build -f Dockerfile.rails"),
+        "bin/ci must build both images when Docker answers"
+    );
+    assert!(
+        ci.contains("docker info"),
+        "local image builds run only when Docker answers"
+    );
+}
+
+#[test]
+fn images_run_as_non_root_and_bake_no_secrets() {
+    for file in ["Dockerfile", "Dockerfile.rails"] {
+        let text = read(file);
+        let user = last_user(&text).unwrap_or_else(|| panic!("{file} sets no USER"));
+        assert!(is_non_root(&user), "{file} USER {user} must not be root");
+        let secrets = secret_env_or_arg(&text);
+        assert!(
+            secrets.is_empty(),
+            "{file} ARG/ENV bakes secrets: {}",
+            secrets.join(", ")
+        );
+    }
+}
+
+#[test]
+fn secret_detector_flags_env_and_arg_names() {
+    let text = "ENV PORT=80 \\\n    RAILS_ENV=production\nARG SECRET_KEY_BASE=dev\nRUN SECRET_KEY_BASE_DUMMY=1 true\n";
+    assert_eq!(secret_env_or_arg(text), vec!["SECRET_KEY_BASE".to_owned()]);
+    assert!(is_non_root("1000:1000"));
+    assert!(!is_non_root("root"));
+    assert!(!is_non_root("0:0"));
+    assert!(last_user("FROM scratch\nUSER 1000:1000\n").as_deref() == Some("1000:1000"));
+}
+
+#[test]
+fn worker_stop_grace_exceeds_the_shutdown_timeout_default() {
+    let compose = read("docker-compose.yml");
+    let grace = worker_stop_grace_secs(&compose).expect("worker stop_grace_period as a duration");
+    let compose_default =
+        compose_shutdown_default_secs(&compose).expect("SOLID_QUEUE_SHUTDOWN_TIMEOUT default");
+    let code_default = rust_shutdown_default_secs(&read("rust/ged/src/jobs/worker.rs"))
+        .expect("WorkerSettings default shutdown timeout");
+    assert_eq!(
+        compose_default, code_default,
+        "compose default and the Rust default diverged"
+    );
+    assert!(
+        grace > compose_default,
+        "worker stop_grace_period ({grace}s) must be strictly greater than SOLID_QUEUE_SHUTDOWN_TIMEOUT default ({compose_default}s)"
+    );
+}
+
+#[test]
+fn grace_equal_to_the_shutdown_default_does_not_satisfy_the_invariant() {
+    let sample = r#"
+services:
+  worker:
+    environment:
+      SOLID_QUEUE_SHUTDOWN_TIMEOUT: ${SOLID_QUEUE_SHUTDOWN_TIMEOUT:-40}
+    stop_grace_period: 40s
+"#;
+    let grace = worker_stop_grace_secs(sample).unwrap();
+    let default = compose_shutdown_default_secs(sample).unwrap();
+    assert!(
+        grace <= default,
+        "the fixture must show a grace period that is not strictly greater"
+    );
+}
+
+#[test]
+fn rust_image_caches_cargo_outside_the_final_stage() {
+    let text = read("Dockerfile");
+    assert!(
+        text.contains("cargo build --release --locked -p ged"),
+        "the image must still compile ged"
+    );
+    assert!(
+        text.contains("--mount=type=cache")
+            && text.contains("target=/usr/local/cargo/registry")
+            && text.contains("target=/src/rust/target"),
+        "cargo registry and target must be BuildKit cache mounts"
+    );
+    let stage = final_stage(&text);
+    assert!(
+        !stage.to_ascii_lowercase().contains("cargo"),
+        "final stage must not contain cargo:\n{stage}"
+    );
+    assert!(
+        stage.contains("COPY --from=build /out/ged /usr/local/bin/ged"),
+        "final stage copies only the binary that was lifted out of the cache"
+    );
+}
+
+#[test]
+fn clean_forgets_the_remembered_stack() {
+    let arm = case_arm(&read("bin/worktree-stack"), "clean");
+    assert!(
+        arm.contains("rm -f \"$(stack_state_file)\""),
+        "clean must remove the remembered stack file, arm was:\n{arm}"
+    );
+}
+
+fn logical_lines(text: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for line in text.lines() {
+        let trimmed = line.trim_end();
+        if let Some(kept) = trimmed.strip_suffix('\\') {
+            current.push_str(kept);
+            current.push(' ');
+        } else {
+            current.push_str(line);
+            lines.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+fn last_user(dockerfile: &str) -> Option<String> {
+    let mut found = None;
+    for line in logical_lines(dockerfile) {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("USER ") {
+            found = Some(rest.trim().to_owned());
+        }
+    }
+    found
+}
+
+fn is_non_root(user: &str) -> bool {
+    let name = user.split(':').next().unwrap_or(user).trim();
+    !name.is_empty() && name != "root" && name != "0"
+}
+
+fn secret_env_or_arg(dockerfile: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for line in logical_lines(dockerfile) {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        let Some(rest) = trimmed
+            .strip_prefix("ENV ")
+            .or_else(|| trimmed.strip_prefix("ARG "))
+        else {
+            continue;
+        };
+        for token in rest.split_whitespace() {
+            let name = token.split('=').next().unwrap_or(token).trim_matches('"');
+            if is_secret_name(name) {
+                found.push(name.to_owned());
+            }
+        }
+    }
+    found
+}
+
+fn is_secret_name(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    [
+        "SECRET",
+        "PASSWORD",
+        "PASSWD",
+        "TOKEN",
+        "CREDENTIAL",
+        "PRIVATE_KEY",
+        "API_KEY",
+        "MASTER_KEY",
+    ]
+    .iter()
+    .any(|marker| upper.contains(marker))
+}
+
+fn compose_value(compose: &str) -> serde_yaml::Value {
+    serde_yaml::from_str(compose).unwrap_or_else(|err| panic!("compose yaml: {err}"))
+}
+
+fn worker_stop_grace_secs(compose: &str) -> Option<u64> {
+    let value = compose_value(compose);
+    let raw = value
+        .get("services")?
+        .get("worker")?
+        .get("stop_grace_period")?;
+    let text = raw.as_str()?;
+    let secs = text.strip_suffix('s')?;
+    if secs.is_empty() || !secs.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    secs.parse().ok()
+}
+
+fn compose_shutdown_default_secs(compose: &str) -> Option<u64> {
+    let value = compose_value(compose);
+    let raw = value
+        .get("services")?
+        .get("worker")?
+        .get("environment")?
+        .get("SOLID_QUEUE_SHUTDOWN_TIMEOUT")?
+        .as_str()?;
+    let start = raw.find(":-")? + 2;
+    let digits: String = raw[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+fn rust_shutdown_default_secs(source: &str) -> Option<u64> {
+    // The doc comment also names the variable. The default that ships is the
+    // `unwrap_or` next to the lookup in `WorkerSettings::from_lookup`.
+    let key = source.find("lookup(\"SOLID_QUEUE_SHUTDOWN_TIMEOUT\")")?;
+    let window = &source[key..(key + 400).min(source.len())];
+    let marker = "unwrap_or(";
+    let at = window.find(marker)? + marker.len();
+    let digits: String = window[at..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+fn final_stage(dockerfile: &str) -> String {
+    match dockerfile.rfind("\nFROM ") {
+        Some(at) => dockerfile[at + 1..].to_owned(),
+        None => dockerfile.to_owned(),
+    }
+}
+
+fn case_arm(script: &str, name: &str) -> String {
+    let needle = format!("\n  {name})");
+    let Some(start) = script.find(&needle) else {
+        return String::new();
+    };
+    let rest = &script[start + needle.len()..];
+    let end = rest.find("\n    ;;").unwrap_or(rest.len());
+    rest[..end].to_owned()
 }

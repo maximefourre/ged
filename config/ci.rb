@@ -15,6 +15,13 @@ CI.run do
   step "Rust: tests", "cd rust && mise exec -- cargo test"
   step "Docker: compose config", "bin/worktree-stack config --quiet"
   step "Docker: compose config (rails)", "env GED_STACK=rails bin/worktree-stack config --quiet"
+  # Image builds need a daemon. The GitHub rust job builds the same two
+  # Dockerfiles. Skip here when Docker does not answer so the rest of bin/ci
+  # can still run.
+  if system("docker info > /dev/null 2>&1")
+    step "Docker: build Rust image", "docker build -t ged:ci ."
+    step "Docker: build Rails image", "docker build -f Dockerfile.rails -t ged:ci-rails ."
+  end
   step "Tests: Seeds", "env RAILS_ENV=test bin/rails db:seed:replant"
 
   # Optional: set a green GitHub commit status to unblock PR merge.

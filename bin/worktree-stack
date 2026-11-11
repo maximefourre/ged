@@ -30,7 +30,7 @@
 # on worker. Rails stays bootable until T16:
 #   GED_STACK=rails bin/worktree-stack up
 # Commands after `up` (exec, seed, scale, logs, down) follow the stack that
-# was last started, unless GED_STACK is set again.
+# was last started, unless GED_STACK is set again. `clean` forgets that name.
 #
 # Usage:
 #   bin/worktree-stack up [--scale worker=N]
@@ -47,7 +47,8 @@
 #   bin/worktree-stack seed         create the admin user (first boot only):
 #                                   `ged seed` on Rust, `bin/rails db:seed` on Rails
 #   bin/worktree-stack down [-v]    stop + remove containers (-v also volumes)
-#   bin/worktree-stack clean        full ménage: down -v + remove built images
+#   bin/worktree-stack clean        full ménage: down -v, remove built images,
+#                                   and forget the remembered stack name
 #   bin/worktree-stack <cmd> ...    passthrough to `docker compose` (ps, logs…)
 #
 # Ports collide only if two worktree slugs hash to the same offset; override
@@ -222,6 +223,7 @@ case "$cmd" in
     ;;
   clean)
     compose_as "$(active_stack)" down -v --rmi local "$@"
+    rm -f "$(stack_state_file)"
     ;;
   urls|url)
     echo "▶ project=$COMPOSE_PROJECT_NAME  stack=$(active_stack)  web=$web_port  oauth=$oauth_port  db=$db_port"
