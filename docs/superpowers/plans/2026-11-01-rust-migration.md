@@ -242,6 +242,8 @@ dates, `ged migrate`, `ged seed`.
 - [x] Liste, upload, édition, aperçu avec CSP, corbeille, actions en lot.
 - [x] ZIP en streaming, test de mémoire stable sur gros volume, Review Focus 1.
 - [x] Vérifier : toute la parité admin et Playwright vertes contre Rust.
+- Playwright contre le serveur Rust : `rust/e2e/README.md` (stack compose,
+  `ged serve`, `GED_BASE_URL`, identifiants admin). Le `web` compose reste Rails.
 
 ### T12 — OpenTelemetry (G)
 
@@ -361,8 +363,9 @@ relectures, les intégrations et les correctifs des tâches qu'il a écrites (T7
   Les 26 tests admin (`admin_documents`, `admin_params`, `admin_trash`) passent,
   la parité complète est verte sur les deux backends (286), Playwright aussi
   (22) contre le serveur Rust. CSP d'aperçu et statiques sans en-têtes de
-  contrôleur (`cache-control: public, max-age` d'un an). Écart noté : un id qui
-  n'est pas un UUID est ignoré ou 404, Rails répond 500 (voir `parity-gaps.md`).
+  contrôleur (`cache-control: public, max-age` d'un an). L'écart « id non UUID
+  → Rails 500 » était faux : Rails caste en nil et répond 404 (page statique),
+  ou, en lot, « 0 documents moved to trash. » / ZIP vide. Voir `parity-gaps.md`.
 - T14 : le `ged worker` lancé par l'adaptateur Rust de la parité vise une base supprimée
   entre deux tests (logs « database ged_rust_parity does not exist ») ; synchroniser son
   cycle de vie avec `reset()`.
