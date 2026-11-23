@@ -19,7 +19,7 @@ jsonwebtoken = { version = "11.1.0", features = ["rust_crypto"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
-sha2 = "0.10"
+sha2 = "0.11"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "fs", "io-util", "sync"] }
 uuid = { version = "1.29.0", features = ["v4"] }
@@ -39,7 +39,7 @@ base64 = "0.23.1"
 
 [dev-dependencies]
 base64 = "0.23.1"
-sha2 = "0.10"
+sha2 = "0.11"
 http-body-util = "0.1"
 tempfile = "3.27.0"
 tower = { version = "0.5", features = ["util"] }
